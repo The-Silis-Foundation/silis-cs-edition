@@ -1,0 +1,16 @@
+{
+  "name": "Silis Codespaces Edition",
+  "build": {
+    "dockerfile": "../Dockerfile",
+    "context": ".."
+  },
+  "forwardPorts": [6080],
+  "portsAttributes": {
+    "6080": {
+      "label": "Silis GUI",
+      "onAutoForward": "openBrowser"
+    }
+  },
+  "postStartCommand": "bash /usr/local/bin/start-silis.sh",
+  "remoteUser": "root"
+}
