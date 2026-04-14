@@ -11,6 +11,9 @@ RUN apt-get update && apt-get install -y \
     x11vnc \
     novnc \
     websockify \
+    openbox \
+    xterm \
+    dbus-x11 \
     python3-pip \
     libxcb-xinerama0 \
     libxcb-icccm4 \
