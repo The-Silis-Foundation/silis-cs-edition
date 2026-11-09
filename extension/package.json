@@ -22,6 +22,13 @@
           "title": "Silis CAD",
           "icon": "$(circuit-board)"
         }
+      ],
+      "panel": [
+        {
+          "id": "silis-waveforms-panel",
+          "title": "Silis Waveforms",
+          "icon": "$(pulse)"
+        }
       ]
     },
     "views": {
@@ -32,11 +39,11 @@
           "name": "CAD Tools & Flow"
         }
       ],
-      "panel": [
+      "silis-waveforms-panel": [
         {
           "type": "webview",
           "id": "silis-bottom-dock",
-          "name": "Silis Waveforms & Layout"
+          "name": "ROHD Waveform Inspector"
         }
       ]
     },
@@ -90,6 +97,11 @@
     ],
     "commands": [
       {
+        "command": "silis.openDashboard",
+        "title": "Silis: Open ASIC Studio Dashboard",
+        "category": "Silis"
+      },
+      {
         "command": "silis.newProject",
         "title": "Silis: New ASIC Project",
         "category": "Silis"
@@ -120,6 +132,11 @@
         "category": "Silis"
       },
       {
+        "command": "silis.openWaveformInBottomDock",
+        "title": "Silis: View Waveform in Bottom Dock",
+        "category": "Silis"
+      },
+      {
         "command": "silis.openLayout",
         "title": "Silis: Open 2D Layout Canvas",
         "category": "Silis"
@@ -139,6 +156,15 @@
         "title": "Silis: Run Full ASIC Tapeout Flow (OpenROAD)",
         "category": "Silis"
       }
-    ]
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "silis.openWaveformInBottomDock",
+          "when": "resourceExtname == .vcd || resourceExtname == .fst",
+          "group": "navigation"
+        }
+      ]
+    }
   }
 }

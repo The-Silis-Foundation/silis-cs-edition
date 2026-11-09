@@ -38,6 +38,9 @@
 
 ## ASIC Projects & Control Center
 
+> [!TIP]
+> **Interactive ASIC Studio Dashboard**: For one-click project creation, schematic probing, and physical design inspection, launch the [Silis ASIC Studio Dashboard](command:silis.openDashboard) (or press `Ctrl+Shift+P` and type `Silis: Open ASIC Studio Dashboard`).
+
 Manage and inspect chip designs directly from this Codespace workspace. Click any action below to open interactive tools inside dedicated VS Code editor tabs.
 
 | Project | Process (PDK) | Top Module | Layout (DEF) | Waveforms | Interactive Actions |

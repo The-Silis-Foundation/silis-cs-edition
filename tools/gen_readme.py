@@ -73,6 +73,9 @@ def build_dashboard_markdown(projects):
     lines.append("")
     lines.append("## ASIC Projects & Control Center")
     lines.append("")
+    lines.append("> [!TIP]")
+    lines.append("> **Interactive ASIC Studio Dashboard**: For one-click project creation, schematic probing, and physical design inspection, launch the [Silis ASIC Studio Dashboard](command:silis.openDashboard) (or press `Ctrl+Shift+P` and type `Silis: Open ASIC Studio Dashboard`).")
+    lines.append("")
     lines.append("Manage and inspect chip designs directly from this Codespace workspace. Click any action below to open interactive tools inside dedicated VS Code editor tabs.")
     lines.append("")
 

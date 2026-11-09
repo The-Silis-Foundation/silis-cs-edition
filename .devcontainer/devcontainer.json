@@ -15,19 +15,23 @@
   "portsAttributes": {
     "8765": {
       "label": "Silis Native CAD Web Hub (Schematic & Waveforms)",
-      "onAutoForward": "silent"
+      "onAutoForward": "silent",
+      "visibility": "public"
     },
     "6081": {
       "label": "Silis 2D Layout (FastSiliconPeeker)",
-      "onAutoForward": "silent"
+      "onAutoForward": "silent",
+      "visibility": "public"
     },
     "6082": {
       "label": "Silis Frontend Studio & Waveform (SignalPeeker)",
-      "onAutoForward": "silent"
+      "onAutoForward": "silent",
+      "visibility": "public"
     },
     "6084": {
       "label": "Silis Floorplan & Power Studio (FPS)",
-      "onAutoForward": "silent"
+      "onAutoForward": "silent",
+      "visibility": "public"
     }
   },
   "customizations": {
@@ -40,6 +44,7 @@
       ],
       "settings": {
         "workbench.startupEditor": "readme",
+        "markdown.preview.openMarkdownLinks": "inEditor",
         "workbench.editor.showTabs": "multiple",
         "workbench.editor.openSideBySideDirection": "right",
         "workbench.panel.defaultLocation": "bottom",

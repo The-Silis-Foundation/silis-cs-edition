@@ -46,8 +46,11 @@
     // Auto-fetch waveform in Codespaces / Web mode via /api/waveform
     (function() {
       const urlParams = new URLSearchParams(window.location.search);
+      const targetFile = urlParams.get('file') || '';
       const projectDir = urlParams.get('project') || '';
-      const apiUrl = '/api/waveform' + (projectDir ? '?project=' + encodeURIComponent(projectDir) : '');
+      const apiUrl = targetFile
+        ? ('/api/waveform?file=' + encodeURIComponent(targetFile))
+        : ('/api/waveform' + (projectDir ? '?project=' + encodeURIComponent(projectDir) : ''));
 
       fetch(apiUrl)
         .then(function(res) {

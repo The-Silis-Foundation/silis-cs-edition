@@ -414,9 +414,12 @@
         // Auto-fetch netlist in Codespaces / Web mode via /api/netlist
         (function() {
             const urlParams = new URLSearchParams(window.location.search);
+            const targetFile = urlParams.get('file') || '';
             const moduleName = urlParams.get('module') || 'chip_top';
             const projectDir = urlParams.get('project') || '';
-            const apiUrl = '/api/netlist?module=' + encodeURIComponent(moduleName) + (projectDir ? '&project=' + encodeURIComponent(projectDir) : '');
+            const apiUrl = targetFile
+                ? ('/api/netlist?file=' + encodeURIComponent(targetFile))
+                : ('/api/netlist?module=' + encodeURIComponent(moduleName) + (projectDir ? '&project=' + encodeURIComponent(projectDir) : ''));
 
             fetch(apiUrl)
                 .then(function(res) {
