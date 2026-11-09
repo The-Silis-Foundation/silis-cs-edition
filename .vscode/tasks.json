@@ -2,34 +2,33 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "Open Floorplan Studio (Port 6084)",
+      "label": "Silis: Open CAD Workbench Dock",
       "type": "shell",
-      "command": "code --command \"simpleBrowser.show\" \"http://localhost:6084/vnc.html?autoconnect=true&resize=remote\"",
-      "problemMatcher": [],
+      "command": "python3 core/cli/cs_launcher.py projects/demo_soc",
       "presentation": {
-        "reveal": "never",
-        "panel": "shared"
-      }
+        "reveal": "silent"
+      },
+      "runOptions": {
+        "runOn": "folderOpen"
+      },
+      "problemMatcher": []
     },
     {
-      "label": "Open 2D Layout Canvas (Port 6081)",
+      "label": "Silis: Run Synthesis (Yosys)",
       "type": "shell",
-      "command": "code --command \"simpleBrowser.show\" \"http://localhost:6081/vnc.html?autoconnect=true&resize=remote\"",
-      "problemMatcher": [],
-      "presentation": {
-        "reveal": "never",
-        "panel": "shared"
-      }
+      "command": "python3 silis.py --run-synth",
+      "group": "build",
+      "problemMatcher": []
     },
     {
-      "label": "Open Frontend Studio & Waveforms (Port 6082)",
+      "label": "Silis: Run Full ASIC Flow (OpenROAD)",
       "type": "shell",
-      "command": "code --command \"simpleBrowser.show\" \"http://localhost:6082/vnc.html?autoconnect=true&resize=remote\"",
-      "problemMatcher": [],
-      "presentation": {
-        "reveal": "never",
-        "panel": "shared"
-      }
+      "command": "python3 silis.py --run-all",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": []
     }
   ]
 }

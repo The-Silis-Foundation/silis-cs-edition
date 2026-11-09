@@ -34,7 +34,16 @@ pip3 install --no-cache-dir --break-system-packages \
     numpy \
     websockify
 
-# 3. Environment configuration & system-wide symlinks
+# 3. Install Silis CAD Workbench VS Code Extension locally
+EXT_TARGET_DIR="/home/vscode/.vscode-server/extensions/the-silis-foundation.silis-cad-workbench-1.0.0"
+if [ ! -d "/home/vscode/.vscode-server/extensions" ]; then
+    mkdir -p "/home/vscode/.vscode-server/extensions"
+fi
+rm -rf "$EXT_TARGET_DIR"
+cp -r "${WORKSPACE_DIR}/extension" "$EXT_TARGET_DIR"
+chown -R vscode:vscode "/home/vscode/.vscode-server" 2>/dev/null || true
+
+# 4. Environment configuration & system-wide symlinks
 WORKSPACE_DIR="/workspaces/silis-cs-edition"
 if [ ! -d "$WORKSPACE_DIR" ]; then
     WORKSPACE_DIR="$(pwd)"

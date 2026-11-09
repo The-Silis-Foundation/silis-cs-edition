@@ -1,0 +1,112 @@
+{
+  "name": "silis-cad-workbench",
+  "displayName": "Silis ASIC CAD Workbench",
+  "description": "Zero-install cloud EDA workbench for GitHub Codespaces & VS Code Web: DigitalJS schematic viewer, ROHD waveforms, 2D silicon peeker, and floorplanner.",
+  "version": "1.0.0",
+  "publisher": "the-silis-foundation",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Other",
+    "Visualization",
+    "Programming Languages"
+  ],
+  "main": "./extension.js",
+  "browser": "./extension.js",
+  "activationEvents": [
+    "onStartupFinished",
+    "onView:silis-cad-explorer",
+    "onCustomEditor:silis.vcdViewer",
+    "onCustomEditor:silis.schematicViewer"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "silis-cad-workbench",
+          "title": "Silis CAD",
+          "icon": "$(circuit-board)"
+        }
+      ]
+    },
+    "views": {
+      "silis-cad-workbench": [
+        {
+          "type": "webview",
+          "id": "silis-cad-sidebar",
+          "name": "CAD Tools & Flow"
+        }
+      ],
+      "panel": [
+        {
+          "type": "webview",
+          "id": "silis-bottom-dock",
+          "name": "Silis Waveforms & Layout"
+        }
+      ]
+    },
+    "customEditors": [
+      {
+        "viewType": "silis.vcdViewer",
+        "displayName": "ROHD Waveform Viewer",
+        "selector": [
+          {
+            "filenamePattern": "*.vcd"
+          },
+          {
+            "filenamePattern": "*.fst"
+          }
+        ],
+        "priority": "default"
+      },
+      {
+        "viewType": "silis.schematicViewer",
+        "displayName": "DigitalJS Schematic Viewer",
+        "selector": [
+          {
+            "filenamePattern": "structural_*.json"
+          }
+        ],
+        "priority": "default"
+      }
+    ],
+    "commands": [
+      {
+        "command": "silis.openWorkbench",
+        "title": "Silis: Open ASIC CAD Workbench Dock",
+        "category": "Silis"
+      },
+      {
+        "command": "silis.openSchematic",
+        "title": "Silis: Open Schematic Viewer",
+        "category": "Silis"
+      },
+      {
+        "command": "silis.openWaveforms",
+        "title": "Silis: Open ROHD Waveforms",
+        "category": "Silis"
+      },
+      {
+        "command": "silis.openLayout",
+        "title": "Silis: Open 2D Layout Canvas",
+        "category": "Silis"
+      },
+      {
+        "command": "silis.openFloorplanner",
+        "title": "Silis: Open Floorplan & Power Studio",
+        "category": "Silis"
+      },
+      {
+        "command": "silis.runSynthesis",
+        "title": "Silis: Run Synthesis (Yosys)",
+        "category": "Silis"
+      },
+      {
+        "command": "silis.runAll",
+        "title": "Silis: Run Full ASIC Tapeout Flow (OpenROAD)",
+        "category": "Silis"
+      }
+    ]
+  }
+}
