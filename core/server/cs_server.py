@@ -44,7 +44,13 @@ class SilisCadHandler(http.server.SimpleHTTPRequestHandler):
 
     def do_OPTIONS(self):
         self.send_response(200)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS, HEAD")
+        self.send_header("Access-Control-Allow-Headers", "*")
         self.end_headers()
+
+    def do_HEAD(self):
+        self.do_GET()
 
     def _send_json(self, status_code, data):
         self.send_response(status_code)
