@@ -2,7 +2,7 @@
 set -e
 
 echo "================================================================="
-echo "SILIS CS EDITION: RAPID CONTAINER PROVISIONING"
+echo "SILIS CS EDITION: DIRECT REPO RUNTIME ACTIVATION"
 echo "================================================================="
 
 WORKSPACE_DIR="/workspaces/silis-cs-edition"
@@ -15,29 +15,31 @@ if [ -f "/usr/share/novnc/vnc.html" ] && [ ! -f "/usr/share/novnc/index.html" ];
     sudo ln -s /usr/share/novnc/vnc.html /usr/share/novnc/index.html
 fi
 
-# 1. Fetch and unpack Dedicated Python + Qt Runtime AppImage into /opt/silis/runtime
+# 1. Unpack AppImage committed directly in repo (dist/silis-python-qt-x86_64.AppImage)
 OPT_DIR="/opt/silis/runtime"
-RUNTIME_APPIMAGE="/tmp/silis-python-qt-x86_64.AppImage"
+REPO_APPIMAGE="${WORKSPACE_DIR}/dist/silis-python-qt-x86_64.AppImage"
 
 if [ ! -d "$OPT_DIR" ]; then
-    echo "Downloading 270MB Standalone Python+Qt AppImage from release..."
-    sudo mkdir -p /opt/silis
-    sudo wget -q --show-progress \
-        "https://github.com/The-Silis-Foundation/silis-cs-edition/releases/download/v1.0.0-runtime/silis-python-qt-x86_64.AppImage" \
-        -O "$RUNTIME_APPIMAGE"
-    sudo chmod +x "$RUNTIME_APPIMAGE"
-    echo "Extracting AppImage into $OPT_DIR..."
-    (cd /opt/silis && sudo "$RUNTIME_APPIMAGE" --appimage-extract && sudo mv squashfs-root runtime)
-    sudo rm -f "$RUNTIME_APPIMAGE"
+    if [ -f "$REPO_APPIMAGE" ]; then
+        echo "Extracting runtime from repo binary: $REPO_APPIMAGE..."
+        sudo mkdir -p /opt/silis
+        chmod +x "$REPO_APPIMAGE"
+        (cd /opt/silis && sudo "$REPO_APPIMAGE" --appimage-extract && sudo mv squashfs-root runtime)
+    else
+        echo "Error: Repo AppImage $REPO_APPIMAGE not found!"
+        exit 1
+    fi
 fi
 
-# 2. Configure system-wide python symlinks to use the pre-baked AppImage runtime
+# 2. Configure system shared libraries and Python symlinks
 if [ -d "/opt/silis/runtime/opt/python" ]; then
-    echo "Configuring /opt/silis/runtime/opt/python as active system Python 3.12..."
+    echo "Activating /opt/silis/runtime..."
+    sudo chmod -R a+rX /opt/silis
     sudo mkdir -p /etc/ld.so.conf.d
-    echo "/opt/silis/runtime/opt/python/lib" | sudo tee /etc/ld.so.conf.d/silis_python.conf > /dev/null
+    echo "/opt/silis/runtime/usr/lib/x86_64-linux-gnu" | sudo tee /etc/ld.so.conf.d/silis_runtime.conf > /dev/null
+    echo "/opt/silis/runtime/opt/python/lib" | sudo tee -a /etc/ld.so.conf.d/silis_runtime.conf > /dev/null
     sudo ldconfig 2>/dev/null || true
-    sudo chmod -R a+rX /opt/silis 2>/dev/null || true
+
     sudo ln -sf /opt/silis/runtime/opt/python/bin/python3 /usr/local/bin/python3
     sudo ln -sf /opt/silis/runtime/opt/python/bin/python3 /usr/local/bin/python
     sudo ln -sf /opt/silis/runtime/opt/python/bin/pip3 /usr/local/bin/pip3
@@ -62,8 +64,9 @@ sudo ln -sf "${WORKSPACE_DIR}/bin/silis" /usr/bin/silis
 {
     echo "export PATH=\"/opt/silis/runtime/opt/python/bin:${WORKSPACE_DIR}/bin:${WORKSPACE_DIR}/third-party/bin:\$PATH\""
     echo "export PYTHONPATH=\"/opt/silis/runtime/opt/python/lib/python3.12/site-packages:${WORKSPACE_DIR}:${WORKSPACE_DIR}/core:${WORKSPACE_DIR}/third-party/siliconcompiler:\$PYTHONPATH\""
+    echo "export LD_LIBRARY_PATH=\"/opt/silis/runtime/usr/lib/x86_64-linux-gnu:/opt/silis/runtime/opt/python/lib:\$LD_LIBRARY_PATH\""
     echo 'export LIBGL_ALWAYS_SOFTWARE=1'
     echo 'export QT_QPA_PLATFORM=xcb'
 } | sudo tee /etc/profile.d/silis_env.sh > /dev/null
 
-echo "Silis CS Edition setup completed in seconds."
+echo "Silis CS Edition setup completed directly from repository binary in seconds."

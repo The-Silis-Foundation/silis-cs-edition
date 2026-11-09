@@ -44,6 +44,10 @@ PYTHONNOUSERSITE=1 "${APPDIR}/opt/python/bin/pip3" install --no-cache-dir \
     numpy \
     websockify
 
+# 2b. Collect all external shared libraries (libxcb*, libxkbcommon*, libEGL*, etc.)
+echo "=== Bundling system shared libraries into AppDir/usr/lib/x86_64-linux-gnu ==="
+python3 "${REPO_DIR}/packaging/bundle_shared_libs.py" "${APPDIR}"
+
 # 3. Create AppRun script for the Python/Qt runtime container
 cat << 'APPRUN_EOF' > "${APPDIR}/AppRun"
 #!/bin/bash
@@ -60,7 +64,7 @@ WEBENGINE_LIB="$PY_SITE/PyQt6_WebEngine/Qt6/lib"
 
 export PYTHONHOME="$PY_HOME"
 export PATH="$PY_HOME/bin:$PATH"
-export LD_LIBRARY_PATH="$PY_HOME/lib:$QT6_LIB:$WEBENGINE_LIB:$LD_LIBRARY_PATH"
+export LD_LIBRARY_PATH="$APPDIR/usr/lib/x86_64-linux-gnu:$APPDIR/usr/lib:$PY_HOME/lib:$QT6_LIB:$WEBENGINE_LIB:$LD_LIBRARY_PATH"
 export PYTHONPATH="$PY_SITE:$PYTHONPATH"
 
 # Qt WebEngine discovery
