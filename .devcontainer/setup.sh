@@ -2,10 +2,15 @@
 set -e
 
 echo "================================================================="
-echo "SILIS CS EDITION: SETTING UP CONTAINER DEPENDENCIES"
+echo "SILIS CS EDITION: CONTAINER SETUP"
 echo "================================================================="
 
-# 1. Update package lists and install minimal display and X11/VNC server tools
+WORKSPACE_DIR="/workspaces/silis-cs-edition"
+if [ ! -d "$WORKSPACE_DIR" ]; then
+    WORKSPACE_DIR="$(pwd)"
+fi
+
+# 1. Install lightweight display and network servers
 sudo apt-get update
 sudo apt-get install -y --no-install-recommends \
     xvfb \
@@ -18,52 +23,44 @@ sudo apt-get install -y --no-install-recommends \
     libosmesa6-dev \
     libtcl8.6 \
     libtk8.6 \
-    wget \
-    zsync
+    wget
 
-# Fix missing index.html in /usr/share/novnc if necessary
+# Ensure novnc index.html link
 if [ -f "/usr/share/novnc/vnc.html" ] && [ ! -f "/usr/share/novnc/index.html" ]; then
     sudo ln -s /usr/share/novnc/vnc.html /usr/share/novnc/index.html
 fi
 
-# 2. Provision Standalone AppImage as the Python & Qt Runtime Container
-APPIMAGE_DIR="/opt/silis"
-APPIMAGE_BIN="${APPIMAGE_DIR}/Silis-x86_64.AppImage"
-sudo mkdir -p "${APPIMAGE_DIR}"
+# 2. Extract or Link Dedicated Python + Qt Runtime AppImage
+RUNTIME_APPIMAGE="${WORKSPACE_DIR}/dist/silis-python-qt-x86_64.AppImage"
+OPT_DIR="/opt/silis/runtime"
 
-if [ ! -f "${APPIMAGE_BIN}" ]; then
-    echo "Downloading standalone Silis AppImage runtime (Python 3.12 + Qt6 + PDK)..."
-    sudo wget -q --show-progress \
-        "https://github.com/The-Silis-Foundation/silis/releases/latest/download/Silis-x86_64.AppImage" \
-        -O "${APPIMAGE_BIN}" || true
-    if [ -f "${APPIMAGE_BIN}" ]; then
-        sudo chmod +x "${APPIMAGE_BIN}"
-        echo "Extracting AppImage into /opt/silis/runtime for instant access..."
-        (cd "${APPIMAGE_DIR}" && sudo "${APPIMAGE_BIN}" --appimage-extract && sudo mv squashfs-root runtime) || true
+if [ -f "$RUNTIME_APPIMAGE" ]; then
+    echo "Found repository Python+Qt AppImage: $RUNTIME_APPIMAGE"
+    if [ ! -d "$OPT_DIR" ]; then
+        echo "Extracting Python+Qt AppImage into $OPT_DIR..."
+        sudo mkdir -p /opt/silis
+        cd /opt/silis
+        sudo "$RUNTIME_APPIMAGE" --appimage-extract
+        sudo mv squashfs-root runtime
     fi
+elif [ -d "/opt/silis/runtime/opt/python" ]; then
+    echo "Using existing /opt/silis/runtime"
+else
+    # Fallback to system PyQt6 packages
+    sudo apt-get install -y --no-install-recommends python3 python3-pip python3-pyqt6 python3-pyqt6.qsci python3-pyqt6.qtwebengine
 fi
 
-# 3. Configure Python environment: Link embedded AppImage Python/Qt or bridge system packages
+# 3. Configure system-wide python symlinks to use the runtime container
 if [ -d "/opt/silis/runtime/opt/python" ]; then
-    echo "Configuring /opt/silis embedded Python 3.12 as default..."
     sudo ln -sf /opt/silis/runtime/opt/python/bin/python3 /usr/local/bin/python3
     sudo ln -sf /opt/silis/runtime/opt/python/bin/python3 /usr/local/bin/python
     sudo ln -sf /opt/silis/runtime/opt/python/bin/pip3 /usr/local/bin/pip3
     sudo ln -sf /opt/silis/runtime/opt/python/bin/pip3 /usr/local/bin/pip
-    PYTHON_BIN="/opt/silis/runtime/opt/python/bin/python3"
-else
-    # Fallback to system apt packages if AppImage download is bypassed
-    sudo apt-get install -y --no-install-recommends python3 python3-pyqt6 python3-pyqt6.qsci python3-pyqt6.qtwebengine
-    PYTHON_BIN="$(which python3 || echo "/usr/bin/python3")"
-    PIP_BIN="$(which pip3 || echo "$PYTHON_BIN -m pip")"
-    ACTIVE_SITE="$($PYTHON_BIN -c "import site; print(site.getsitepackages()[0])" 2>/dev/null || echo "")"
-    if [ -n "$ACTIVE_SITE" ] && [ -d "/usr/lib/python3/dist-packages" ]; then
-        echo "/usr/lib/python3/dist-packages" | sudo tee "$ACTIVE_SITE/system_dist_packages.pth" > /dev/null
-    fi
-    $PIP_BIN install --no-cache-dir gdstk numpy websockify || true
+    sudo ln -sf /opt/silis/runtime/opt/python/bin/python3 /usr/bin/python3 2>/dev/null || true
+    sudo ln -sf /opt/silis/runtime/opt/python/bin/python3 /usr/bin/python 2>/dev/null || true
 fi
 
-# 3. Install Silis CAD Workbench VS Code Extension locally
+# 4. Install Silis CAD Workbench VS Code Extension locally
 EXT_TARGET_DIR="/home/vscode/.vscode-server/extensions/the-silis-foundation.silis-cad-workbench-1.0.0"
 if [ ! -d "/home/vscode/.vscode-server/extensions" ]; then
     mkdir -p "/home/vscode/.vscode-server/extensions"
@@ -72,24 +69,9 @@ rm -rf "$EXT_TARGET_DIR"
 cp -r "${WORKSPACE_DIR}/extension" "$EXT_TARGET_DIR"
 chown -R vscode:vscode "/home/vscode/.vscode-server" 2>/dev/null || true
 
-# 4. Environment configuration & system-wide symlinks
-WORKSPACE_DIR="/workspaces/silis-cs-edition"
-if [ ! -d "$WORKSPACE_DIR" ]; then
-    WORKSPACE_DIR="$(pwd)"
-fi
-
-# Ensure /usr/bin/silis symlink is always available in PATH
+# 5. CLI symlinks in PATH
 sudo ln -sf "${WORKSPACE_DIR}/bin/silis" /usr/local/bin/silis
 sudo ln -sf "${WORKSPACE_DIR}/bin/silis" /usr/bin/silis
-
-# Ensure python3 and python symlinks are present in both /usr/bin and /usr/local/bin
-PYTHON_EXECUTABLE="$(command -v python3 || command -v python || echo "")"
-if [ -n "$PYTHON_EXECUTABLE" ]; then
-    sudo ln -sf "$PYTHON_EXECUTABLE" /usr/bin/python3
-    sudo ln -sf "$PYTHON_EXECUTABLE" /usr/bin/python
-    sudo ln -sf "$PYTHON_EXECUTABLE" /usr/local/bin/python3
-    sudo ln -sf "$PYTHON_EXECUTABLE" /usr/local/bin/python
-fi
 
 {
     echo "export PATH=\"${WORKSPACE_DIR}/bin:${WORKSPACE_DIR}/third-party/bin:\$PATH\""
