@@ -39,6 +39,22 @@ function activate(context) {
         vscode.window.registerWebviewViewProvider('silis-cad-sidebar', sidebarProvider)
     );
 
+    // 1b. Bottom Panel Dock Provider (Waveforms & Layout tabbed next to Terminal)
+    const bottomDockProvider = {
+        async resolveWebviewView(webviewView) {
+            webviewView.webview.options = { enableScripts: true };
+            try {
+                const extUri = await vscode.env.asExternalUri(vscode.Uri.parse('http://127.0.0.1:8765/waveforms/index.html?project=projects/demo_soc'));
+                webviewView.webview.html = getIframeHtml(extUri.toString(), 'ROHD Waveforms');
+            } catch (e) {
+                webviewView.webview.html = getIframeHtml('http://127.0.0.1:8765/waveforms/index.html?project=projects/demo_soc', 'ROHD Waveforms');
+            }
+        }
+    };
+    context.subscriptions.push(
+        vscode.window.registerWebviewViewProvider('silis-bottom-dock', bottomDockProvider)
+    );
+
     // 2. Custom Editor Provider for VCD / Waveforms
     const vcdEditorProvider = {
         async resolveCustomTextEditor(document, webviewPanel) {
@@ -65,62 +81,67 @@ function activate(context) {
 
     // 4. Commands
     context.subscriptions.push(
-        vscode.commands.registerCommand('silis.openWorkbench', () => {
+        vscode.commands.registerCommand('silis.openWorkbench', async () => {
             const panel = vscode.window.createWebviewPanel(
                 'silisWorkbench',
                 'Silis CAD Workbench',
                 vscode.ViewColumn.Beside,
                 { enableScripts: true, retainContextWhenHidden: true }
             );
-            panel.webview.html = getIframeHtml('http://localhost:8765/workbench?project=projects/demo_soc', 'Silis CAD Workbench');
+            const uri = await resolveUrl('http://127.0.0.1:8765/workbench?project=projects/demo_soc');
+            panel.webview.html = getIframeHtml(uri, 'Silis CAD Workbench');
         })
     );
 
     context.subscriptions.push(
-        vscode.commands.registerCommand('silis.openSchematic', () => {
+        vscode.commands.registerCommand('silis.openSchematic', async () => {
             const panel = vscode.window.createWebviewPanel(
                 'silisSchematic',
                 'Schematic Viewer (DigitalJS)',
                 vscode.ViewColumn.Beside,
                 { enableScripts: true, retainContextWhenHidden: true }
             );
-            panel.webview.html = getIframeHtml('http://localhost:8765/schematic/digitaljs.html?module=chip_top&project=projects/demo_soc', 'Schematic Viewer');
+            const uri = await resolveUrl('http://127.0.0.1:8765/schematic/digitaljs.html?module=chip_top&project=projects/demo_soc');
+            panel.webview.html = getIframeHtml(uri, 'Schematic Viewer');
         })
     );
 
     context.subscriptions.push(
-        vscode.commands.registerCommand('silis.openWaveforms', () => {
+        vscode.commands.registerCommand('silis.openWaveforms', async () => {
             const panel = vscode.window.createWebviewPanel(
                 'silisWaveforms',
                 'Waveforms (ROHD)',
                 vscode.ViewColumn.Beside,
                 { enableScripts: true, retainContextWhenHidden: true }
             );
-            panel.webview.html = getIframeHtml('http://localhost:8765/waveforms/index.html?project=projects/demo_soc', 'Waveforms');
+            const uri = await resolveUrl('http://127.0.0.1:8765/waveforms/index.html?project=projects/demo_soc');
+            panel.webview.html = getIframeHtml(uri, 'Waveforms');
         })
     );
 
     context.subscriptions.push(
-        vscode.commands.registerCommand('silis.openLayout', () => {
+        vscode.commands.registerCommand('silis.openLayout', async () => {
             const panel = vscode.window.createWebviewPanel(
                 'silisLayout',
                 '2D Layout (FastSiliconPeeker)',
                 vscode.ViewColumn.Beside,
                 { enableScripts: true, retainContextWhenHidden: true }
             );
-            panel.webview.html = getIframeHtml('http://localhost:6081/vnc.html?autoconnect=true&resize=remote', '2D Layout');
+            const uri = await resolveUrl('http://127.0.0.1:6081/vnc.html?autoconnect=true&resize=remote');
+            panel.webview.html = getIframeHtml(uri, '2D Layout');
         })
     );
 
     context.subscriptions.push(
-        vscode.commands.registerCommand('silis.openFloorplanner', () => {
+        vscode.commands.registerCommand('silis.openFloorplanner', async () => {
             const panel = vscode.window.createWebviewPanel(
                 'silisFPS',
                 'Floorplan & Power Studio',
                 vscode.ViewColumn.Beside,
                 { enableScripts: true, retainContextWhenHidden: true }
             );
-            panel.webview.html = getIframeHtml('http://localhost:6084/vnc.html?autoconnect=true&resize=remote', 'Floorplan Studio');
+            const uri = await resolveUrl('http://127.0.0.1:6084/vnc.html?autoconnect=true&resize=remote');
+            panel.webview.html = getIframeHtml(uri, 'Floorplan Studio');
         })
     );
 
@@ -154,18 +175,29 @@ function activate(context) {
     }, 1000);
 }
 
+async function resolveUrl(localUrl) {
+    try {
+        const uri = vscode.Uri.parse(localUrl);
+        const externalUri = await vscode.env.asExternalUri(uri);
+        return externalUri.toString();
+    } catch (e) {
+        return localUrl;
+    }
+}
+
 function getIframeHtml(url, title) {
     return `<!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src * 'unsafe-inline' 'unsafe-eval' data: blob: ws: wss:; frame-src *; child-src *;">
     <style>
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #181825; }
         iframe { width: 100%; height: 100%; border: none; }
     </style>
 </head>
 <body>
-    <iframe src="${url}"></iframe>
+    <iframe src="${url}" sandbox="allow-scripts allow-same-origin allow-forms allow-pointer-lock allow-popups"></iframe>
 </body>
 </html>`;
 }

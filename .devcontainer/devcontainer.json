@@ -23,24 +23,27 @@
     },
     "6084": {
       "label": "Silis Floorplan & Power Studio (FPS)",
-      "onAutoForward": "openBrowser"
+      "onAutoForward": "silent"
     }
   },
   "customizations": {
     "vscode": {
       "extensions": [
         "ms-python.python",
+        "eirikpre.systemverilog",
         "mshr-h.VerilogHDL",
         "eamodio.gitlens"
       ],
       "settings": {
         "workbench.editor.showTabs": "multiple",
         "workbench.editor.openSideBySideDirection": "right",
-        "files.autoSave": "afterDelay",
+        "workbench.panel.defaultLocation": "bottom",
         "python.defaultInterpreterPath": "/usr/local/python/current/bin/python",
         "files.associations": {
-          "*.v": "verilog",
+          "*.v": "systemverilog",
           "*.sv": "systemverilog",
+          "*.svh": "systemverilog",
+          "*.vh": "systemverilog",
           "*.sdc": "tcl",
           "*.upf": "tcl",
           "*.silisproj": "json"
