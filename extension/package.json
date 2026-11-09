@@ -14,12 +14,6 @@
   ],
   "main": "./extension.js",
   "browser": "./extension.js",
-  "activationEvents": [
-    "onStartupFinished",
-    "onView:silis-cad-explorer",
-    "onCustomEditor:silis.vcdViewer",
-    "onCustomEditor:silis.schematicViewer"
-  ],
   "contributes": {
     "viewsContainers": {
       "activitybar": [

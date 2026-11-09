@@ -8,12 +8,15 @@ echo "================================================================="
 # 1. Update package lists and install runtime packages
 sudo apt-get update
 sudo apt-get install -y --no-install-recommends \
+    python3 \
+    python3-minimal \
+    python3-pip \
+    python3-venv \
     xvfb \
     x11vnc \
     novnc \
     websockify \
     net-tools \
-    python3-pip \
     python3-pyqt6 \
     python3-pyqt6.qsci \
     python3-pyqt6.qtwebengine \

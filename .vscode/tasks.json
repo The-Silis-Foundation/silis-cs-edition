@@ -4,7 +4,7 @@
     {
       "label": "Silis: Open CAD Workbench Dock",
       "type": "shell",
-      "command": "python3 core/cli/cs_launcher.py projects/demo_soc",
+      "command": "/usr/bin/python3 core/cli/cs_launcher.py projects/demo_soc || python3 core/cli/cs_launcher.py projects/demo_soc",
       "presentation": {
         "reveal": "silent"
       },
