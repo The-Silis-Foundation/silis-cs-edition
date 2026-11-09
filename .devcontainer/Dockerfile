@@ -9,7 +9,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     websockify \
     net-tools \
     libgl1-mesa-dri \
-    libgl1-mesa-glx \
+    libgl1 \
+    libglx-mesa0 \
     libosmesa6-dev \
     libtcl8.6 \
     libtk8.6 \
