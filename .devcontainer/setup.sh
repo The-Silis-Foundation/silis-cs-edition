@@ -31,16 +31,25 @@ if [ -f "/usr/share/novnc/vnc.html" ] && [ ! -f "/usr/share/novnc/index.html" ];
     sudo ln -s /usr/share/novnc/vnc.html /usr/share/novnc/index.html
 fi
 
-# 2. Install Python runtime dependencies into the active Python environment
+# 2. Link system PyQt6 and libraries directly to active Python environment
 PYTHON_BIN="$(which python3 || which python || echo "/usr/bin/python3")"
 PIP_BIN="$(which pip3 || which pip || echo "$PYTHON_BIN -m pip")"
 
-$PIP_BIN install --no-cache-dir \
-    PyQt6 \
-    PyQt6-QScintilla \
-    gdstk \
-    numpy \
-    websockify
+# Bridge system dist-packages (PyQt6, QtWebEngine) into the active python site-packages
+ACTIVE_SITE="$($PYTHON_BIN -c "import site; print(site.getsitepackages()[0])" 2>/dev/null || echo "")"
+if [ -n "$ACTIVE_SITE" ] && [ -d "/usr/lib/python3/dist-packages" ]; then
+    echo "Bridging system PyQt6 packages to active Python site-packages ($ACTIVE_SITE)..."
+    echo "/usr/lib/python3/dist-packages" | sudo tee "$ACTIVE_SITE/system_dist_packages.pth" > /dev/null
+fi
+
+# Verify PyQt6 import
+if ! $PYTHON_BIN -c "import PyQt6" 2>/dev/null; then
+    echo "Installing PyQt6 directly via pip into active python..."
+    $PIP_BIN install --no-cache-dir PyQt6 PyQt6-QScintilla gdstk numpy websockify
+else
+    echo "PyQt6 successfully detected in active Python environment."
+    $PIP_BIN install --no-cache-dir gdstk numpy websockify || true
+fi
 
 # 3. Install Silis CAD Workbench VS Code Extension locally
 EXT_TARGET_DIR="/home/vscode/.vscode-server/extensions/the-silis-foundation.silis-cad-workbench-1.0.0"
