@@ -61,12 +61,15 @@ sleep 2
     cd "${WORKSPACE_DIR}"
     python3 -c "
 import sys, os
-from PyQt6.QtWidgets import QApplication
+sys.path.insert(0, os.path.join('${WORKSPACE_DIR}', 'core'))
+sys.path.insert(0, '${WORKSPACE_DIR}')
+from PyQt6.QtWidgets import QApplication, QWidget
 from backendflow.flow.backendflow import BackendWidget
 
 app = QApplication(sys.argv)
-class MockIDE:
+class MockIDE(QWidget):
     def __init__(self):
+        super().__init__()
         self.headless = False
         self.cwd = os.path.join('${WORKSPACE_DIR}', 'projects', 'demo_soc')
         self.project_config = {'pdk': 'sky130'}

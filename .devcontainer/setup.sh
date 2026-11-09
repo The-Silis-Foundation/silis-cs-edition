@@ -52,14 +52,15 @@ if [ -d "/opt/silis/runtime/opt/python" ]; then
     sudo ln -sf /opt/silis/runtime/opt/python/bin/pip3 /usr/local/bin/pip
     sudo ln -sf /opt/silis/runtime/opt/python/bin/python3 /usr/bin/python3 2>/dev/null || true
     sudo ln -sf /opt/silis/runtime/opt/python/bin/python3 /usr/bin/python 2>/dev/null || true
+    python3 -m pip install Pillow --no-warn-script-location 2>/dev/null || true
 fi
 
-# 3. Install Silis CAD Workbench VS Code Extension locally
+# 3. Install Silis CAD Workbench VS Code Extension locally via symlink
 for EXT_BASE in "/home/vscode/.vscode-server/extensions" "/home/vscode/.vscode-remote/extensions" "${HOME}/.vscode-server/extensions"; do
     if mkdir -p "$EXT_BASE" 2>/dev/null; then
         TARGET="${EXT_BASE}/the-silis-foundation.silis-cad-workbench-1.0.0"
         rm -rf "$TARGET"
-        cp -r "${WORKSPACE_DIR}/extension" "$TARGET" 2>/dev/null || true
+        ln -sf "${WORKSPACE_DIR}/extension" "$TARGET" 2>/dev/null || true
     fi
 done
 chown -R vscode:vscode "/home/vscode/.vscode-server" "/home/vscode/.vscode-remote" 2>/dev/null || true
