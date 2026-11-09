@@ -60,6 +60,29 @@
         "selector": [
           {
             "filenamePattern": "structural_*.json"
+          },
+          {
+            "filenamePattern": "*.synth.json"
+          }
+        ],
+        "priority": "default"
+      },
+      {
+        "viewType": "silis.defViewer",
+        "displayName": "Silis 2D Layout Peeker (DEF)",
+        "selector": [
+          {
+            "filenamePattern": "*.def"
+          }
+        ],
+        "priority": "default"
+      },
+      {
+        "viewType": "silis.gdsViewer",
+        "displayName": "Silis GDSII Viewer",
+        "selector": [
+          {
+            "filenamePattern": "*.gds"
           }
         ],
         "priority": "default"

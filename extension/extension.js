@@ -79,13 +79,37 @@ function activate(context) {
         vscode.window.registerCustomEditorProvider('silis.schematicViewer', schematicEditorProvider)
     );
 
+    // 3b. Custom Editor Provider for DEF 2D Silicon Layout
+    const defEditorProvider = {
+        async resolveCustomTextEditor(document, webviewPanel) {
+            webviewPanel.webview.options = { enableScripts: true, retainContextWhenHidden: true };
+            const uri = await resolveUrl('http://127.0.0.1:6081/vnc.html?autoconnect=true&resize=remote');
+            webviewPanel.webview.html = getIframeHtml(uri, 'Silis 2D Layout: ' + document.fileName);
+        }
+    };
+    context.subscriptions.push(
+        vscode.window.registerCustomEditorProvider('silis.defViewer', defEditorProvider)
+    );
+
+    // 3c. Custom Editor Provider for GDSII
+    const gdsEditorProvider = {
+        async resolveCustomTextEditor(document, webviewPanel) {
+            webviewPanel.webview.options = { enableScripts: true, retainContextWhenHidden: true };
+            const uri = await resolveUrl('http://127.0.0.1:6081/vnc.html?autoconnect=true&resize=remote');
+            webviewPanel.webview.html = getIframeHtml(uri, 'Silis GDSII Viewer: ' + document.fileName);
+        }
+    };
+    context.subscriptions.push(
+        vscode.window.registerCustomEditorProvider('silis.gdsViewer', gdsEditorProvider)
+    );
+
     // 4. Commands
     context.subscriptions.push(
         vscode.commands.registerCommand('silis.openWorkbench', async () => {
             const panel = vscode.window.createWebviewPanel(
                 'silisWorkbench',
                 'Silis CAD Workbench',
-                vscode.ViewColumn.Beside,
+                vscode.ViewColumn.Active,
                 { enableScripts: true, retainContextWhenHidden: true }
             );
             const uri = await resolveUrl('http://127.0.0.1:8765/workbench?project=projects/demo_soc');
@@ -98,7 +122,7 @@ function activate(context) {
             const panel = vscode.window.createWebviewPanel(
                 'silisSchematic',
                 'Schematic Viewer (DigitalJS)',
-                vscode.ViewColumn.Beside,
+                vscode.ViewColumn.Active,
                 { enableScripts: true, retainContextWhenHidden: true }
             );
             const uri = await resolveUrl('http://127.0.0.1:8765/schematic/digitaljs.html?module=chip_top&project=projects/demo_soc');
@@ -111,7 +135,7 @@ function activate(context) {
             const panel = vscode.window.createWebviewPanel(
                 'silisWaveforms',
                 'Waveforms (ROHD)',
-                vscode.ViewColumn.Beside,
+                vscode.ViewColumn.Active,
                 { enableScripts: true, retainContextWhenHidden: true }
             );
             const uri = await resolveUrl('http://127.0.0.1:8765/waveforms/index.html?project=projects/demo_soc');
@@ -124,7 +148,7 @@ function activate(context) {
             const panel = vscode.window.createWebviewPanel(
                 'silisLayout',
                 '2D Layout (FastSiliconPeeker)',
-                vscode.ViewColumn.Beside,
+                vscode.ViewColumn.Active,
                 { enableScripts: true, retainContextWhenHidden: true }
             );
             const uri = await resolveUrl('http://127.0.0.1:6081/vnc.html?autoconnect=true&resize=remote');
@@ -137,7 +161,7 @@ function activate(context) {
             const panel = vscode.window.createWebviewPanel(
                 'silisFPS',
                 'Floorplan & Power Studio',
-                vscode.ViewColumn.Beside,
+                vscode.ViewColumn.Active,
                 { enableScripts: true, retainContextWhenHidden: true }
             );
             const uri = await resolveUrl('http://127.0.0.1:6084/vnc.html?autoconnect=true&resize=remote');

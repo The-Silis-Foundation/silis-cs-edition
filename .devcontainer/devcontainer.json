@@ -51,7 +51,10 @@
         "workbench.editorAssociations": {
           "*.vcd": "silis.vcdViewer",
           "*.fst": "silis.vcdViewer",
-          "structural_*.json": "silis.schematicViewer"
+          "structural_*.json": "silis.schematicViewer",
+          "*.synth.json": "silis.schematicViewer",
+          "*.def": "silis.defViewer",
+          "*.gds": "silis.gdsViewer"
         }
       }
     }
