@@ -34,6 +34,10 @@ fi
 # 2. Configure system-wide python symlinks to use the pre-baked AppImage runtime
 if [ -d "/opt/silis/runtime/opt/python" ]; then
     echo "Configuring /opt/silis/runtime/opt/python as active system Python 3.12..."
+    sudo mkdir -p /etc/ld.so.conf.d
+    echo "/opt/silis/runtime/opt/python/lib" | sudo tee /etc/ld.so.conf.d/silis_python.conf > /dev/null
+    sudo ldconfig 2>/dev/null || true
+    sudo chmod -R a+rX /opt/silis 2>/dev/null || true
     sudo ln -sf /opt/silis/runtime/opt/python/bin/python3 /usr/local/bin/python3
     sudo ln -sf /opt/silis/runtime/opt/python/bin/python3 /usr/local/bin/python
     sudo ln -sf /opt/silis/runtime/opt/python/bin/pip3 /usr/local/bin/pip3

@@ -6,10 +6,6 @@
   "features": {
     "ghcr.io/devcontainers/features/sshd:1": {
       "version": "latest"
-    },
-    "ghcr.io/devcontainers/features/python:1": {
-      "version": "3.12",
-      "installTools": true
     }
   },
   "forwardPorts": [8765, 6081, 6082, 6084],
@@ -43,7 +39,7 @@
         "workbench.editor.showTabs": "multiple",
         "workbench.editor.openSideBySideDirection": "right",
         "workbench.panel.defaultLocation": "bottom",
-        "python.defaultInterpreterPath": "/usr/local/python/current/bin/python",
+        "python.defaultInterpreterPath": "/opt/silis/runtime/opt/python/bin/python3",
         "files.associations": {
           "*.v": "systemverilog",
           "*.sv": "systemverilog",
