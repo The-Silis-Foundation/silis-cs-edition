@@ -39,18 +39,7 @@ function activate(context) {
         vscode.window.registerWebviewViewProvider('silis-cad-sidebar', sidebarProvider)
     );
 
-    // 2. Bottom Dock Webview Provider
-    const bottomDockProvider = {
-        resolveWebviewView(webviewView) {
-            webviewView.webview.options = { enableScripts: true };
-            webviewView.webview.html = getIframeHtml('http://localhost:8765/waveforms/index.html', 'ROHD Waveforms');
-        }
-    };
-    context.subscriptions.push(
-        vscode.window.registerWebviewViewProvider('silis-bottom-dock', bottomDockProvider)
-    );
-
-    // 3. Custom Editor Provider for VCD / Waveforms
+    // 2. Custom Editor Provider for VCD / Waveforms
     const vcdEditorProvider = {
         async resolveCustomTextEditor(document, webviewPanel) {
             webviewPanel.webview.options = { enableScripts: true };
@@ -62,7 +51,7 @@ function activate(context) {
         vscode.window.registerCustomEditorProvider('silis.vcdViewer', vcdEditorProvider)
     );
 
-    // 4. Custom Editor Provider for Structural Netlists (DigitalJS Schematic)
+    // 3. Custom Editor Provider for Structural Netlists (DigitalJS Schematic)
     const schematicEditorProvider = {
         async resolveCustomTextEditor(document, webviewPanel) {
             webviewPanel.webview.options = { enableScripts: true };
@@ -74,7 +63,7 @@ function activate(context) {
         vscode.window.registerCustomEditorProvider('silis.schematicViewer', schematicEditorProvider)
     );
 
-    // 5. Commands
+    // 4. Commands
     context.subscriptions.push(
         vscode.commands.registerCommand('silis.openWorkbench', () => {
             const panel = vscode.window.createWebviewPanel(
@@ -83,7 +72,7 @@ function activate(context) {
                 vscode.ViewColumn.Beside,
                 { enableScripts: true, retainContextWhenHidden: true }
             );
-            panel.webview.html = getIframeHtml('http://localhost:8765/workbench', 'Silis CAD Workbench');
+            panel.webview.html = getIframeHtml('http://localhost:8765/workbench?project=projects/demo_soc', 'Silis CAD Workbench');
         })
     );
 
@@ -95,7 +84,7 @@ function activate(context) {
                 vscode.ViewColumn.Beside,
                 { enableScripts: true, retainContextWhenHidden: true }
             );
-            panel.webview.html = getIframeHtml('http://localhost:8765/schematic/digitaljs.html', 'Schematic Viewer');
+            panel.webview.html = getIframeHtml('http://localhost:8765/schematic/digitaljs.html?module=chip_top&project=projects/demo_soc', 'Schematic Viewer');
         })
     );
 
@@ -107,7 +96,7 @@ function activate(context) {
                 vscode.ViewColumn.Beside,
                 { enableScripts: true, retainContextWhenHidden: true }
             );
-            panel.webview.html = getIframeHtml('http://localhost:8765/waveforms/index.html', 'Waveforms');
+            panel.webview.html = getIframeHtml('http://localhost:8765/waveforms/index.html?project=projects/demo_soc', 'Waveforms');
         })
     );
 
@@ -139,7 +128,7 @@ function activate(context) {
         vscode.commands.registerCommand('silis.runSynthesis', () => {
             const term = vscode.window.createTerminal('Silis Synthesis');
             term.show();
-            term.sendText('python3 silis.py --run-synth');
+            term.sendText('silis --run-synth');
         })
     );
 
@@ -147,16 +136,22 @@ function activate(context) {
         vscode.commands.registerCommand('silis.runAll', () => {
             const term = vscode.window.createTerminal('Silis Tapeout');
             term.show();
-            term.sendText('python3 silis.py --run-all');
+            term.sendText('silis --run-all');
         })
     );
 
-    // Auto-open side-by-side Schematic on initial startup if workspace is loaded
+    // Automatically open WELCOME.md preview in side column on first boot
     setTimeout(() => {
         try {
-            vscode.commands.executeCommand('silis.openSchematic');
-        } catch (e) {}
-    }, 1500);
+            const wsFolders = vscode.workspace.workspaceFolders;
+            if (wsFolders && wsFolders.length > 0) {
+                const welcomeUri = vscode.Uri.joinPath(wsFolders[0].uri, 'WELCOME.md');
+                vscode.commands.executeCommand('markdown.showPreview', welcomeUri);
+            }
+        } catch (e) {
+            console.log('[Silis Extension] Could not auto-open welcome markdown:', e);
+        }
+    }, 1000);
 }
 
 function getIframeHtml(url, title) {

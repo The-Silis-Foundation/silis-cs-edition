@@ -4,26 +4,23 @@
     {
       "label": "Silis: Open CAD Workbench Dock",
       "type": "shell",
-      "command": "/usr/bin/python3 core/cli/cs_launcher.py projects/demo_soc || python3 core/cli/cs_launcher.py projects/demo_soc",
+      "command": "python core/cli/cs_launcher.py projects/demo_soc",
       "presentation": {
         "reveal": "silent"
-      },
-      "runOptions": {
-        "runOn": "folderOpen"
       },
       "problemMatcher": []
     },
     {
       "label": "Silis: Run Synthesis (Yosys)",
       "type": "shell",
-      "command": "python3 silis.py --run-synth",
+      "command": "silis --run-synth",
       "group": "build",
       "problemMatcher": []
     },
     {
       "label": "Silis: Run Full ASIC Flow (OpenROAD)",
       "type": "shell",
-      "command": "python3 silis.py --run-all",
+      "command": "silis --run-all",
       "group": {
         "kind": "build",
         "isDefault": true

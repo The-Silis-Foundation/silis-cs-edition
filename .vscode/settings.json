@@ -2,6 +2,7 @@
   "workbench.editor.showTabs": "multiple",
   "workbench.editor.openSideBySideDirection": "right",
   "files.autoSave": "afterDelay",
+  "python.defaultInterpreterPath": "/usr/local/python/current/bin/python",
   "files.associations": {
     "*.v": "verilog",
     "*.sv": "systemverilog",

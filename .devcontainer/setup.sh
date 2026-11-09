@@ -31,8 +31,13 @@ if [ -f "/usr/share/novnc/vnc.html" ] && [ ! -f "/usr/share/novnc/index.html" ];
     sudo ln -s /usr/share/novnc/vnc.html /usr/share/novnc/index.html
 fi
 
-# 2. Install Python runtime dependencies
-pip3 install --no-cache-dir --break-system-packages \
+# 2. Install Python runtime dependencies into the active Python environment
+PYTHON_BIN="$(which python3 || which python || echo "/usr/bin/python3")"
+PIP_BIN="$(which pip3 || which pip || echo "$PYTHON_BIN -m pip")"
+
+$PIP_BIN install --no-cache-dir \
+    PyQt6 \
+    PyQt6-QScintilla \
     gdstk \
     numpy \
     websockify
