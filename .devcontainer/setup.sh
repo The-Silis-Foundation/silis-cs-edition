@@ -5,49 +5,61 @@ echo "================================================================="
 echo "SILIS CS EDITION: SETTING UP CONTAINER DEPENDENCIES"
 echo "================================================================="
 
-# 1. Update package lists and install runtime packages
+# 1. Update package lists and install minimal display and X11/VNC server tools
 sudo apt-get update
 sudo apt-get install -y --no-install-recommends \
-    python3 \
-    python3-minimal \
-    python3-pip \
-    python3-venv \
     xvfb \
     x11vnc \
     novnc \
     websockify \
     net-tools \
-    python3-pyqt6 \
-    python3-pyqt6.qsci \
-    python3-pyqt6.qtwebengine \
     libgl1-mesa-dri \
     libgl1-mesa-glx \
     libosmesa6-dev \
     libtcl8.6 \
-    libtk8.6
+    libtk8.6 \
+    wget \
+    zsync
 
 # Fix missing index.html in /usr/share/novnc if necessary
 if [ -f "/usr/share/novnc/vnc.html" ] && [ ! -f "/usr/share/novnc/index.html" ]; then
     sudo ln -s /usr/share/novnc/vnc.html /usr/share/novnc/index.html
 fi
 
-# 2. Link system PyQt6 and libraries directly to active Python environment
-PYTHON_BIN="$(which python3 || which python || echo "/usr/bin/python3")"
-PIP_BIN="$(which pip3 || which pip || echo "$PYTHON_BIN -m pip")"
+# 2. Provision Standalone AppImage as the Python & Qt Runtime Container
+APPIMAGE_DIR="/opt/silis"
+APPIMAGE_BIN="${APPIMAGE_DIR}/Silis-x86_64.AppImage"
+sudo mkdir -p "${APPIMAGE_DIR}"
 
-# Bridge system dist-packages (PyQt6, QtWebEngine) into the active python site-packages
-ACTIVE_SITE="$($PYTHON_BIN -c "import site; print(site.getsitepackages()[0])" 2>/dev/null || echo "")"
-if [ -n "$ACTIVE_SITE" ] && [ -d "/usr/lib/python3/dist-packages" ]; then
-    echo "Bridging system PyQt6 packages to active Python site-packages ($ACTIVE_SITE)..."
-    echo "/usr/lib/python3/dist-packages" | sudo tee "$ACTIVE_SITE/system_dist_packages.pth" > /dev/null
+if [ ! -f "${APPIMAGE_BIN}" ]; then
+    echo "Downloading standalone Silis AppImage runtime (Python 3.12 + Qt6 + PDK)..."
+    sudo wget -q --show-progress \
+        "https://github.com/The-Silis-Foundation/silis/releases/latest/download/Silis-x86_64.AppImage" \
+        -O "${APPIMAGE_BIN}" || true
+    if [ -f "${APPIMAGE_BIN}" ]; then
+        sudo chmod +x "${APPIMAGE_BIN}"
+        echo "Extracting AppImage into /opt/silis/runtime for instant access..."
+        (cd "${APPIMAGE_DIR}" && sudo "${APPIMAGE_BIN}" --appimage-extract && sudo mv squashfs-root runtime) || true
+    fi
 fi
 
-# Verify PyQt6 import
-if ! $PYTHON_BIN -c "import PyQt6" 2>/dev/null; then
-    echo "Installing PyQt6 directly via pip into active python..."
-    $PIP_BIN install --no-cache-dir PyQt6 PyQt6-QScintilla gdstk numpy websockify
+# 3. Configure Python environment: Link embedded AppImage Python/Qt or bridge system packages
+if [ -d "/opt/silis/runtime/opt/python" ]; then
+    echo "Configuring /opt/silis embedded Python 3.12 as default..."
+    sudo ln -sf /opt/silis/runtime/opt/python/bin/python3 /usr/local/bin/python3
+    sudo ln -sf /opt/silis/runtime/opt/python/bin/python3 /usr/local/bin/python
+    sudo ln -sf /opt/silis/runtime/opt/python/bin/pip3 /usr/local/bin/pip3
+    sudo ln -sf /opt/silis/runtime/opt/python/bin/pip3 /usr/local/bin/pip
+    PYTHON_BIN="/opt/silis/runtime/opt/python/bin/python3"
 else
-    echo "PyQt6 successfully detected in active Python environment."
+    # Fallback to system apt packages if AppImage download is bypassed
+    sudo apt-get install -y --no-install-recommends python3 python3-pyqt6 python3-pyqt6.qsci python3-pyqt6.qtwebengine
+    PYTHON_BIN="$(which python3 || echo "/usr/bin/python3")"
+    PIP_BIN="$(which pip3 || echo "$PYTHON_BIN -m pip")"
+    ACTIVE_SITE="$($PYTHON_BIN -c "import site; print(site.getsitepackages()[0])" 2>/dev/null || echo "")"
+    if [ -n "$ACTIVE_SITE" ] && [ -d "/usr/lib/python3/dist-packages" ]; then
+        echo "/usr/lib/python3/dist-packages" | sudo tee "$ACTIVE_SITE/system_dist_packages.pth" > /dev/null
+    fi
     $PIP_BIN install --no-cache-dir gdstk numpy websockify || true
 fi
 
