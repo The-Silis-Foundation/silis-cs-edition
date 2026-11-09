@@ -202,6 +202,15 @@ def handle_cli(args_list):
         "--projects", "--list", "--register", "--unregister", "-i", "--shell", "--interactive", "-h", "--help"
     ]
     if not any(arg in known_flags for arg in args_list):
+        # Check if argument is a project path/directory or silis.silisproj
+        first_arg = args_list[0]
+        if not first_arg.startswith("-") and (os.path.isdir(first_arg) or first_arg.endswith(".silisproj") or os.path.isfile(first_arg)):
+            try:
+                from . import cs_launcher
+                if cs_launcher.launch_project(first_arg):
+                    return True
+            except Exception as e:
+                print(f"[Silis CS] Note launching project workspace: {e}")
         return False
 
 

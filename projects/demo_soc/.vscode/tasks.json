@@ -1,0 +1,40 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Silis: Open Schematic Viewer",
+      "type": "shell",
+      "command": "code --command simpleBrowser.show http://localhost:8765/schematic/digitaljs.html?module=chip_top",
+      "presentation": {
+        "reveal": "silent"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Silis: Open ROHD Waveforms",
+      "type": "shell",
+      "command": "code --command simpleBrowser.show http://localhost:8765/waveforms/index.html",
+      "presentation": {
+        "reveal": "silent"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Silis: Run Synthesis (Yosys)",
+      "type": "shell",
+      "command": "silis --run-synth",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Silis: Run Full Tapeout Flow (OpenROAD)",
+      "type": "shell",
+      "command": "silis --run-all",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": []
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+export PYTHONPATH="${REPO_ROOT}:${REPO_ROOT}/core:${REPO_ROOT}/third-party/siliconcompiler:$PYTHONPATH"
+export PATH="${REPO_ROOT}/third-party/bin:$PATH"
+exec python3 "${REPO_ROOT}/silis.py" "$@"

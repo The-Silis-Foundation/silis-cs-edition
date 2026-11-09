@@ -1,0 +1,12 @@
+{
+  "workbench.editor.showTabs": "multiple",
+  "workbench.editor.openSideBySideDirection": "right",
+  "files.associations": {
+    "*.v": "verilog",
+    "*.sv": "systemverilog",
+    "*.sdc": "tcl",
+    "*.upf": "tcl",
+    "*.silisproj": "json"
+  },
+  "simpleBrowser.focusOnOpen": false
+}

@@ -43,6 +43,9 @@ start_display_pipeline() {
     websockify --web="${NOVNC_DIR}" 0.0.0.0:${web_port} localhost:${vnc_port} &
 }
 
+# 0. Start Native Web CAD Server (Schematic & Waveforms) on Port 8765
+python3 "${WORKSPACE_DIR}/core/server/cs_server.py" 8765 > /tmp/cs_cad_server.log 2>&1 &
+
 # 1. Initialize Framebuffers
 start_display_pipeline 1 5901 6081 "FastSiliconPeeker 2D Layout"
 start_display_pipeline 2 5902 6082 "Frontend Studio & SignalPeeker Waveforms"
@@ -135,7 +138,7 @@ sys.exit(app.exec())
 
 echo "================================================================="
 echo "SILIS CS EDITION DAEMONS RUNNING"
-echo "  • Port 6081: http://localhost:6081/vnc.html?autoconnect=true&resize=remote"
-echo "  • Port 6082: http://localhost:6082/vnc.html?autoconnect=true&resize=remote"
-echo "  • Port 6084: http://localhost:6084/vnc.html?autoconnect=true&resize=remote"
+echo "  • Port 8765: http://localhost:8765/ (Native Schematic & ROHD Web)"
+echo "  • Port 6081: http://localhost:6081/vnc.html?autoconnect=true&resize=remote (FastSiliconPeeker Layout)"
+echo "  • Port 6084: http://localhost:6084/vnc.html?autoconnect=true&resize=remote (Floorplan & Power Studio)"
 echo "================================================================="

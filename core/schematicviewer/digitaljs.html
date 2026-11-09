@@ -410,6 +410,32 @@
             if (navBackBtn) navBackBtn.disabled = !canBack;
             if (navForwardBtn) navForwardBtn.disabled = !canForward;
         };
+
+        // Auto-fetch netlist in Codespaces / Web mode via /api/netlist
+        (function() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const moduleName = urlParams.get('module') || 'chip_top';
+            const projectDir = urlParams.get('project') || '';
+            const apiUrl = '/api/netlist?module=' + encodeURIComponent(moduleName) + (projectDir ? '&project=' + encodeURIComponent(projectDir) : '');
+
+            fetch(apiUrl)
+                .then(function(res) {
+                    if (res.ok) return res.json();
+                    throw new Error('HTTP ' + res.status);
+                })
+                .then(function(data) {
+                    if (window.loadSchematicDirect) {
+                        window.loadSchematicDirect(data);
+                    } else if (typeof loadSchematic === 'function') {
+                        const jsonStr = JSON.stringify(data);
+                        const b64 = window.btoa(unescape(encodeURIComponent(jsonStr)));
+                        loadSchematic(b64);
+                    }
+                })
+                .catch(function(err) {
+                    console.log('[Schematic CS Web] Auto-fetch netlist note:', err.message);
+                });
+        })();
     </script>
 </body>
 </html>

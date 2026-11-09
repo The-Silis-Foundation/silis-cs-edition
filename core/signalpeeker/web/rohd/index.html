@@ -42,6 +42,33 @@
       window.loadVcdContent(window.__pendingVcd.text, window.__pendingVcd.fileName);
       delete window.__pendingVcd;
     }
+
+    // Auto-fetch waveform in Codespaces / Web mode via /api/waveform
+    (function() {
+      const urlParams = new URLSearchParams(window.location.search);
+      const projectDir = urlParams.get('project') || '';
+      const apiUrl = '/api/waveform' + (projectDir ? '?project=' + encodeURIComponent(projectDir) : '');
+
+      fetch(apiUrl)
+        .then(function(res) {
+          if (res.ok) return res.text();
+          throw new Error('HTTP ' + res.status);
+        })
+        .then(function(vcdText) {
+          if (vcdText && vcdText.length > 0) {
+            console.log('[ROHD CS Web] Loaded waveform from /api/waveform (' + vcdText.length + ' bytes)');
+            if (typeof window.loadVcdContent === 'function') {
+              window.loadVcdContent(vcdText, 'waveform.vcd');
+            } else {
+              window.__pendingVcd = { text: vcdText, fileName: 'waveform.vcd' };
+            }
+          }
+        })
+        .catch(function(err) {
+          console.log('[ROHD CS Web] Waveform fetch note:', err.message);
+        });
+    })();
+
     window.addEventListener('message', function(e) {
       if (e.data && typeof window.__rohdMessageCallback === 'function') {
         window.__rohdMessageCallback(e.data);
