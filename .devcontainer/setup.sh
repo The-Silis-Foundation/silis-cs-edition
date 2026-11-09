@@ -56,9 +56,13 @@ fi
 sudo ln -sf "${WORKSPACE_DIR}/bin/silis" /usr/local/bin/silis
 sudo ln -sf "${WORKSPACE_DIR}/bin/silis" /usr/bin/silis
 
-# Ensure python symlink exists for python3
-if ! command -v python &> /dev/null; then
-    sudo ln -sf /usr/bin/python3 /usr/bin/python
+# Ensure python3 and python symlinks are present in both /usr/bin and /usr/local/bin
+PYTHON_EXECUTABLE="$(command -v python3 || command -v python || echo "")"
+if [ -n "$PYTHON_EXECUTABLE" ]; then
+    sudo ln -sf "$PYTHON_EXECUTABLE" /usr/bin/python3
+    sudo ln -sf "$PYTHON_EXECUTABLE" /usr/bin/python
+    sudo ln -sf "$PYTHON_EXECUTABLE" /usr/local/bin/python3
+    sudo ln -sf "$PYTHON_EXECUTABLE" /usr/local/bin/python
 fi
 
 {
