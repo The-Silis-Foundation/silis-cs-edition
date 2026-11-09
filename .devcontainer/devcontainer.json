@@ -2,6 +2,9 @@
   "name": "Silis CS Edition",
   "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
   "features": {
+    "ghcr.io/devcontainers/features/sshd:1": {
+      "version": "latest"
+    },
     "ghcr.io/devcontainers/features/python:1": {
       "version": "3.12",
       "installTools": true
