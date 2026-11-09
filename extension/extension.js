@@ -322,7 +322,6 @@ function activate(context) {
             await loadWaveformInBottomDock(filePath || getActiveProjectDir());
         })
     );
-    );
 
     // 8. Schematic Viewer (World 0)
     context.subscriptions.push(
