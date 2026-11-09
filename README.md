@@ -34,6 +34,28 @@
 
 ---
 
+<!-- PROJECTS:START -->
+
+## ASIC Projects & Control Center
+
+Manage and inspect chip designs directly from this Codespace workspace. Click any action below to open interactive tools inside dedicated VS Code editor tabs.
+
+| Project | Process (PDK) | Top Module | Layout (DEF) | Waveforms | Interactive Actions |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **demo_soc** | `sky130` | `chip_top` | Available | Available | [Select](command:silis.openProject?%22demo_soc%22) &middot; [Schematic](command:silis.openSchematic?%22demo_soc%22) &middot; [Waveforms](command:silis.openWaveforms?%22demo_soc%22) &middot; [Layout](command:silis.openLayout?%22demo_soc%22) &middot; [Floorplan](command:silis.openFloorplanner?%22demo_soc%22) |
+
+### Quick Actions
+
+- [**+ Create New ASIC Project**](command:silis.newProject) -- Launch interactive project setup wizard
+- [**Open Unified CAD Dock**](command:silis.openWorkbench) -- View schematic, waveforms, layout, and floorplan in a tabbed panel
+- [**Run RTL Synthesis (Yosys)**](command:silis.runSynthesis) -- Synthesize active project into gate-level netlist
+- [**Run Tapeout Flow (OpenROAD)**](command:silis.runAll) -- Execute floorplan, CTS, placement, and routing
+- [**Refresh Projects List**](command:silis.refreshReadme) -- Re-scan workspace directories and update this view
+
+<!-- PROJECTS:END -->
+
+---
+
 ## Workbench Canvases (Dock as VS Code Editor Tabs)
 
 In GitHub Codespaces, visualizer surfaces render to dedicated virtual framebuffers and dock directly inside VS Code Web editor tabs as split-pane webviews using the built-in Simple Browser:

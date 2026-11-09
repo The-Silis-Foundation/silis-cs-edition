@@ -29,8 +29,9 @@ start_display_pipeline() {
 
     echo "[Silis CS] Starting Display :${disp} (VNC:${vnc_port} -> Web:${web_port}) - ${title}"
     
-    # Kill any stale Xvfb on this display
-    sudo killall -9 Xvfb 2>/dev/null || true
+    # Kill any stale Xvfb on this display (target only the specific display to avoid racing other pipelines)
+    pkill -f "Xvfb :${disp}" 2>/dev/null || true
+    sudo pkill -f "Xvfb :${disp}" 2>/dev/null || true
     rm -f /tmp/.X${disp}-lock /tmp/.X11-unix/X${disp} 2>/dev/null || true
 
     Xvfb :${disp} -screen 0 1600x1000x24 -ac +extension GLX +render -noreset &
@@ -136,9 +137,14 @@ sys.exit(app.exec())
     done
 ) &
 
+# 5. Generate and refresh workspace README dashboard
+if [ -f "${WORKSPACE_DIR}/tools/gen_readme.py" ]; then
+    python3 "${WORKSPACE_DIR}/tools/gen_readme.py" 2>/dev/null || true
+fi
+
 echo "================================================================="
 echo "SILIS CS EDITION DAEMONS RUNNING"
-echo "  • Port 8765: http://localhost:8765/ (Native Schematic & ROHD Web)"
-echo "  • Port 6081: http://localhost:6081/vnc.html?autoconnect=true&resize=remote (FastSiliconPeeker Layout)"
-echo "  • Port 6084: http://localhost:6084/vnc.html?autoconnect=true&resize=remote (Floorplan & Power Studio)"
+echo "  * Port 8765: http://localhost:8765/ (Native Schematic & ROHD Web)"
+echo "  * Port 6081: http://localhost:6081/vnc.html?autoconnect=true&resize=remote (FastSiliconPeeker Layout)"
+echo "  * Port 6084: http://localhost:6084/vnc.html?autoconnect=true&resize=remote (Floorplan & Power Studio)"
 echo "================================================================="

@@ -1,20 +1,22 @@
 #!/usr/bin/env bash
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+# ==============================================================================
+# Silis CS Edition CLI Launcher
+# ==============================================================================
+set -e
 
-# Locate runtime Python binary defensively
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# Resolve runtime python
 if [ -x "/opt/silis/runtime/opt/python/bin/python3" ]; then
-    PYTHON_BIN="/opt/silis/runtime/opt/python/bin/python3"
-elif [ -x "${REPO_ROOT}/dist/silis-python-qt-x86_64.AppImage" ]; then
-    PYTHON_BIN="${REPO_ROOT}/dist/silis-python-qt-x86_64.AppImage"
-elif [ -x "/usr/local/bin/python3" ]; then
-    PYTHON_BIN="/usr/local/bin/python3"
-elif [ -x "/usr/bin/python3" ]; then
-    PYTHON_BIN="/usr/bin/python3"
+    PYTHON_EXEC="/opt/silis/runtime/opt/python/bin/python3"
+elif command -v python3 &>/dev/null; then
+    PYTHON_EXEC="$(command -v python3)"
 else
-    PYTHON_BIN="$(which python3 2>/dev/null || which python 2>/dev/null || echo "python3")"
+    PYTHON_EXEC="python3"
 fi
 
-export PYTHONPATH="${REPO_ROOT}:${REPO_ROOT}/core:${REPO_ROOT}/third-party/siliconcompiler:$PYTHONPATH"
-export PATH="${REPO_ROOT}/bin:${REPO_ROOT}/third-party/bin:$PATH"
-exec "$PYTHON_BIN" "${REPO_ROOT}/silis.py" "$@"
+export PYTHONPATH="${SCRIPT_DIR}:${SCRIPT_DIR}/core:${SCRIPT_DIR}/third-party/siliconcompiler:${PYTHONPATH:-}"
+export PATH="${SCRIPT_DIR}/bin:${SCRIPT_DIR}/third-party/bin:${PATH}"
+export LIBGL_ALWAYS_SOFTWARE=1
+
+exec "$PYTHON_EXEC" "${SCRIPT_DIR}/silis.py" "$@"

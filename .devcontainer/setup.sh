@@ -19,6 +19,12 @@ fi
 OPT_DIR="/opt/silis/runtime"
 REPO_APPIMAGE="${WORKSPACE_DIR}/dist/silis-python-qt-x86_64.AppImage"
 
+# Guard: if the AppImage is a Git LFS pointer, pull the actual binary
+if [ -f "$REPO_APPIMAGE" ] && grep -q "git-lfs.github.com" "$REPO_APPIMAGE" 2>/dev/null; then
+    echo "LFS pointer detected -- pulling AppImage binary..."
+    cd "$WORKSPACE_DIR" && git lfs pull --include="dist/silis-python-qt-x86_64.AppImage"
+fi
+
 if [ ! -d "$OPT_DIR" ]; then
     if [ -f "$REPO_APPIMAGE" ]; then
         echo "Extracting runtime from repo binary: $REPO_APPIMAGE..."
@@ -49,13 +55,14 @@ if [ -d "/opt/silis/runtime/opt/python" ]; then
 fi
 
 # 3. Install Silis CAD Workbench VS Code Extension locally
-EXT_TARGET_DIR="/home/vscode/.vscode-server/extensions/the-silis-foundation.silis-cad-workbench-1.0.0"
-if [ ! -d "/home/vscode/.vscode-server/extensions" ]; then
-    mkdir -p "/home/vscode/.vscode-server/extensions"
-fi
-rm -rf "$EXT_TARGET_DIR"
-cp -r "${WORKSPACE_DIR}/extension" "$EXT_TARGET_DIR"
-chown -R vscode:vscode "/home/vscode/.vscode-server" 2>/dev/null || true
+for EXT_BASE in "/home/vscode/.vscode-server/extensions" "/home/vscode/.vscode-remote/extensions" "${HOME}/.vscode-server/extensions"; do
+    if mkdir -p "$EXT_BASE" 2>/dev/null; then
+        TARGET="${EXT_BASE}/the-silis-foundation.silis-cad-workbench-1.0.0"
+        rm -rf "$TARGET"
+        cp -r "${WORKSPACE_DIR}/extension" "$TARGET" 2>/dev/null || true
+    fi
+done
+chown -R vscode:vscode "/home/vscode/.vscode-server" "/home/vscode/.vscode-remote" 2>/dev/null || true
 
 # 4. CLI symlinks in PATH
 sudo ln -sf "${WORKSPACE_DIR}/bin/silis" /usr/local/bin/silis

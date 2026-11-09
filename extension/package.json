@@ -90,6 +90,21 @@
     ],
     "commands": [
       {
+        "command": "silis.newProject",
+        "title": "Silis: New ASIC Project",
+        "category": "Silis"
+      },
+      {
+        "command": "silis.openProject",
+        "title": "Silis: Open Project",
+        "category": "Silis"
+      },
+      {
+        "command": "silis.refreshReadme",
+        "title": "Silis: Refresh Project Dashboard",
+        "category": "Silis"
+      },
+      {
         "command": "silis.openWorkbench",
         "title": "Silis: Open ASIC CAD Workbench Dock",
         "category": "Silis"
