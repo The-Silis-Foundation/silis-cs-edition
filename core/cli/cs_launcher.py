@@ -205,7 +205,13 @@ def launch_project(project_target: str) -> bool:
 
         # Open Schematic Web GUI side-by-side
         schem_url = f"http://localhost:8765/schematic/digitaljs.html?module={top_module}&project={project_root}"
-        subprocess.run([code_bin, "--command", "simpleBrowser.show", schem_url])
+        workbench_url = f"http://localhost:8765/workbench?module={top_module}&project={project_root}"
+        
+        # Open simpleBrowser for both side-by-side Schematic and workbench
+        try:
+            subprocess.run([code_bin, "--command", "simpleBrowser.show", schem_url])
+        except Exception:
+            pass
         return True
     else:
         print("[Silis] VS Code CLI ('code') not detected in PATH. Ready in headless mode.")

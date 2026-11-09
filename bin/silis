@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+
+# Locate python3 binary defensively
+PYTHON_BIN="$(which python3 2>/dev/null || which python 2>/dev/null || echo "/usr/bin/python3")"
+
 export PYTHONPATH="${REPO_ROOT}:${REPO_ROOT}/core:${REPO_ROOT}/third-party/siliconcompiler:$PYTHONPATH"
-export PATH="${REPO_ROOT}/third-party/bin:$PATH"
-exec python3 "${REPO_ROOT}/silis.py" "$@"
+export PATH="${REPO_ROOT}/bin:${REPO_ROOT}/third-party/bin:$PATH"
+exec "$PYTHON_BIN" "${REPO_ROOT}/silis.py" "$@"

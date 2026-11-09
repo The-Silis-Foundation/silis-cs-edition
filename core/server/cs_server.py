@@ -74,6 +74,9 @@ class SilisCadHandler(http.server.SimpleHTTPRequestHandler):
             return
 
         # 3. Route static files:
+        if path == "/workbench" or path == "/workbench.html":
+            return self._serve_file(os.path.join(os.path.dirname(__file__), "workbench.html"))
+
         if path.startswith("/schematic/") or path == "/schematic.html" or path == "/digitaljs.html":
             rel_path = path.replace("/schematic/", "").replace("/schematic.html", "digitaljs.html").replace("/digitaljs.html", "digitaljs.html").lstrip("/")
             local_file = os.path.join(SCHEMATIC_DIR, rel_path if rel_path else "digitaljs.html")

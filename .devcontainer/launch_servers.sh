@@ -61,7 +61,7 @@ sleep 2
     python3 -c "
 import sys, os
 from PyQt6.QtWidgets import QApplication
-from silis.core.backendflow.flow.backendflow import BackendWidget
+from backendflow.flow.backendflow import BackendWidget
 
 app = QApplication(sys.argv)
 class MockIDE:
@@ -94,7 +94,7 @@ if [ -f "${WORKSPACE_DIR}/results/temp.def" ]; then
         python3 -c "
 import sys, os
 from PyQt6.QtWidgets import QApplication
-from silis.core.backendflow.siliconpeeker.peeker import FastSiliconPeeker
+from backendflow.siliconpeeker.peeker import FastSiliconPeeker
 
 app = QApplication(sys.argv)
 peeker = FastSiliconPeeker()
@@ -120,7 +120,7 @@ fi
                     python3 -c "
 import sys, os
 from PyQt6.QtWidgets import QApplication
-from silis.core.backendflow.siliconpeeker.peeker import FastSiliconPeeker
+from backendflow.siliconpeeker.peeker import FastSiliconPeeker
 
 app = QApplication(sys.argv)
 peeker = FastSiliconPeeker()

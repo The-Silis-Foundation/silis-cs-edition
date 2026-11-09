@@ -34,14 +34,23 @@ pip3 install --no-cache-dir --break-system-packages \
     numpy \
     websockify
 
-# 3. Environment configuration
+# 3. Environment configuration & system-wide symlinks
 WORKSPACE_DIR="/workspaces/silis-cs-edition"
 if [ ! -d "$WORKSPACE_DIR" ]; then
     WORKSPACE_DIR="$(pwd)"
 fi
 
+# Ensure /usr/bin/silis symlink is always available in PATH
+sudo ln -sf "${WORKSPACE_DIR}/bin/silis" /usr/local/bin/silis
+sudo ln -sf "${WORKSPACE_DIR}/bin/silis" /usr/bin/silis
+
+# Ensure python symlink exists for python3
+if ! command -v python &> /dev/null; then
+    sudo ln -sf /usr/bin/python3 /usr/bin/python
+fi
+
 {
-    echo "export PATH=\"${WORKSPACE_DIR}/third-party/bin:\$PATH\""
+    echo "export PATH=\"${WORKSPACE_DIR}/bin:${WORKSPACE_DIR}/third-party/bin:\$PATH\""
     echo "export PYTHONPATH=\"${WORKSPACE_DIR}:${WORKSPACE_DIR}/core:${WORKSPACE_DIR}/third-party/siliconcompiler:\$PYTHONPATH\""
     echo 'export LIBGL_ALWAYS_SOFTWARE=1'
     echo 'export QT_QPA_PLATFORM=xcb'
