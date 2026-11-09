@@ -15,20 +15,20 @@ if [ -f "/usr/share/novnc/vnc.html" ] && [ ! -f "/usr/share/novnc/index.html" ];
     sudo ln -s /usr/share/novnc/vnc.html /usr/share/novnc/index.html
 fi
 
-# 1. Unpack Standalone Python + Qt Runtime AppImage into /opt/silis/runtime
-RUNTIME_APPIMAGE="${WORKSPACE_DIR}/dist/silis-python-qt-x86_64.AppImage"
+# 1. Fetch and unpack Dedicated Python + Qt Runtime AppImage into /opt/silis/runtime
 OPT_DIR="/opt/silis/runtime"
+RUNTIME_APPIMAGE="/tmp/silis-python-qt-x86_64.AppImage"
 
-if [ -f "$RUNTIME_APPIMAGE" ]; then
-    echo "Unpacking Python+Qt AppImage container: $RUNTIME_APPIMAGE"
-    if [ ! -d "$OPT_DIR" ]; then
-        sudo mkdir -p /opt/silis
-        cd /opt/silis
-        sudo "$RUNTIME_APPIMAGE" --appimage-extract
-        sudo mv squashfs-root runtime
-    fi
-else
-    echo "[WARN] AppImage not found at $RUNTIME_APPIMAGE, checking /opt/silis/runtime"
+if [ ! -d "$OPT_DIR" ]; then
+    echo "Downloading 270MB Standalone Python+Qt AppImage from release..."
+    sudo mkdir -p /opt/silis
+    sudo wget -q --show-progress \
+        "https://github.com/The-Silis-Foundation/silis-cs-edition/releases/download/v1.0.0-runtime/silis-python-qt-x86_64.AppImage" \
+        -O "$RUNTIME_APPIMAGE"
+    sudo chmod +x "$RUNTIME_APPIMAGE"
+    echo "Extracting AppImage into $OPT_DIR..."
+    (cd /opt/silis && sudo "$RUNTIME_APPIMAGE" --appimage-extract && sudo mv squashfs-root runtime)
+    sudo rm -f "$RUNTIME_APPIMAGE"
 fi
 
 # 2. Configure system-wide python symlinks to use the pre-baked AppImage runtime

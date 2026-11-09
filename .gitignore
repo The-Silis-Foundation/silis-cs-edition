@@ -45,3 +45,4 @@ cmake_install.cmake
 *.obj
 *.a
 build_runtime/
+dist/
