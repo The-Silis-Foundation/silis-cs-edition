@@ -41,6 +41,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libasound2t64 \
     libtcl8.6 \
     libtk8.6 \
+    git-lfs \
     wget \
     zsync \
     && rm -rf /var/lib/apt/lists/*
