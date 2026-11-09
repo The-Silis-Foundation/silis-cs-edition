@@ -30,7 +30,7 @@ if [ ! -d "$OPT_DIR" ]; then
         echo "Extracting runtime from repo binary: $REPO_APPIMAGE..."
         sudo mkdir -p /opt/silis
         chmod +x "$REPO_APPIMAGE"
-        (cd /opt/silis && sudo "$REPO_APPIMAGE" --appimage-extract && sudo mv squashfs-root runtime)
+        (cd /opt/silis && sudo "$REPO_APPIMAGE" --appimage-extract && sudo mv squashfs-root runtime && sudo chmod -R a+rX /opt/silis)
     else
         echo "Error: Repo AppImage $REPO_APPIMAGE not found!"
         exit 1
