@@ -573,14 +573,14 @@ valid
         try:
             with open(full_path, "rb") as f:
                 content = f.read()
+            self.send_response(200)
+            self.send_header("Content-Type", mime)
+            self.send_header("Content-Length", str(len(content)))
             self.send_header("Access-Control-Allow-Origin", "*")
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
             self.send_header("Access-Control-Allow-Headers", "*")
             self.send_header("X-Frame-Options", "ALLOWALL")
             self.send_header("Content-Security-Policy", "frame-ancestors *")
-            self.send_response(200)
-            self.send_header("Content-Type", mime)
-            self.send_header("Content-Length", str(len(content)))
             if ext == ".wasm":
                 self.send_header("Cross-Origin-Opener-Policy", "same-origin")
                 self.send_header("Cross-Origin-Embedder-Policy", "require-corp")
