@@ -1,16 +1,36 @@
 {
-  "name": "Silis Codespaces Edition",
-  "build": {
-    "dockerfile": "../Dockerfile",
-    "context": ".."
-  },
-  "forwardPorts": [6080],
+  "name": "Silis CS Edition",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+  "forwardPorts": [6081, 6082, 6084],
   "portsAttributes": {
-    "6080": {
-      "label": "Silis GUI",
+    "6081": {
+      "label": "Silis 2D Layout (FastSiliconPeeker)",
+      "onAutoForward": "silent"
+    },
+    "6082": {
+      "label": "Silis Frontend Studio & Waveform (SignalPeeker)",
+      "onAutoForward": "silent"
+    },
+    "6084": {
+      "label": "Silis Floorplan & Power Studio (FPS)",
       "onAutoForward": "openBrowser"
     }
   },
-  "postStartCommand": "bash /usr/local/bin/start-silis.sh",
-  "remoteUser": "root"
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "mshr-h.VerilogHDL",
+        "eamodio.gitlens"
+      ],
+      "settings": {
+        "workbench.editor.showTabs": "multiple",
+        "workbench.editor.openSideBySideDirection": "right",
+        "files.autoSave": "afterDelay",
+        "python.defaultInterpreterPath": "/usr/bin/python3"
+      }
+    }
+  },
+  "postCreateCommand": "bash .devcontainer/setup.sh",
+  "remoteUser": "vscode"
 }

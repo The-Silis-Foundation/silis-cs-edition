@@ -1,0 +1,33 @@
+import pytest
+from siliconcompiler.targets import \
+    asap7_demo, freepdk45_demo, \
+    gf180_demo, ihp130_demo, interposer_demo, skywater130_demo, \
+    icsprout55_demo, gt2n_demo
+
+from siliconcompiler import ASIC
+
+
+@pytest.mark.parametrize("target", (
+        asap7_demo,
+        freepdk45_demo,
+        gf180_demo,
+        ihp130_demo,
+        interposer_demo,
+        skywater130_demo,
+        icsprout55_demo,
+        gt2n_demo))
+def test_target_loading_asic(target):
+    proj = ASIC()
+    target(proj)
+
+    assert len(proj.getkeys('library')) != 0
+    assert proj.get("asic", "mainlib") is not None
+    assert proj._has_library(proj.get("asic", "mainlib")) is True
+
+    assert proj.get("asic", "asiclib") is not None
+
+    assert proj.get("asic", "pdk") is not None
+    assert proj._has_library(proj.get("asic", "pdk")) is True
+
+    assert proj.option.get_flow() is not None
+    assert proj.option.get_flow() in proj.getkeys("flowgraph")

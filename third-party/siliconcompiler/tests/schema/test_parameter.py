@@ -1,0 +1,2341 @@
+import argparse
+import pytest
+
+from unittest.mock import patch
+
+from siliconcompiler.schema import Parameter, PerNode, Scope
+from siliconcompiler.schema import __version__
+from siliconcompiler.schema.parametervalue import FileNodeValue, NodeValue
+
+
+def test_pernode_is_never():
+    assert len([val for val in PerNode]) == 3
+    assert PerNode.NEVER.is_never()
+    assert not PerNode.OPTIONAL.is_never()
+    assert not PerNode.REQUIRED.is_never()
+
+
+@pytest.mark.parametrize("sctype", ("str", "float", "int"))
+def test_default_init(sctype):
+    param = Parameter(sctype)
+    assert param.getdict() == {
+        'type': sctype,
+        'require': False,
+        'scope': 'global',
+        'lock': False,
+        'switch': [],
+        'shorthelp': None,
+        'example': [],
+        'help': None,
+        'notes': None,
+        'pernode': 'never',
+        'node': {'default': {'default': {'value': None, 'signature': None}}}
+    }
+
+
+@pytest.mark.parametrize("sctype", ("str", "float", "int"))
+def test_default_init_list(sctype):
+    param = Parameter(f"[{sctype}]")
+    assert param.getdict() == {
+        'type': f"[{sctype}]",
+        'require': False,
+        'scope': 'global',
+        'lock': False,
+        'switch': [],
+        'shorthelp': None,
+        'example': [],
+        'help': None,
+        'notes': None,
+        'pernode': 'never',
+        'node': {'default': {'default': {'value': [], 'signature': []}}}
+    }
+
+
+def test_default_init_file():
+    param = Parameter("file")
+    assert param.getdict() == {
+        'type': 'file',
+        'require': False,
+        'scope': 'global',
+        'lock': False,
+        'switch': [],
+        'shorthelp': None,
+        'example': [],
+        'help': None,
+        'notes': None,
+        'pernode': 'never',
+        'copy': False,
+        'hashalgo': 'sha256',
+        'node': {'default': {'default': {
+            'author': [],
+            'date': None,
+            'filehash': None,
+            "dataroot": None,
+            'value': None,
+            'signature': None}}}
+    }
+
+
+def test_default_init_dir():
+    param = Parameter("dir")
+    assert param.getdict() == {
+        'type': 'dir',
+        'require': False,
+        'scope': 'global',
+        'lock': False,
+        'switch': [],
+        'shorthelp': None,
+        'example': [],
+        'help': None,
+        'notes': None,
+        'pernode': 'never',
+        'copy': False,
+        'hashalgo': 'sha256',
+        'node': {'default': {'default': {
+            'filehash': None,
+            "dataroot": None,
+            'value': None,
+            'signature': None}}}
+    }
+
+
+def test_get_invalid_field():
+    param = Parameter("str")
+
+    with pytest.raises(ValueError, match=r"^\"invalidfield\" is not a valid field$"):
+        param.get(field='invalidfield')
+
+
+def test_get_inner_value():
+    param = Parameter("file")
+
+    value = param.get(field=None)
+    assert isinstance(value, FileNodeValue)
+
+
+def test_get_fields_str():
+    param = Parameter(
+        "str",
+        scope=Scope.SCRATCH,
+        lock=True,
+        switch="-test",
+        shorthelp="test short",
+        example="example1",
+        help="long help",
+        notes="note",
+        pernode=PerNode.OPTIONAL,
+        unit="nm",
+        hashalgo="md5",
+        copy=True)
+
+    assert param.get(field='type') == "str"
+    assert param.get(field='scope') == Scope.SCRATCH
+    assert param.get(field='lock') is True
+    assert param.get(field='switch') == ["-test"]
+    assert param.get(field='shorthelp') == "test short"
+    assert param.get(field='example') == ["example1"]
+    assert param.get(field='help') == "long help"
+    assert param.get(field='notes') == "note"
+    assert param.get(field='pernode') == PerNode.OPTIONAL
+    assert param.get(field='unit') is None
+    assert param.get(field='hashalgo') is None
+    assert param.get(field='copy') is None
+    assert param.get(field='require') is False
+
+
+def test_get_fields_int():
+    param = Parameter(
+        "int",
+        scope=Scope.SCRATCH,
+        lock=True,
+        switch="-test",
+        shorthelp="test short",
+        example="example1",
+        help="long help",
+        notes="note",
+        pernode=PerNode.OPTIONAL,
+        unit="nm",
+        hashalgo="md5",
+        copy=True)
+
+    assert param.get(field='type') == "int"
+    assert param.get(field='scope') == Scope.SCRATCH
+    assert param.get(field='lock') is True
+    assert param.get(field='switch') == ["-test"]
+    assert param.get(field='shorthelp') == "test short"
+    assert param.get(field='example') == ["example1"]
+    assert param.get(field='help') == "long help"
+    assert param.get(field='notes') == "note"
+    assert param.get(field='pernode') == PerNode.OPTIONAL
+    assert param.get(field='unit') == "nm"
+    assert param.get(field='hashalgo') is None
+    assert param.get(field='copy') is None
+    assert param.get(field='require') is False
+
+
+def test_get_fields_float():
+    param = Parameter(
+        "float",
+        scope=Scope.SCRATCH,
+        lock=True,
+        switch="-test",
+        shorthelp="test short",
+        example="example1",
+        help="long help",
+        notes="note",
+        pernode=PerNode.OPTIONAL,
+        unit="nm",
+        hashalgo="md5",
+        copy=True)
+
+    assert param.get(field='type') == "float"
+    assert param.get(field='scope') == Scope.SCRATCH
+    assert param.get(field='lock') is True
+    assert param.get(field='switch') == ["-test"]
+    assert param.get(field='shorthelp') == "test short"
+    assert param.get(field='example') == ["example1"]
+    assert param.get(field='help') == "long help"
+    assert param.get(field='notes') == "note"
+    assert param.get(field='pernode') == PerNode.OPTIONAL
+    assert param.get(field='unit') == "nm"
+    assert param.get(field='hashalgo') is None
+    assert param.get(field='copy') is None
+    assert param.get(field='require') is False
+
+
+def test_get_fields_file():
+    param = Parameter(
+        "file",
+        scope=Scope.SCRATCH,
+        lock=True,
+        switch="-test",
+        shorthelp="test short",
+        example="example1",
+        help="long help",
+        notes="note",
+        pernode=PerNode.OPTIONAL,
+        unit="nm",
+        hashalgo="md5",
+        copy=True)
+
+    assert param.get(field='type') == "file"
+    assert param.get(field='scope') == Scope.SCRATCH
+    assert param.get(field='lock') is True
+    assert param.get(field='switch') == ["-test"]
+    assert param.get(field='shorthelp') == "test short"
+    assert param.get(field='example') == ["example1"]
+    assert param.get(field='help') == "long help"
+    assert param.get(field='notes') == "note"
+    assert param.get(field='pernode') == PerNode.OPTIONAL
+    assert param.get(field='unit') is None
+    assert param.get(field='hashalgo') == "md5"
+    assert param.get(field='copy') is True
+    assert param.get(field='require') is False
+
+
+def test_get_fields_dir():
+    param = Parameter(
+        "dir",
+        scope=Scope.SCRATCH,
+        lock=True,
+        switch="-test",
+        shorthelp="test short",
+        example="example1",
+        help="long help",
+        notes="note",
+        pernode=PerNode.OPTIONAL,
+        unit="nm",
+        hashalgo="md5",
+        copy=True)
+
+    assert param.get(field='type') == "dir"
+    assert param.get(field='scope') == Scope.SCRATCH
+    assert param.get(field='lock') is True
+    assert param.get(field='switch') == ["-test"]
+    assert param.get(field='shorthelp') == "test short"
+    assert param.get(field='example') == ["example1"]
+    assert param.get(field='help') == "long help"
+    assert param.get(field='notes') == "note"
+    assert param.get(field='pernode') == PerNode.OPTIONAL
+    assert param.get(field='unit') is None
+    assert param.get(field='hashalgo') == "md5"
+    assert param.get(field='copy') is True
+    assert param.get(field='require') is False
+
+
+def test_get_fields_enum():
+    param = Parameter(
+        "<test0,test1>",
+        scope=Scope.SCRATCH,
+        lock=True,
+        switch="-test",
+        shorthelp="test short",
+        example="example1",
+        help="long help",
+        notes="note",
+        pernode=PerNode.OPTIONAL,
+        unit='nm',
+        hashalgo="md5",
+        copy=True)
+
+    assert param.get(field='type') == "<test0,test1>"
+    assert param.get(field='scope') == Scope.SCRATCH
+    assert param.get(field='lock') is True
+    assert param.get(field='switch') == ["-test"]
+    assert param.get(field='shorthelp') == "test short"
+    assert param.get(field='example') == ["example1"]
+    assert param.get(field='help') == "long help"
+    assert param.get(field='notes') == "note"
+    assert param.get(field='pernode') == PerNode.OPTIONAL
+    assert param.get(field='unit') is None
+    assert param.get(field='hashalgo') is None
+    assert param.get(field='copy') is None
+    assert param.get(field='require') is False
+
+
+def test_set_add_illegal():
+    param = Parameter("<test0,test1>")
+
+    with pytest.raises(ValueError, match=r"^add can only be used on lists or sets$"):
+        param.add("test0")
+
+
+def test_set_add_enum():
+    param = Parameter("[<test0,test1>]")
+
+    assert param.get() == []
+    assert param.set("test0")
+    assert param.get() == ["test0"]
+
+    assert param.add("test1")
+    assert param.get() == ["test0", "test1"]
+
+
+def test_add_fields_enum():
+    param = Parameter("[<test0,test1>]")
+
+    assert param.set("test0")
+
+    assert param.add("test2", field="switch")
+    assert param.get(field='switch') == ["test2"]
+
+    assert param.add("test3", field="example")
+    assert param.get(field='example') == ["test3"]
+
+    with pytest.raises(ValueError, match=r"^\"invalid\" is not a valid field$"):
+        param.add("test3", field="invalid")
+
+
+def test_set_add_set():
+    param = Parameter("{str}")
+
+    assert param.get() == []
+    assert param.set("test0")
+    assert param.get() == ["test0"]
+
+    assert param.add("test1")
+    assert param.get() == ["test0", "test1"]
+
+
+def test_from_dict_round_trip():
+    param = Parameter(
+        "file",
+        scope=Scope.SCRATCH,
+        lock=True,
+        switch="-test",
+        shorthelp="test short",
+        example="example1",
+        help="long help",
+        pernode=PerNode.OPTIONAL,
+        unit="nm",
+        hashalgo="md5",
+        copy=True)
+
+    param_check = Parameter.from_dict(param.getdict(), [], None)
+    assert param.getdict() == param_check.getdict()
+
+
+def test_global_key_input_maps_to_none():
+    # GLOBAL_KEY is only a serialization alias for the internal None sentinel.
+    # Passing it through the public API must behave identically to None so the
+    # string never leaks into the internal node representation.
+    param = Parameter("int", pernode=PerNode.OPTIONAL)
+    param.set(4, step=Parameter.GLOBAL_KEY, index=Parameter.GLOBAL_KEY)
+
+    # reachable as the global value with or without the alias
+    assert param.get() == 4
+    assert param.get(step=Parameter.GLOBAL_KEY, index=Parameter.GLOBAL_KEY) == 4
+
+    # internally represented purely as the None/global bucket
+    assert param.getvalues() == [(4, None, None)]
+
+    # the wire form uses GLOBAL_KEY, and round-trips back to the same value
+    manifest = param.getdict()
+    assert list(manifest["node"]) == [Parameter.GLOBAL_KEY, "default"]
+    assert Parameter.from_dict(manifest, [], None).get() == 4
+
+    # unset via the alias clears the global value
+    assert param.unset(step=Parameter.GLOBAL_KEY, index=Parameter.GLOBAL_KEY)
+    assert not param.is_set()
+
+
+@pytest.mark.parametrize("scope", ["global", "step-global"])
+def test_accessors_honor_global_key_alias(scope):
+    # Every step/index accessor must treat GLOBAL_KEY identically to None so the
+    # alias never leaks into (or is missed by) the internal representation.
+    GK = Parameter.GLOBAL_KEY
+
+    def build():
+        p = Parameter("int", pernode=PerNode.OPTIONAL)
+        p.set(4)                          # fully-global value
+        p.set(5, step="syn", index="0")   # per-node value
+        p.set(7, step="syn")              # step-scoped global value
+        return p
+
+    # the None-form coordinate we are probing, and its GLOBAL_KEY alias
+    none_args, alias_args = {
+        "global": ((None, None), (GK, GK)),
+        "step-global": (("syn", None), ("syn", GK)),
+    }[scope]
+
+    p = build()
+    (s0, i0), (s1, i1) = none_args, alias_args
+    assert p.get(step=s0, index=i0) == p.get(step=s1, index=i1)
+    assert bool(p.is_set(s0, i0)) == bool(p.is_set(s1, i1))
+    assert p.has_value(s0, i0) == p.has_value(s1, i1)
+    assert p.gettcl(s0, i0) == p.gettcl(s1, i1)
+
+
+def test_mutators_honor_global_key_alias():
+    GK = Parameter.GLOBAL_KEY
+
+    # set via alias == set via None
+    p_alias = Parameter("int", pernode=PerNode.OPTIONAL)
+    p_alias.set(4, step=GK, index=GK)
+    p_none = Parameter("int", pernode=PerNode.OPTIONAL)
+    p_none.set(4)
+    assert p_alias.getdict() == p_none.getdict()
+
+    # add via alias == add via None
+    l_alias = Parameter("[int]", pernode=PerNode.OPTIONAL)
+    l_alias.add(4, step=GK, index=GK)
+    l_none = Parameter("[int]", pernode=PerNode.OPTIONAL)
+    l_none.add(4)
+    assert l_alias.getdict() == l_none.getdict()
+
+    # unset via alias == unset via None
+    p_alias.unset(step=GK, index=GK)
+    p_none.unset()
+    assert p_alias.getdict() == p_none.getdict()
+    assert not p_alias.is_set()
+
+
+def test_from_dict_version0_50_0():
+    param = Parameter.from_dict({
+        'enum': [
+            'test0',
+            'test1',
+        ],
+        'example': [
+            'example1',
+        ],
+        'help': 'long help',
+        'lock': False,
+        'node': {
+            'default': {
+                'default': {
+                    'signature': [],
+                    'value': [
+                        'test0',
+                        'test1',
+                    ],
+                },
+            },
+            'global': {
+                'global': {
+                    'signature': [],
+                    'value': [
+                        'test0'
+                    ],
+                },
+            },
+            'teststep': {
+                '0': {
+                    'signature': [],
+                    'value': [
+                        'test1',
+                        'test0',
+                    ],
+                },
+            },
+        },
+        'notes': None,
+        'pernode': 'optional',
+        'require': False,
+        'scope': 'scratch',
+        'shorthelp': 'test short',
+        'switch': [
+            '-test',
+        ],
+        'type': '[enum]',
+    }, [], (0, 50, 0))
+    assert param.default.get() == ['test0', 'test1']
+    assert param.get(field='type') == "[<test0,test1>]"
+    assert param.get() == ["test0"]
+    assert param.get(step="teststep") == ["test0"]
+    assert param.get(step="teststep", index="0") == ['test1', 'test0']
+
+
+def test_from_dict_version0_54_0():
+    # Prior to schema 0.55.0 the global node bucket was serialized under the
+    # bare word "global". Manifests at those versions must still load the global
+    # value into the internal None bucket (not a literal "global" node).
+    param = Parameter.from_dict({
+        'node': {
+            'default': {
+                'default': {
+                    'signature': None,
+                    'value': None,
+                },
+            },
+            'global': {
+                'global': {
+                    'signature': None,
+                    'value': 4,
+                },
+            },
+            'teststep': {
+                '0': {
+                    'signature': None,
+                    'value': 5,
+                },
+            },
+        },
+        'pernode': 'optional',
+        'type': 'int',
+    }, [], (0, 54, 0))
+
+    assert param.get() == 4
+    assert param.get(step="teststep", index="0") == 5
+    # the legacy "global" token was mapped to the internal None sentinel
+    assert param.getvalues() == [(4, None, None), (5, "teststep", "0")]
+    # re-serialization uses the current "*" token
+    assert list(param.getdict()["node"]) == [Parameter.GLOBAL_KEY, "teststep", "default"]
+
+
+def test_from_dict():
+    param = Parameter.from_dict({
+        'example': [
+            'example1',
+        ],
+        'help': 'long help',
+        'lock': False,
+        'node': {
+            '*': {
+                '*': {
+                    'signature': None,
+                    'value': (
+                        'test',
+                        'test1',
+                    ),
+                },
+            },
+            'teststep': {
+                '0': {
+                    'signature': None,
+                    'value': (
+                        'step',
+                        'test0',
+                    ),
+                },
+            },
+        },
+        'notes': None,
+        'pernode': 'optional',
+        'require': False,
+        'scope': 'scratch',
+        'shorthelp': 'test short',
+        'switch': [
+            '-test',
+        ],
+        'type': '(str,<test0,test1>)',
+    }, [], tuple([int(v) for v in __version__.split('.')]))
+    assert param.default.get() is None
+    assert param.get() == ('test', 'test1')
+    assert param.get(step="teststep") == ('test', 'test1')
+    assert param.get(step="teststep", index="0") == ('step', 'test0')
+
+
+def test_from_dict_round_trip_tuple():
+    param = Parameter(
+        "(str,int)",
+        scope=Scope.SCRATCH,
+        switch="-test",
+        shorthelp="test short",
+        example="example1",
+        help="long help",
+        pernode=PerNode.OPTIONAL,
+        unit="nm",
+        hashalgo="md5",
+        copy=True)
+
+    param.set(("test", 1))
+    param.set(("step", 2), step="teststep", index="0")
+
+    param_check = Parameter.from_dict(param.getdict(), [], None)
+    assert param.getdict() == param_check.getdict()
+
+    assert param_check.get() == ("test", 1)
+    assert param_check.get(step="teststep", index="0") == ("step", 2)
+
+
+def test_from_dict_round_trip_enum():
+    param = Parameter(
+        "(str,<test0,test1>)",
+        scope=Scope.SCRATCH,
+        switch="-test",
+        shorthelp="test short",
+        example="example1",
+        help="long help",
+        pernode=PerNode.OPTIONAL,
+        unit="nm",
+        hashalgo="md5",
+        copy=True)
+
+    param.set(("test", "test1"))
+    param.set(("step", "test0"), step="teststep", index="0")
+
+    assert param.getdict() == {
+        'example': [
+            'example1',
+        ],
+        'help': 'long help',
+        'lock': False,
+        'node': {
+            'default': {
+                'default': {
+                    'signature': None,
+                    'value': None,
+                },
+            },
+            '*': {
+                '*': {
+                    'signature': None,
+                    'value': (
+                        'test',
+                        'test1',
+                    ),
+                },
+            },
+            'teststep': {
+                '0': {
+                    'signature': None,
+                    'value': (
+                        'step',
+                        'test0',
+                    ),
+                },
+            },
+        },
+        'notes': None,
+        'pernode': 'optional',
+        'require': False,
+        'scope': 'scratch',
+        'shorthelp': 'test short',
+        'switch': [
+            '-test',
+        ],
+        'type': '(str,<test0,test1>)',
+    }
+
+    param_check = Parameter.from_dict(param.getdict(), [], None)
+    assert param.getdict() == param_check.getdict()
+
+    assert param_check.get() == ("test", "test1")
+    assert param_check.get(step="teststep", index="0") == ("step", "test0")
+
+
+def test_from_dict_locked():
+    param = Parameter(
+        "(str,int)",
+        scope=Scope.SCRATCH,
+        switch="-test",
+        shorthelp="test short",
+        example="example1",
+        help="long help",
+        pernode=PerNode.OPTIONAL,
+        unit="nm",
+        hashalgo="md5",
+        copy=True)
+    param_check = Parameter(
+        "(str,int)",
+        scope=Scope.SCRATCH,
+        lock=True,
+        switch="-test",
+        shorthelp="test short",
+        example="example1",
+        help="long help",
+        pernode=PerNode.OPTIONAL,
+        unit="nm",
+        hashalgo="md5",
+        copy=True)
+
+    param.set(("test", 1))
+    param.set(("step", 2), step="teststep", index="0")
+
+    expect = param_check.getdict()
+    param_check._from_dict(param.getdict(), [], None)
+
+    assert param.getdict() != param_check.getdict()
+    assert expect == param_check.getdict()
+
+
+def test_list_of_lists_str():
+    param = Parameter("[[str]]")
+    param.set([['foo']])
+
+    assert param.get() == [['foo']]
+
+
+def test_list_of_lists_int():
+    param = Parameter("[[int]]")
+    param.set([['1']])
+
+    assert param.get() == [[1]]
+
+
+def test_list_of_bools():
+    param = Parameter("[bool]")
+
+    param.set([True, False])
+
+    assert param.get() == [True, False]
+
+
+def test_list_of_bools_from_str():
+    param = Parameter("[bool]")
+
+    param.set(['True', 'False'])
+
+    assert param.get() == [True, False]
+
+
+def test_list_of_tuples_tuple_input():
+    param = Parameter("[(str,str)]")
+
+    param.set(('import', '0'))
+    assert param.get() == [('import', '0')]
+
+
+def test_list_of_tuples_list_tuple_input():
+    param = Parameter("[(str,str)]")
+
+    param.set([('import', '0')])
+    assert param.get() == [('import', '0')]
+
+
+def test_list_of_tuples_list_input():
+    param = Parameter("[(str,str)]")
+
+    param.set(['import', '0'])
+    assert param.get() == [('import', '0')]
+
+
+def test_pernode_mandatory_get():
+    param = Parameter("str", pernode=PerNode.REQUIRED)
+
+    param.set("foo", step="test", index="0")
+    assert param.get(step="test", index="0") == "foo"
+
+    with pytest.raises(KeyError):
+        param.get()
+
+
+def test_pernode_mandatory_set():
+    param = Parameter("str", pernode=PerNode.REQUIRED)
+
+    with pytest.raises(KeyError, match=r"^'step and index are required'$"):
+        param.set("foo")
+
+    param.set("foo", step="test", index="0")
+    assert param.get(step="test", index="0") == "foo"
+
+
+def test_pernode_mandatory_add():
+    param = Parameter("[str]", pernode=PerNode.REQUIRED)
+
+    with pytest.raises(KeyError, match=r"^'step and index are required'$"):
+        param.add("foo")
+
+    param.add("foo", step="test", index="0")
+    assert param.get(step="test", index="0") == ["foo"]
+
+
+def test_is_empty():
+    param = Parameter("str")
+
+    assert param.is_empty()
+    param.set("1.0")
+    assert not param.is_empty()
+
+
+def test_is_set():
+    param = Parameter("str")
+
+    assert not param.is_set()
+    param.set("1.0")
+    assert param.is_set()
+
+
+def test_is_list():
+    param = Parameter("str")
+    with pytest.warns(DeprecationWarning, match="is_list is deprecated"):
+        assert not param.is_list()
+
+    param = Parameter("[str]")
+    with pytest.warns(DeprecationWarning, match="is_list is deprecated"):
+        assert param.is_list()
+
+
+def test_is_list_deprecated():
+    """is_list warns but still reports list and set container types."""
+    with pytest.warns(DeprecationWarning,
+                      match=r"is_list is deprecated, use istype\('list', 'set'\) instead"):
+        assert Parameter("{str}").is_list()
+
+
+@pytest.mark.parametrize("sctype,expect", [
+    # Any list container is a list, regardless of element type
+    ("[file]", True),
+    ("[dir]", True),
+    ("[int]", True),
+    ("[str]", True),
+    ("[<a,b>]", True),
+    # Sets count too
+    ("{file}", True),
+    ("{dir}", True),
+    ("{str}", True),
+    # Scalars and tuples are not
+    ("file", False),
+    ("dir", False),
+    ("int", False),
+    ("(str,int)", False),
+])
+def test_is_list_container_types(sctype, expect):
+    """is_list is true for any list/set container, including lists of files."""
+    with pytest.warns(DeprecationWarning):
+        assert Parameter(sctype).is_list() is expect
+
+
+@pytest.mark.parametrize("sctype,check,expect", [
+    ("int", ("int",), True),
+    ("int", ("float",), False),
+    ("int", ("int", "float"), True),
+    ("[int]", ("int",), False),
+    ("[int]", ("list",), True),
+    ("[int]", ("list", "set"), True),
+    ("{int}", ("set",), True),
+    ("{int}", ("list", "set"), True),
+    ("(int,str)", ("tuple",), True),
+    ("int<0..10>", ("int",), True),
+    ("int<0..10>", ("range",), True),
+    ("<a,b>", ("enum",), True),
+])
+def test_istype(sctype, check, expect):
+    """Parameter.istype forwards to NodeType.istype on the parameter's type."""
+    assert Parameter(sctype).istype(*check) is expect
+
+
+@pytest.mark.parametrize("sctype,expect", [
+    ("int", "int"),
+    ("float", "float"),
+    ("[int]", "int"),
+    ("{str}", "str"),
+    ("int<0..10>", "int"),
+    ("<a,b>", "enum"),
+    ("(str,int)", None),
+])
+def test_basetype(sctype, expect):
+    """Parameter.basetype forwards to NodeType.basetype on the parameter's type."""
+    assert Parameter(sctype).basetype() == expect
+
+
+@pytest.mark.parametrize("sctype", (
+    "file", "[file]", "{file}",
+    "dir", "[dir]", "{dir}",
+))
+def test_is_path_true(sctype):
+    assert Parameter(sctype).is_path is True
+
+
+@pytest.mark.parametrize("sctype", (
+    "str", "int", "float", "bool",
+    "[str]", "{int}", "<a,b>", "[<a,b>]",
+    "<dir,file>"
+))
+def test_is_path_false(sctype):
+    assert Parameter(sctype).is_path is False
+
+
+@pytest.mark.parametrize("sctype", ("file", "[file]", "{file}"))
+def test_is_file_true(sctype):
+    param = Parameter(sctype)
+    assert param.is_file is True
+    assert param.is_directory is False
+    assert param.is_path is True
+
+
+@pytest.mark.parametrize("sctype", ("dir", "[dir]", "{dir}"))
+def test_is_directory_true(sctype):
+    param = Parameter(sctype)
+    assert param.is_directory is True
+    assert param.is_file is False
+    assert param.is_path is True
+
+
+@pytest.mark.parametrize("sctype", (
+    "str", "int", "float", "bool",
+    "[str]", "{int}", "<a,b>",
+))
+def test_is_file_directory_false(sctype):
+    param = Parameter(sctype)
+    assert param.is_file is False
+    assert param.is_directory is False
+
+
+def test_is_path_tuple_without_path():
+    param = Parameter("(str,int)")
+    assert param.is_file is False
+    assert param.is_directory is False
+    assert param.is_path is False
+
+
+@pytest.mark.parametrize("sctype", (
+    "(str,file)", "(str,dir)", "(file,file)",
+    "[(str,file)]", "{(str,dir)}", "((str,file),int)", "(str,[file])",
+))
+def test_path_in_tuple_rejected(sctype):
+    # The type parser places no constraint on tuple members, so without a guard
+    # these are silently built as a plain file / directory instead of a tuple.
+    with pytest.raises(ValueError,
+                       match=r"is not a supported type: file and dir cannot be members "
+                             r"of a tuple$"):
+        Parameter(sctype)
+
+
+@pytest.mark.parametrize("sctype", ("file", "[file]", "{file}", "dir", "[dir]", "{dir}"))
+def test_path_containers_still_supported(sctype):
+    # The guard sits next to the branch which builds these correctly.
+    assert Parameter(sctype).is_path is True
+
+
+def test_path_in_tuple_rejected_from_dict():
+    # A manifest read assigns the type directly, so it needs the same guard.
+    with pytest.raises(ValueError,
+                       match=r"^\(str,file\) is not a supported type: file and dir cannot "
+                             r"be members of a tuple$"):
+        Parameter.from_dict({
+            'lock': False,
+            'node': {},
+            'pernode': 'never',
+            'require': False,
+            'scope': 'global',
+            'type': '(str,file)',
+        }, [], tuple([int(v) for v in __version__.split('.')]))
+
+
+def test_is_path_properties_are_properties():
+    # Guard against accidental refactor back to methods - the user-facing
+    # contract is attribute access, not a call.
+    param = Parameter("file")
+    assert param.is_file is True
+    assert param.is_directory is False
+    assert param.is_path is True
+
+
+def test_getvalues():
+    param = Parameter("str", defvalue="test", pernode=PerNode.OPTIONAL)
+
+    assert param.getvalues() == [('test', None, None)]
+    assert param.getvalues(return_defvalue=False) == []
+
+    param.set("test0")
+    param.set("test1", step="step")
+    param.set("test2", step="step", index="0")
+
+    assert param.getvalues() == [
+        ('test0', None, None),
+        ('test1', 'step', None),
+        ('test2', 'step', '0')
+    ]
+    assert param.getvalues(return_defvalue=False) == [
+        ('test0', None, None),
+        ('test1', 'step', None),
+        ('test2', 'step', '0')
+    ]
+
+
+def test_getvalues_nodes():
+    param = Parameter("str", defvalue="test", pernode=PerNode.OPTIONAL)
+
+    values = param.getvalues(return_values=False)
+    assert len(values) == 1
+    assert isinstance(values[0][0], NodeValue)
+    assert values[0][1] is None
+    assert values[0][2] is None
+    assert param.getvalues(return_values=False, return_defvalue=False) == []
+
+    param.set("test0")
+    param.set("test1", step="step")
+    param.set("test2", step="step", index="0")
+
+    values = param.getvalues(return_values=False)
+    assert len(values) == 3
+    assert isinstance(values[0][0], NodeValue)
+    assert values[0][1] is None
+    assert values[0][2] is None
+    assert isinstance(values[1][0], NodeValue)
+    assert values[1][1] == "step"
+    assert values[1][2] is None
+    assert isinstance(values[2][0], NodeValue)
+    assert values[2][1] == "step"
+    assert values[2][2] == "0"
+    values = param.getvalues(return_values=False, return_defvalue=False)
+    assert len(values) == 3
+    assert isinstance(values[0][0], NodeValue)
+    assert values[0][1] is None
+    assert values[0][2] is None
+    assert isinstance(values[1][0], NodeValue)
+    assert values[1][1] == "step"
+    assert values[1][2] is None
+    assert isinstance(values[2][0], NodeValue)
+    assert values[2][1] == "step"
+    assert values[2][2] == "0"
+
+
+def test_str():
+    param = Parameter("str", pernode=PerNode.OPTIONAL)
+
+    assert str(param) == "[(None, None, None)]"
+
+    assert param.set("test")
+    assert str(param) == "[('test', None, None)]"
+
+    assert param.set("test", step="teststep")
+    assert str(param) == "[('test', None, None), ('test', 'teststep', None)]"
+
+
+def test_int_as_index():
+    param = Parameter("str", pernode=PerNode.OPTIONAL)
+
+    assert param.set("notthis", step="teststep")
+    assert param.set("test", step="teststep", index=1)
+    assert param.get(step="teststep", index=0) == "notthis"
+    assert param.get(step="teststep", index=1) == "test"
+
+
+def test_int_as_index_list():
+    param = Parameter("[str]", pernode=PerNode.OPTIONAL)
+
+    assert param.add("notthis", step="teststep")
+    assert param.add("test", step="teststep", index=1)
+    assert param.get(step="teststep", index=0) == ["notthis"]
+    assert param.get(step="teststep", index=1) == ["test"]
+
+
+def test_copy():
+    param = Parameter("<test>", pernode=PerNode.OPTIONAL)
+
+    copy_param = param.copy()
+
+    assert param is not copy_param
+
+    assert param.getdict() == copy_param.getdict()
+
+
+def test_tcl_optional():
+    param = Parameter("str", pernode=PerNode.OPTIONAL)
+
+    assert param.set("test0")
+    assert param.set("test1", step="step")
+    assert param.set("test2", step="step", index="0")
+
+    assert param.gettcl() == '"test0"'
+    assert param.gettcl(step="step") == '"test1"'
+    assert param.gettcl(step="step", index="0") == '"test2"'
+
+
+def test_tcl_required():
+    param = Parameter("str", pernode=PerNode.REQUIRED)
+
+    assert param.set("test1", step="step", index="0")
+    assert param.set("test2", step="step", index="1")
+
+    assert param.gettcl() is None
+    assert param.gettcl(step="step", index="0") == '"test1"'
+    assert param.gettcl(step="step", index="1") == '"test2"'
+
+
+def test_tcl_enum():
+    param = Parameter("<test1,test2>", pernode=PerNode.REQUIRED)
+
+    assert param.set("test1", step="step", index="0")
+    assert param.set("test2", step="step", index="1")
+
+    assert param.gettcl() is None
+    assert param.gettcl(step="step", index="0") == '"test1"'
+    assert param.gettcl(step="step", index="1") == '"test2"'
+
+
+def test_tcl_set():
+    param = Parameter("{str}", pernode=PerNode.REQUIRED)
+
+    assert param.set("test1", step="step", index="0")
+    assert param.set("test2", step="step", index="1")
+
+    assert param.gettcl() is None
+    assert param.gettcl(step="step", index="0") == '[list "test1"]'
+    assert param.gettcl(step="step", index="1") == '[list "test2"]'
+
+    assert param.add("test4", step="step", index="1")
+    assert param.add("test3", step="step", index="1")
+    assert param.gettcl(step="step", index="1") == '[list "test2" "test4" "test3"]'
+
+
+def test_tcl_set_empty():
+    param = Parameter("{str}", pernode=PerNode.REQUIRED)
+
+    assert param.gettcl() is None
+    assert param.gettcl(step="step", index="0") == '[list ]'
+
+
+def test_tcl_set_empty_int_index():
+    param = Parameter("{str}", pernode=PerNode.REQUIRED)
+
+    assert param.set("test1", step="step", index="0")
+    assert param.set("test2", step="step", index="1")
+
+    assert param.gettcl() is None
+    assert param.gettcl(step="step", index=0) == '[list "test1"]'
+    assert param.gettcl(step="step", index=1) == '[list "test2"]'
+
+
+def test_tcl_never():
+    param = Parameter("str", pernode=PerNode.NEVER)
+
+    assert param.set("test0")
+
+    assert param.gettcl() == '"test0"'
+
+
+def test_tcl_empty():
+    param = Parameter("str")
+
+    # An unset value serializes to an explicit empty Tcl element ({}) so it is
+    # a valid empty value in 'dict set' and never collapses in a join.
+    assert param.gettcl() == '{}'
+
+
+def test_tcl_int():
+    param = Parameter("int")
+
+    assert param.set(3)
+
+    assert param.gettcl() == '3'
+
+
+def test_tcl_float():
+    param = Parameter("float")
+
+    assert param.set(3.5)
+
+    assert param.gettcl() == '3.5'
+
+
+def test_tcl_list():
+    param = Parameter("[float]")
+
+    assert param.add(3.5)
+    assert param.add(4.5)
+
+    assert param.gettcl() == '[list 3.5 4.5]'
+
+
+def test_tcl_tuple():
+    param = Parameter("(float,int)")
+
+    assert param.set((3.5, 2))
+
+    assert param.gettcl() == '[list 3.5 2]'
+
+
+def test_tcl_list_tuple():
+    param = Parameter("[(float,int)]")
+
+    assert param.add((3.5, 2))
+    assert param.add((5.5, 5))
+
+    assert param.gettcl() == '[list [list 3.5 2] [list 5.5 5]]'
+
+
+def test_unset():
+    param = Parameter("bool", pernode=PerNode.NEVER)
+    assert param.get() is False
+    param.set(True)
+    assert param.get() is True
+
+    # Clearing a parameter resets it to default value
+    param.unset()
+    assert param.get() is False
+
+    # Able to set a keypath after it's been cleared even if clobber=False
+    assert param.set(True, clobber=False)
+    assert param.get() is True
+
+
+def test_unset_clear_fields():
+    '''Ensure unset() clears pernode-fields other than value'''
+    param = Parameter("[file]", pernode=PerNode.OPTIONAL)
+
+    param.set('foo.txt')
+    param.set('abc123', field='filehash')
+    param.unset()
+
+    # arbitrary step/index to avoid error
+    assert param.get(step='syn', index=0) == []
+    assert param.get(step='syn', index=0, field='filehash') == []
+
+
+def test_unset_required_pernode():
+    param = Parameter("int", pernode=PerNode.REQUIRED)
+    param.set(5, step='syn', index=0)
+    param.unset(step='syn', index=0)
+
+    assert param.get(step='syn', index=0) is None
+
+    param.set(6, step='syn', index=0, clobber=False)
+
+    assert param.get(step='syn', index=0) == 6
+
+
+def test_unset_optional_pernode():
+    param = Parameter("[str]", pernode=PerNode.OPTIONAL)
+    assert param.set('default_lib')
+    assert param.get(step='syn', index=0) == ['default_lib']
+
+    assert param.set('syn_lib', step='syn', index=0)
+    assert param.get(step='syn', index=0) == ['syn_lib']
+
+    param.unset(step='syn', index=0)
+    param.unset(step='syn', index=1)
+    assert param.get(step='syn', index=0) == ['default_lib']
+    assert param.get() == ['default_lib']
+
+    assert not param.set('syn_lib', step='syn', index=0, clobber=False)
+    assert param.get(step='syn', index=0) == ['default_lib']
+
+
+def test_unset_lock():
+    param = Parameter("[str]", pernode=PerNode.OPTIONAL)
+    assert param.set('default_lib')
+    assert param.get(step='syn', index=0) == ['default_lib']
+
+    assert param.set(True, field='lock')
+
+    param.unset(step='syn', index=0)
+    assert param.get(step='syn', index=0) == ['default_lib']
+    assert param.get() == ['default_lib']
+
+
+def test_immutable_returns():
+    param = Parameter("[str]", pernode=PerNode.OPTIONAL)
+    assert param.set('default_lib')
+    assert param.get() == ['default_lib']
+
+    get0 = param.get()
+    get1 = param.get()
+
+    assert get0 is not get1
+
+
+@pytest.mark.parametrize("value,field,expect", [
+    ("dir", "type", "dir"),
+    ("job", "scope", Scope.JOB),
+    ("scratch", "scope", Scope.SCRATCH),
+    (Scope.SCRATCH, "scope", Scope.SCRATCH),
+    ("t", "lock", True),
+    ("-test", "switch", ["-test"]),
+    ("test short", "shorthelp", "test short"),
+    ("example1", "example", ["example1"]),
+    ("long help", "help", "long help"),
+    ("optional", "pernode", PerNode.OPTIONAL),
+    ("required", "pernode", PerNode.REQUIRED),
+    (PerNode.REQUIRED, "pernode", PerNode.REQUIRED),
+    ("nm", "unit", "nm"),
+    ("t", "copy", True),
+    ("t", "require", True),
+    ("md5", "hashalgo", "md5"),
+    ("notes are here", "notes", "notes are here"),
+    ("1235", "filehash", "1235"),
+    ("12356", "dataroot", "12356"),
+    ("12357", "date", "12357"),
+    ("12358", "author", ["12358"]),
+    ("12359", "signature", "12359"),
+])
+def test_normalize_fields_scalar(value, field, expect):
+    param = Parameter("file")
+
+    oldval = param.get(field=field)
+    if expect in (True, False, None):
+        assert oldval is not expect
+    else:
+        assert oldval != expect
+
+    assert param.set(value, field=field)
+
+    newval = param.get(field=field)
+    if expect in (True, False, None):
+        assert newval is expect
+    else:
+        assert newval == expect
+
+
+def test_normalize_fields_scalar_errors_file():
+    param = Parameter("file")
+
+    with pytest.raises(ValueError, match=r"^invalid is not a member of: global, job, scratch$"):
+        param.set("invalid", field='scope')
+
+    with pytest.raises(ValueError,
+                       match=r"^invalid is not a member of: never, optional, required$"):
+        param.set("invalid", field='pernode')
+
+    with pytest.raises(ValueError, match=r"^\"invalid\" is not a valid field$"):
+        param.set("test", field="invalid")
+
+
+def test_normalize_fields_scalar_errors_dir():
+    param = Parameter("dir")
+
+    with pytest.raises(ValueError, match=r"^\"date\" is not a valid field$"):
+        param.set("test", field="date")
+
+    with pytest.raises(ValueError, match=r"^\"author\" is not a valid field$"):
+        param.set("test", field="author")
+
+
+def test_normalize_fields_scalar_errors_int():
+    param = Parameter("int")
+
+    with pytest.raises(ValueError, match=r"^\"dataroot\" is not a valid field$"):
+        param.set("test", field="dataroot")
+
+    with pytest.raises(ValueError, match=r"^\"filehash\" is not a valid field$"):
+        param.set("test", field="filehash")
+
+
+@pytest.mark.parametrize("value,field,expect", [
+    ("dir", "type", "dir"),
+    ("job", "scope", Scope.JOB),
+    ("scratch", "scope", Scope.SCRATCH),
+    (Scope.SCRATCH, "scope", Scope.SCRATCH),
+    ("t", "lock", True),
+    ("-test", "switch", ["-test"]),
+    ("test short", "shorthelp", "test short"),
+    ("example1", "example", ["example1"]),
+    ("long help", "help", "long help"),
+    ("optional", "pernode", PerNode.OPTIONAL),
+    ("required", "pernode", PerNode.REQUIRED),
+    (PerNode.REQUIRED, "pernode", PerNode.REQUIRED),
+    ("nm", "unit", "nm"),
+    ("t", "copy", True),
+    ("t", "require", True),
+    ("md5", "hashalgo", "md5"),
+    ("notes are here", "notes", "notes are here"),
+    ("1235", "filehash", ["1235"]),
+    ("12356", "dataroot", ["12356"]),
+    ("12357", "date", ["12357"]),
+    ("12358", "author", [["12358"]]),
+    ("12359", "signature", ["12359"]),
+])
+def test_normalize_fields_list(value, field, expect):
+    param = Parameter("[file]")
+
+    if field != "value":
+        param.set("test")
+
+    oldval = param.get(field=field)
+    if expect in (True, False, None):
+        assert oldval is not expect
+    else:
+        assert oldval != expect
+
+    assert param.set(value, field=field)
+
+    newval = param.get(field=field)
+    if expect in (True, False, None):
+        assert newval is expect
+    else:
+        assert newval == expect
+
+
+def test_normalize_fields_list_errors():
+    param = Parameter("[file]")
+
+    with pytest.raises(ValueError, match=r"^invalid is not a member of: global, job, scratch$"):
+        param.set("invalid", field='scope')
+
+    with pytest.raises(ValueError,
+                       match=r"^invalid is not a member of: never, optional, required$"):
+        param.set("invalid", field='pernode')
+
+    with pytest.raises(ValueError, match=r"^\"invalid\" is not a valid field$"):
+        param.set("test", field="invalid")
+
+
+def test_add_normalize_fields_list_errors_file():
+    param = Parameter("[file]")
+
+    with pytest.raises(ValueError, match=r"^\"invalid\" is not a valid field$"):
+        param.add("test", field="invalid")
+
+
+def test_add_normalize_fields_list_errors_dir():
+    param = Parameter("[dir]")
+
+    with pytest.raises(ValueError, match=r"^\"date\" is not a valid field$"):
+        param.add("test", field="date")
+
+    with pytest.raises(ValueError, match=r"^\"author\" is not a valid field$"):
+        param.add("test", field="author")
+
+
+def test_add_normalize_fields_list_errors_int():
+    param = Parameter("[int]")
+
+    with pytest.raises(ValueError, match=r"^\"dataroot\" is not a valid field$"):
+        param.add("test", field="dataroot")
+
+    with pytest.raises(ValueError, match=r"^\"filehash\" is not a valid field$"):
+        param.add("test", field="filehash")
+
+    with pytest.raises(ValueError, match=r"^\"hashalgo\" is not a valid field$"):
+        param.add("test", field="hashalgo")
+
+
+def test_add_on_scalar():
+    param = Parameter("int")
+
+    with pytest.raises(ValueError, match=r"^add can only be used on lists or sets$"):
+        param.add("test")
+
+
+@pytest.mark.parametrize("value,field,expect", [
+    ("12358", "author", [["12358"]]),
+])
+def test_add_normalize_fields_list(value, field, expect):
+    param = Parameter("[file]")
+
+    if field != 'value':
+        param.set("test")
+
+    oldval = param.get(field=field)
+    if expect in (True, False, None):
+        assert oldval is not expect
+    else:
+        assert oldval != expect
+
+    assert param.add(value, field=field)
+
+    newval = param.get(field=field)
+    if expect in (True, False, None):
+        assert newval is expect
+    else:
+        assert newval == expect
+
+
+def test_add_on_locked():
+    param = Parameter("[int]", lock=True)
+
+    assert not param.add("test")
+    assert param.get() == []
+
+
+def test_set_on_locked():
+    param = Parameter("int", lock=True)
+
+    assert not param.set("test")
+    assert param.get() is None
+
+
+def test_unlock():
+    param = Parameter("int", lock=True)
+    assert param.get(field='lock')
+    assert param.set(False, field='lock')
+    assert not param.get(field='lock')
+
+
+def test_step_index_required():
+    param = Parameter("int", pernode=PerNode.REQUIRED)
+
+    with pytest.raises(KeyError, match=r"^'step and index are required'$"):
+        param.get()
+
+    with pytest.raises(KeyError, match=r"^'step and index are required'$"):
+        param.get(step="type")
+
+    assert param.get(step="type", index="0") is None
+
+
+def test_step_index_never():
+    param = Parameter("int", pernode=PerNode.NEVER)
+
+    with pytest.raises(KeyError, match=r"^'use of step and index are not valid'$"):
+        param.get(step="type", index="0")
+
+    with pytest.raises(KeyError, match=r"^'use of step and index are not valid'$"):
+        param.get(step="type")
+
+    assert param.get() is None
+
+
+def test_step_index_optional():
+    param = Parameter("int", pernode=PerNode.OPTIONAL)
+
+    with pytest.raises(KeyError,
+                       match=r"^'step and index are only valid for: value, signature'$"):
+        param.get(step="type", index="0", field="type")
+
+    with pytest.raises(KeyError, match=r"^'step is required if index is provided'$"):
+        param.get(index="0")
+
+    with pytest.raises(KeyError, match=r"^'illegal step name: default is reserved'$"):
+        param.get(step="default", index="0")
+
+    with pytest.raises(KeyError, match=r"^'illegal index name: default is reserved'$"):
+        param.get(step="test", index="default")
+
+
+def test_getdict():
+    param = Parameter("int", pernode=PerNode.OPTIONAL)
+    assert param.getdict() == {
+        'example': [],
+        'help': None,
+        'lock': False,
+        'node': {
+            'default': {
+                'default': {
+                    'signature': None,
+                    'value': None,
+                },
+            },
+        },
+        'notes': None,
+        'pernode': 'optional',
+        'require': False,
+        'scope': 'global',
+        'shorthelp': None,
+        'switch': [],
+        'type': 'int',
+    }
+    assert param.getdict(include_default=False) == {
+        'example': [],
+        'help': None,
+        'lock': False,
+        'node': {},
+        'notes': None,
+        'pernode': 'optional',
+        'require': False,
+        'scope': 'global',
+        'shorthelp': None,
+        'switch': [],
+        'type': 'int',
+    }
+
+
+def test_getdict_values_only():
+    param = Parameter("int", pernode=PerNode.OPTIONAL)
+    assert param.getdict(include_default=False, values_only=True) == {}
+
+
+def test_getdict_values_only_include_default():
+    param = Parameter("int", pernode=PerNode.OPTIONAL)
+    assert param.getdict(include_default=True, values_only=True) == {}
+
+
+def test_getdict_values_only_step_index():
+    param = Parameter("int", pernode=PerNode.OPTIONAL)
+    param.set(5, step="thisstep", index="0")
+    param.set(5, step="thisstep")
+    assert param.getdict(include_default=False, values_only=True) == {
+        'thisstep': {
+            None: 5,
+            '0': 5,
+        },
+    }
+
+
+def test_getdict_values_only_step_index_global():
+    param = Parameter("int", pernode=PerNode.OPTIONAL)
+    param.set(4)
+    param.set(5, step="thisstep", index="0")
+    param.set(0, step="zerostep", index="0")
+    assert param.getdict(include_default=False, values_only=True) == {
+        None: {
+            None: 4
+        },
+        'thisstep': {
+            '0': 5,
+        },
+        'zerostep': {
+            '0': 0,
+        },
+    }
+
+
+def test_getdict_values_only_list():
+    param = Parameter("[int]", pernode=PerNode.OPTIONAL)
+    param.set(4)
+    param.set(5, step="thisstep", index="0")
+    param.set(0, step="zerostep", index="0")
+    assert param.getdict(include_default=False, values_only=True) == {
+        None: {
+            None: [4]
+        },
+        'thisstep': {
+            '0': [5],
+        },
+        'zerostep': {
+            '0': [0],
+        },
+    }
+
+
+def test_getdict_with_vals():
+    param = Parameter("int", pernode=PerNode.OPTIONAL)
+    param.set(1)
+    param.set(2, step="test", index="0")
+
+    assert param.getdict() == {
+        'example': [],
+        'help': None,
+        'lock': False,
+        'node': {
+            'default': {
+                'default': {
+                    'signature': None,
+                    'value': None,
+                },
+            },
+            '*': {
+              '*': {
+                   'signature': None,
+                   'value': 1,
+               },
+            },
+            'test': {
+                '0': {
+                    'signature': None,
+                    'value': 2,
+                },
+            },
+        },
+        'notes': None,
+        'pernode': 'optional',
+        'require': False,
+        'scope': 'global',
+        'shorthelp': None,
+        'switch': [],
+        'type': 'int',
+    }
+    assert param.getdict(include_default=False) == {
+        'example': [],
+        'help': None,
+        'lock': False,
+        'node': {
+            '*': {
+              '*': {
+                   'signature': None,
+                   'value': 1,
+               },
+            },
+            'test': {
+                '0': {
+                    'signature': None,
+                    'value': 2,
+                },
+            }
+        },
+        'notes': None,
+        'pernode': 'optional',
+        'require': False,
+        'scope': 'global',
+        'shorthelp': None,
+        'switch': [],
+        'type': 'int',
+    }
+
+
+def test_getdict_with_vals_list():
+    param = Parameter("[int]", pernode=PerNode.OPTIONAL)
+    param.set(1)
+    param.set(2, step="test", index="0")
+
+    assert param.getdict() == {
+        'example': [],
+        'help': None,
+        'lock': False,
+        'node': {
+            'default': {
+                'default': {
+                    'signature': [],
+                    'value': [],
+                },
+            },
+            '*': {
+              '*': {
+                   'signature': [None],
+                   'value': [1],
+               },
+            },
+            'test': {
+                '0': {
+                    'signature': [None],
+                    'value': [2],
+                },
+            },
+        },
+        'notes': None,
+        'pernode': 'optional',
+        'require': False,
+        'scope': 'global',
+        'shorthelp': None,
+        'switch': [],
+        'type': '[int]',
+    }
+    assert param.getdict(include_default=False) == {
+        'example': [],
+        'help': None,
+        'lock': False,
+        'node': {
+            '*': {
+              '*': {
+                   'signature': [None],
+                   'value': [1],
+               },
+            },
+            'test': {
+                '0': {
+                    'signature': [None],
+                    'value': [2],
+                },
+            }
+        },
+        'notes': None,
+        'pernode': 'optional',
+        'require': False,
+        'scope': 'global',
+        'shorthelp': None,
+        'switch': [],
+        'type': '[int]',
+    }
+
+
+def test_default():
+    param = Parameter("[str]", defvalue=["hello", "world"])
+    defval1 = param.default
+    defval2 = param.default
+
+    assert defval1.getdict() == defval2.getdict()
+    assert defval1 is not defval2
+
+
+def test_mutable_default():
+    param = Parameter("[str]", defvalue=["hello", "world"])
+    defval1 = param._default
+    defval2 = param._default
+
+    assert defval1 is defval2
+
+
+def test_add_commandline_arguments_none():
+    param = Parameter("str", switch=None)
+
+    assert param.add_commandline_arguments(argparse.ArgumentParser(), "test") == (None, None)
+
+
+def test_add_commandline_arguments_invalid():
+    param = Parameter("str", switch=["-testing:this"])
+
+    with pytest.raises(ValueError, match=r"^unable to process switch information: -testing:this$"):
+        param.add_commandline_arguments(argparse.ArgumentParser(), "test")
+
+
+def test_add_commandline_arguments_str():
+    param = Parameter("str", switch=["-test <str>"])
+
+    parser = argparse.ArgumentParser()
+    assert param.add_commandline_arguments(parser, "key", "path") == \
+        ("key_path", ["-test"])
+
+    assert parser.parse_args(["-test", "thisarg"]).key_path == "thisarg"
+
+
+def test_add_commandline_arguments_int():
+    param = Parameter("int", switch=["-test <int>"])
+
+    parser = argparse.ArgumentParser()
+    assert param.add_commandline_arguments(parser, "key", "path") == \
+        ("key_path", ["-test"])
+
+    assert parser.parse_args(["-test", "1"]).key_path == "1"
+    assert parser.parse_args(["-test", "12"]).key_path == "12"
+
+
+def test_add_commandline_arguments_int_gccmatch():
+    param = Parameter("int", switch=["-t<int>"])
+
+    parser = argparse.ArgumentParser()
+    assert param.add_commandline_arguments(parser, "key", "path") == \
+        ("key_path", ["-t"])
+
+    assert parser.parse_args(["-t1"]).key_path == "1"
+    assert parser.parse_args(["-t12"]).key_path == "12"
+
+
+def test_add_commandline_arguments_int_plusmatch():
+    param = Parameter("int", switch=["+test+<int>"])
+
+    parser = argparse.ArgumentParser(prefix_chars="+")
+    assert param.add_commandline_arguments(parser, "key", "path") == \
+        ("key_path", ["+test+"])
+
+    assert parser.parse_args(["+test+", "1"]).key_path == "1"
+    assert parser.parse_args(["+test+", "12"]).key_path == "12"
+
+
+def test_add_commandline_arguments_multiple():
+    param = Parameter("int", switch=["-test <int>", "-test1 <int>"])
+
+    parser = argparse.ArgumentParser()
+    assert param.add_commandline_arguments(parser, "key", "path") == \
+        ("key_path", ["-test", "-test1"])
+
+    assert parser.parse_args(["-test", "1"]).key_path == "1"
+    assert parser.parse_args(["-test1", "12"]).key_path == "12"
+
+
+def test_add_commandline_arguments_switchlist():
+    param = Parameter("int", switch=["-test <int>", "-test1 <int>"])
+
+    parser = argparse.ArgumentParser()
+    assert param.add_commandline_arguments(parser, "key", "path", switchlist="-test") == \
+        ("key_path", ["-test"])
+
+    assert parser.parse_args(["-test", "1"]).key_path == "1"
+
+
+def test_add_commandline_arguments_list():
+    param = Parameter("[file]", switch=["-test <file>"])
+
+    parser = argparse.ArgumentParser()
+    assert param.add_commandline_arguments(parser, "key", "path", switchlist="-test") == \
+        ("key_path", ["-test"])
+
+    assert parser.parse_args(["-test", "file1", "-test", "file2"]).key_path == ["file1", "file2"]
+
+
+def test_add_commandline_arguments_list_pernode_optional():
+    param = Parameter("[file]", switch=["-test <file>"], pernode=PerNode.OPTIONAL)
+
+    parser = argparse.ArgumentParser()
+    assert param.add_commandline_arguments(parser, "key", "path", switchlist="-test") == \
+        ("key_path", ["-test"])
+
+    assert parser.parse_args(["-test", "file1", "-test", "file2"]).key_path == \
+        ["file1", "file2"]
+
+
+def test_add_commandline_arguments_bool():
+    param = Parameter("bool", switch=["-test <bool>"])
+
+    parser = argparse.ArgumentParser()
+    assert param.add_commandline_arguments(parser, "key", "path", switchlist="-test") == \
+        ("key_path", ["-test"])
+
+    assert parser.parse_args(["-test", "true"]).key_path == 'true'
+    assert parser.parse_args(["-test"]).key_path == 'true'
+    assert parser.parse_args(["-test", "false"]).key_path == 'false'
+
+
+def test_add_commandline_arguments_bool_pernode_optional():
+    param = Parameter("bool", switch=["-test <bool>"], pernode=PerNode.OPTIONAL)
+
+    parser = argparse.ArgumentParser()
+    assert param.add_commandline_arguments(parser, "key", "path", switchlist="-test") == \
+        ("key_path", ["-test"])
+
+    assert parser.parse_args(["-test", "true"]).key_path == ['true']
+    assert parser.parse_args(["-test", "true", "-test", "false"]).key_path == \
+        ['true', 'false']
+    assert parser.parse_args(["-test", "-test"]).key_path == ['true', 'true']
+    assert parser.parse_args(["-test", "-test", "false"]).key_path == ['true', 'false']
+
+
+def test_add_commandline_arguments_enum():
+    param = Parameter("<test0,test1>", switch=["-test <enum>"])
+
+    parser = argparse.ArgumentParser()
+    assert param.add_commandline_arguments(parser, "key", "path", switchlist="-test") == \
+        ("key_path", ["-test"])
+
+    assert parser.parse_args(["-test", "test0"]).key_path == 'test0'
+
+
+def test_parse_commandline_arguments_pernode_required():
+    param = Parameter("int", switch=["-test <int>"], pernode=PerNode.REQUIRED)
+
+    assert param.parse_commandline_arguments("step index 1", "key", "path") == \
+        (("key", "path"), "step", "index", "1")
+
+    with pytest.raises(ValueError, match=r"^Invalid value \"step 1\" for switch -test <int>: "
+                       'Requires step and index before final value$'):
+        param.parse_commandline_arguments("step 1", "key", "path")
+
+    with pytest.raises(ValueError, match=r"^Invalid value \"1\" for switch -test <int>: "
+                       'Requires step and index before final value$'):
+        param.parse_commandline_arguments("1", "key", "path")
+
+    with pytest.raises(ValueError, match=r"^Invalid value \"step index 1 1\" for switch -test "
+                       '<int>: Requires step and index before final value$'):
+        param.parse_commandline_arguments("step index 1 1", "key", "path")
+
+
+def test_add_commandline_arguments_with_quotes():
+    param = Parameter("str", switch=["-test '<str>'"], pernode=PerNode.OPTIONAL)
+
+    assert param.add_commandline_arguments(argparse.ArgumentParser(),
+                                           "key", "path", switchlist="-test") == \
+        ("key_path", ["-test"])
+
+
+def test_add_commandline_arguments_with_quote_mismatch():
+    param = Parameter("str", switch=["-test '<str>"], pernode=PerNode.OPTIONAL)
+
+    with pytest.raises(ValueError, match=r"^unable to process switch information: -test '<str>$"):
+        param.add_commandline_arguments(argparse.ArgumentParser(),
+                                        "key", "path", switchlist="-test")
+
+
+def test_add_commandline_arguments_default():
+    param = Parameter("bool", switch=["-test 'path <bool>'"], pernode=PerNode.OPTIONAL)
+
+    parser = argparse.ArgumentParser()
+    assert param.add_commandline_arguments(parser, "key", "path", switchlist="-test") == \
+        ("key_path", ["-test"])
+
+
+def test_add_commandline_arguments_multiple_default():
+    param = Parameter("bool", switch=["-test 'path0 path1 <bool>'"], pernode=PerNode.OPTIONAL)
+
+    parser = argparse.ArgumentParser()
+    assert param.add_commandline_arguments(parser, "key", "path", switchlist="-test") == \
+        ("key_path", ["-test"])
+
+
+def test_parse_commandline_arguments_pernode_never():
+    param = Parameter("int", switch=["-test <int>"], pernode=PerNode.NEVER)
+
+    assert param.parse_commandline_arguments("1", "key", "path") == \
+        (("key", "path"), None, None, "1")
+
+    assert param.parse_commandline_arguments("1 1", "key", "path") == \
+        (("key", "path"), None, None, "1 1")
+
+
+def test_parse_commandline_arguments_pernode_optional():
+    param = Parameter("int", switch=["-test <int>"], pernode=PerNode.OPTIONAL)
+
+    assert param.parse_commandline_arguments("step index 1", "key", "path") == \
+        (("key", "path"), "step", "index", "1")
+
+    assert param.parse_commandline_arguments("step 1", "key", "path") == \
+        (("key", "path"), "step", None, "1")
+
+    assert param.parse_commandline_arguments("1", "key", "path") == \
+        (("key", "path"), None, None, "1")
+
+    with pytest.raises(ValueError, match=r"^Invalid value \"step index 1 1\" for switch -test "
+                       '<int>: Too many arguments$'):
+        param.parse_commandline_arguments("step index 1 1", "key", "path")
+
+
+def test_parse_commandline_arguments_optional_bool():
+    param = Parameter("bool", switch=["-test <bool>"], pernode=PerNode.OPTIONAL)
+
+    assert param.parse_commandline_arguments("step index true", "key", "path") == \
+        (("key", "path"), "step", "index", "true")
+
+    assert param.parse_commandline_arguments("step index", "key", "path") == \
+        (("key", "path"), "step", "index", "true")
+
+    assert param.parse_commandline_arguments("step true", "key", "path") == \
+        (("key", "path"), "step", None, "true")
+
+    assert param.parse_commandline_arguments("step", "key", "path") == \
+        (("key", "path"), "step", None, "true")
+
+    assert param.parse_commandline_arguments("step false", "key", "path") == \
+        (("key", "path"), "step", None, "false")
+
+    assert param.parse_commandline_arguments("true", "key", "path") == \
+        (("key", "path"), None, None, "true")
+
+    assert param.parse_commandline_arguments("", "key", "path") == \
+        (("key", "path"), None, None, "true")
+
+    assert param.parse_commandline_arguments("false", "key", "path") == \
+        (("key", "path"), None, None, "false")
+
+
+def test_parse_commandline_arguments_default_keys():
+    param = Parameter("int", switch=["-test <int>"], pernode=PerNode.OPTIONAL)
+
+    assert param.parse_commandline_arguments("path \"step index 1\"", "key", "default") == \
+        (("key", "path"), "step", "index", "1")
+
+    assert param.parse_commandline_arguments("path \"step 1\"", "key", "default") == \
+        (("key", "path"), "step", None, "1")
+
+    assert param.parse_commandline_arguments("path \"1\"", "key", "default") == \
+        (("key", "path"), None, None, "1")
+
+    with pytest.raises(ValueError,
+                       match=r"^Invalid value \"step index 1 1\" for switch -test <int>$"):
+        param.parse_commandline_arguments("step index 1 1", "key", "default")
+
+    with pytest.raises(ValueError,
+                       match=r"^Invalid value \"test \"step index 1\"\" for switch -test <int>$"):
+        param.parse_commandline_arguments("test \"step index 1\"", "key", "default", "default")
+
+
+def test_defvalue_file():
+    param = Parameter("file", defvalue="thisfile")
+    assert param.default.get() == "thisfile"
+
+
+def test_defvalue_file_getdict():
+    param = Parameter("file", defvalue="thisfile")
+    assert param.getdict() == {
+        'copy': False,
+        'example': [],
+        'hashalgo': 'sha256',
+        'help': None,
+        'lock': False,
+        'node': {
+            'default': {
+                'default': {
+                    'author': [],
+                    'date': None,
+                    'filehash': None,
+                    "dataroot": None,
+                    'signature': None,
+                    'value': 'thisfile',
+                },
+            },
+        },
+        'notes': None,
+        'pernode': 'never',
+        'require': False,
+        'scope': 'global',
+        'shorthelp': None,
+        'switch': [],
+        'type': 'file',
+    }
+
+
+def test_defvalue_file_list():
+    param = Parameter("[file]", defvalue="thisfile")
+    assert param.default.get() == ["thisfile"]
+
+
+def test_defvalue_file_list_getdict():
+    param = Parameter("[file]", defvalue="thisfile")
+    assert param.getdict() == {
+        'copy': False,
+        'example': [],
+        'hashalgo': 'sha256',
+        'help': None,
+        'lock': False,
+        'node': {
+            'default': {
+                'default': {
+                    'author': [],
+                    'date': [
+                        None,
+                    ],
+                    'filehash': [
+                        None,
+                    ],
+                    "dataroot": [
+                        None,
+                    ],
+                    'signature': [
+                        None,
+                    ],
+                    'value': [
+                        'thisfile',
+                    ],
+                },
+            },
+        },
+        'notes': None,
+        'pernode': 'never',
+        'require': False,
+        'scope': 'global',
+        'shorthelp': None,
+        'switch': [],
+        'type': '[file]',
+    }
+
+
+def test_defvalue_file_package():
+    param = Parameter("file", defvalue="thisfile", dataroot="thispackage")
+    assert param.default.get() == "thisfile"
+    assert param.default.get(field="dataroot") == "thispackage"
+
+
+def test_defvalue_file_package_getdict():
+    param = Parameter("file", defvalue="thisfile", dataroot="thispackage")
+    assert param.getdict() == {
+        'copy': False,
+        'example': [],
+        'hashalgo': 'sha256',
+        'help': None,
+        'lock': False,
+        'node': {
+            'default': {
+                'default': {
+                    'author': [],
+                    'date': None,
+                    'filehash': None,
+                    "dataroot": "thispackage",
+                    'signature': None,
+                    'value': 'thisfile',
+                },
+            },
+        },
+        'notes': None,
+        'pernode': 'never',
+        'require': False,
+        'scope': 'global',
+        'shorthelp': None,
+        'switch': [],
+        'type': 'file',
+    }
+
+
+def test_defvalue_file_list_package():
+    param = Parameter("[file]", defvalue="thisfile", dataroot="thispackage")
+    assert param.default.get() == ["thisfile"]
+    assert param.default.get(field="dataroot") == ["thispackage"]
+
+
+def test_defvalue_file_set_package():
+    param = Parameter("{file}", defvalue="thisfile", dataroot="thispackage")
+    assert param.default.get() == ["thisfile"]
+    assert param.default.get(field="dataroot") == ["thispackage"]
+
+
+def test_defvalue_file_list_package_getdict():
+    param = Parameter("[file]", defvalue="thisfile", dataroot="thispackage")
+    assert param.getdict() == {
+        'copy': False,
+        'example': [],
+        'hashalgo': 'sha256',
+        'help': None,
+        'lock': False,
+        'node': {
+            'default': {
+                'default': {
+                    'author': [],
+                    'date': [
+                        None,
+                    ],
+                    'filehash': [
+                        None,
+                    ],
+                    "dataroot": [
+                        'thispackage',
+                    ],
+                    'signature': [
+                        None,
+                    ],
+                    'value': [
+                        'thisfile',
+                    ],
+                },
+            },
+        },
+        'notes': None,
+        'pernode': 'never',
+        'require': False,
+        'scope': 'global',
+        'shorthelp': None,
+        'switch': [],
+        'type': '[file]',
+    }
+
+
+def test_defvalue_dir_package():
+    param = Parameter("dir", defvalue="thisdir", dataroot="thispackage")
+    assert param.default.get() == "thisdir"
+    assert param.default.get(field="dataroot") == "thispackage"
+
+
+def test_defvalue_dir_list_package():
+    param = Parameter("[dir]", defvalue="thisdir", dataroot="thispackage")
+    assert param.default.get() == ["thisdir"]
+    assert param.default.get(field="dataroot") == ["thispackage"]
+
+
+def test_defvalue_dir_list_package_getdict():
+    param = Parameter("[dir]", defvalue="thisdir", dataroot="thispackage")
+    assert param.getdict() == {
+        'copy': False,
+        'example': [],
+        'hashalgo': 'sha256',
+        'help': None,
+        'lock': False,
+        'node': {
+            'default': {
+                'default': {
+                    'filehash': [
+                        None,
+                    ],
+                    "dataroot": [
+                        'thispackage',
+                    ],
+                    'signature': [
+                        None,
+                    ],
+                    'value': [
+                        'thisdir',
+                    ],
+                },
+            },
+        },
+        'notes': None,
+        'pernode': 'never',
+        'require': False,
+        'scope': 'global',
+        'shorthelp': None,
+        'switch': [],
+        'type': '[dir]',
+    }
+
+
+def test_reset():
+    param = Parameter("int", pernode=PerNode.OPTIONAL, defvalue=1)
+
+    assert param.getvalues() == [
+        (1, None, None)
+    ]
+    assert param.set(2, step="steptwo", index="0")
+    assert param.getvalues() == [
+        (2, 'steptwo', '0'),
+        (1, None, None)
+    ]
+    param.reset()
+    assert param.getvalues() == [
+        (1, None, None)
+    ]
+
+
+def test_reset_pernode_never():
+    param = Parameter("int", pernode=PerNode.NEVER, defvalue=1)
+
+    assert param.getvalues() == [
+        (1, None, None)
+    ]
+    assert param.set(2)
+    assert param.getvalues() == [
+        (2, None, None)
+    ]
+    param.reset()
+    assert param.getvalues() == [
+        (1, None, None)
+    ]
+
+
+@pytest.mark.parametrize(
+    "type", [
+        "str",
+        "{str}",
+        "int",
+        "{int}",
+        "float",
+        "{float}",
+        # "bool",  # bool automatically gets a value of False
+        "<one,two,three>",
+        "{<one,two,three>}",
+        "[str]",
+        "[file]",
+        "[dir]",
+        "file",
+        "dir",
+        "[[str]]",
+        "[(str,str)]",
+        "(str,str)",
+        "(str,int)",
+        "(str,float)",
+        "(str,<one,two,three,four>)",
+        "(<one,two,three>,<one,two,three,four>)",
+        "[(<one,two,three>,<one,two,three,four>)]"
+    ])
+def test_has_value_init_none(type):
+    assert Parameter(type).has_value() is False
+
+
+def test_has_value_init_none_per_node():
+    assert Parameter("str", pernode=PerNode.REQUIRED).has_value("step", "index") is False
+
+
+def test_has_value():
+    param = Parameter("str", pernode=PerNode.OPTIONAL)
+    assert param.has_value() is False
+    assert param.set("test", step="test", index="0")
+    assert param.has_value() is False
+    assert param.has_value(step="test", index="0") is True
+    assert param.set("test")
+    assert param.has_value() is True
+    assert param.has_value(step="test", index="0") is True
+
+
+def test_has_value_with_defvalue():
+    param = Parameter("str", pernode=PerNode.OPTIONAL, defvalue="test")
+    assert param.has_value() is True
+    assert param.set("test", step="test", index="0")
+    assert param.has_value() is True
+    assert param.has_value(step="test", index="0") is True
+    assert param.set("test")
+    assert param.has_value() is True
+    assert param.has_value(step="test", index="0") is True
+
+
+def test_generate_doc():
+    pytest.importorskip("sphinx")
+    from docutils import nodes
+
+    class Doc:
+        state = None
+
+    param = Parameter("str")
+
+    with patch("sphinx.util.nodes.nested_parse_with_titles") as nested_parse_with_titles:
+        doc = param._generate_doc(Doc(), [])
+        assert len(doc) == 2
+        assert isinstance(doc[0], nodes.paragraph)
+        assert len(doc[1]) == 1
+        assert isinstance(doc[1][0], nodes.table)
+        nested_parse_with_titles.assert_called_once()

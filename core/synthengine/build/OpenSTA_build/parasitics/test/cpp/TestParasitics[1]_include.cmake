@@ -1,0 +1,5 @@
+if(EXISTS "/home/eatheswar/silisfoundation/silis/core/synthengine/build/OpenSTA_build/parasitics/test/cpp/TestParasitics[1]_tests.cmake")
+  include("/home/eatheswar/silisfoundation/silis/core/synthengine/build/OpenSTA_build/parasitics/test/cpp/TestParasitics[1]_tests.cmake")
+else()
+  add_test(TestParasitics_NOT_BUILT TestParasitics_NOT_BUILT)
+endif()

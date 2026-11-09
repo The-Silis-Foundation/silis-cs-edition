@@ -1,0 +1,5 @@
+if(EXISTS "/home/eatheswar/silisfoundation/silis/core/synthengine/build/OpenSTA_build/sdc/test/cpp/TestSdcClasses[1]_tests.cmake")
+  include("/home/eatheswar/silisfoundation/silis/core/synthengine/build/OpenSTA_build/sdc/test/cpp/TestSdcClasses[1]_tests.cmake")
+else()
+  add_test(TestSdcClasses_NOT_BUILT TestSdcClasses_NOT_BUILT)
+endif()

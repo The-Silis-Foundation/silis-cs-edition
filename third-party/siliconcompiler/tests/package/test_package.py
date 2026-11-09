@@ -1,0 +1,3305 @@
+import contextlib
+import logging
+import os
+import pytest
+import shutil
+import stat
+import sys
+import tarfile
+import threading
+import time
+import zipfile
+
+import os.path
+
+from datetime import datetime, timedelta
+from pathlib import Path
+from unittest.mock import patch
+
+import siliconcompiler
+import siliconcompiler.package.https
+
+from siliconcompiler.package import Resolver, RemoteResolver
+from siliconcompiler.package import FileResolver, PythonPathResolver, \
+    KeyPathResolver, DatarootResolver
+from siliconcompiler.package import _RESOLVERS_POPULATED
+from siliconcompiler.package.https import HTTPResolver
+from siliconcompiler.package.git import GitResolver
+from siliconcompiler.package.github import GithubResolver
+from siliconcompiler.package.gitlab import GitlabResolver
+from siliconcompiler.package.s3 import S3Resolver
+from siliconcompiler.package import DataRootResolutionError
+from siliconcompiler.package.cache import PermanentResolutionError, DataSourceUnavailableError
+from siliconcompiler import utils
+from siliconcompiler.utils.multiprocessing import MPManager, forking
+
+from siliconcompiler import Project, Design, ASIC
+from siliconcompiler.schema import BaseSchema, EditableSchema
+from siliconcompiler.schema_support.pathschema import PathSchema
+
+
+def test_init():
+    resolver = Resolver("testpath", Project("testproj"), "source://this")
+
+    assert resolver.name == "testpath"
+    assert resolver.source == "source://this"
+    assert resolver.safe_source == "source://this"
+    assert resolver.source_print == "source://this"
+    assert resolver.is_private is False
+    assert resolver.reference is None
+    assert resolver.urlscheme == "source"
+    assert resolver.urlpath == "this"
+    assert isinstance(resolver.logger, logging.Logger)
+    assert resolver.cache_id == "2e7ef7cca5512780f587a0f30afe2ff574bc1448"
+
+
+def test_init_private():
+    resolver = Resolver("testpath", Project("testproj"), "source+private://this")
+
+    assert resolver.name == "testpath"
+    assert resolver.source == "source://this"
+    assert resolver.is_private is True
+    assert resolver.reference is None
+    assert resolver.urlscheme == "source"
+    assert resolver.urlpath == "this"
+    assert isinstance(resolver.logger, logging.Logger)
+    assert resolver.cache_id == "2e7ef7cca5512780f587a0f30afe2ff574bc1448"
+
+
+def test_init_no_root():
+    resolver = Resolver("testpath", None, "source://this")
+
+    assert resolver.name == "testpath"
+    assert resolver.source == "source://this"
+    assert resolver.reference is None
+    assert resolver.urlscheme == "source"
+    assert resolver.urlpath == "this"
+    assert isinstance(resolver.logger, logging.Logger)
+    assert resolver.cache_id == "2e7ef7cca5512780f587a0f30afe2ff574bc1448"
+
+
+def test_init_with_ref():
+    resolver = Resolver("testpath", Project("testproj"), "source://this", reference="ref")
+
+    assert resolver.name == "testpath"
+    assert resolver.source == "source://this"
+    assert resolver.reference == "ref"
+    assert resolver.urlscheme == "source"
+    assert resolver.urlpath == "this"
+    assert isinstance(resolver.logger, logging.Logger)
+    assert resolver.cache_id == "0b0f5cbd0aba45a46024a52b4dd543d56b09f5df"
+
+
+def test_init_with_env(monkeypatch):
+    resolver = Resolver("testpath", Project("testproj"), "source://${FILE_PATH}", reference="ref")
+
+    monkeypatch.setenv("FILE_PATH", "this")
+
+    assert resolver.name == "testpath"
+    assert resolver.source == "source://${FILE_PATH}"
+    assert resolver.reference == "ref"
+    assert resolver.urlscheme == "source"
+    assert resolver.urlpath == "this"
+    assert isinstance(resolver.logger, logging.Logger)
+    assert resolver.cache_id == "0b0f5cbd0aba45a46024a52b4dd543d56b09f5df"
+
+
+@pytest.mark.parametrize("unsafe_data,masked", [
+    ("username", "***"),
+    ("username:", "***"),
+    (":password", ":***"),
+    ("username:password", "***:***"),
+])
+def test_safe_uris(unsafe_data, masked):
+    resolver = Resolver("testpath", Project("testproj"), f"source://{unsafe_data}@this")
+
+    assert resolver.name == "testpath"
+    assert resolver.source == f"source://{unsafe_data}@this"
+    assert resolver.safe_source == "source://this"
+    assert resolver.source_print == f"source://{masked}@this"
+    assert resolver.is_private is False
+    assert resolver.reference is None
+    assert resolver.urlscheme == "source"
+    assert isinstance(resolver.logger, logging.Logger)
+    assert resolver.cache_id == "2e7ef7cca5512780f587a0f30afe2ff574bc1448"
+
+
+def test_safe_uri_signed_query():
+    resolver = Resolver("testpath", Project("testproj"),
+                        "https://user:password@example.com/archive?"
+                        "X-Amz-Signature=secret&token=another&version=1")
+
+    assert resolver.source_print == ("https://***:***@example.com/archive?"
+                                     "X-Amz-Signature=***&token=***&version=***")
+    assert resolver.safe_source == ("https://example.com/archive?"
+                                    "X-Amz-Signature=***&token=***&version=***")
+
+
+# A source, what it is sent as (safe_source) and what it is logged as
+# (source_print). Both mask every query value, and differ only in the userinfo:
+# a log shows it masked, a sent source drops it.
+_MASKED_SOURCES = [
+    # Nothing to mask: kept exactly as written.
+    ("https://example.com/archive.tar.gz",
+     "https://example.com/archive.tar.gz",
+     "https://example.com/archive.tar.gz"),
+    ("git+https://github.com/org/repo.git",
+     "git+https://github.com/org/repo.git",
+     "git+https://github.com/org/repo.git"),
+    ("github://org/repo/v1/archive.tar.gz",
+     "github://org/repo/v1/archive.tar.gz",
+     "github://org/repo/v1/archive.tar.gz"),
+    ("python://siliconcompiler", "python://siliconcompiler", "python://siliconcompiler"),
+    ("dataroot://other", "dataroot://other", "dataroot://other"),
+    # An '@' in the path is not userinfo.
+    ("https://example.com/pkg@1.0/archive.tar.gz",
+     "https://example.com/pkg@1.0/archive.tar.gz",
+     "https://example.com/pkg@1.0/archive.tar.gz"),
+    # An empty query has nothing to mask.
+    ("https://example.com/archive?", "https://example.com/archive?",
+     "https://example.com/archive?"),
+    # A '?' after the '#' is the fragment's, not a query.
+    ("https://example.com/archive#part?x=1", "https://example.com/archive#part?x=1",
+     "https://example.com/archive#part?x=1"),
+
+    # Userinfo.
+    ("https://user@example.com/archive", "https://example.com/archive",
+     "https://***@example.com/archive"),
+    ("https://user:token@example.com/archive", "https://example.com/archive",
+     "https://***:***@example.com/archive"),
+    ("https://user:@example.com/archive", "https://example.com/archive",
+     "https://***@example.com/archive"),
+    ("https://:token@example.com/archive", "https://example.com/archive",
+     "https://:***@example.com/archive"),
+    ("https://@example.com/archive", "https://example.com/archive",
+     "https://example.com/archive"),
+    # An '@' in the password: the host starts after the last one.
+    ("https://user:p@ss@example.com/archive", "https://example.com/archive",
+     "https://***:***@example.com/archive"),
+    ("https://user%40corp:token@example.com/archive", "https://example.com/archive",
+     "https://***:***@example.com/archive"),
+    ("git+ssh://git@github.com/org/repo.git", "git+ssh://github.com/org/repo.git",
+     "git+ssh://***@github.com/org/repo.git"),
+    # The host keeps its case and its port.
+    ("https://user:token@Example.COM:8443/archive", "https://Example.COM:8443/archive",
+     "https://***:***@Example.COM:8443/archive"),
+    ("https://user:token@[2001:db8::1]:443/archive", "https://[2001:db8::1]:443/archive",
+     "https://***:***@[2001:db8::1]:443/archive"),
+
+    # Query: every value is masked and every name kept.
+    ("https://bucket.s3.amazonaws.com/pdk.tar.gz?X-Amz-Algorithm=AWS4-HMAC-SHA256"
+     "&X-Amz-Credential=AKIDEXAMPLE%2F20260929%2Fus-east-1%2Fs3%2Faws4_request"
+     "&X-Amz-Date=20260929T000000Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host"
+     "&X-Amz-Signature=abc123",
+     "https://bucket.s3.amazonaws.com/pdk.tar.gz?X-Amz-Algorithm=***&X-Amz-Credential=***"
+     "&X-Amz-Date=***&X-Amz-Expires=***&X-Amz-SignedHeaders=***&X-Amz-Signature=***",
+     "https://bucket.s3.amazonaws.com/pdk.tar.gz?X-Amz-Algorithm=***&X-Amz-Credential=***"
+     "&X-Amz-Date=***&X-Amz-Expires=***&X-Amz-SignedHeaders=***&X-Amz-Signature=***"),
+    ("https://storage.googleapis.com/bucket/pdk.tar.gz?X-Goog-Algorithm=GOOG4-RSA-SHA256"
+     "&X-Goog-Signature=abc123",
+     "https://storage.googleapis.com/bucket/pdk.tar.gz?X-Goog-Algorithm=***"
+     "&X-Goog-Signature=***",
+     "https://storage.googleapis.com/bucket/pdk.tar.gz?X-Goog-Algorithm=***"
+     "&X-Goog-Signature=***"),
+    ("https://account.blob.core.windows.net/pdk/pdk.tar.gz?sv=2024-11-04&sr=b&sig=abc%2B1%3D",
+     "https://account.blob.core.windows.net/pdk/pdk.tar.gz?sv=***&sr=***&sig=***",
+     "https://account.blob.core.windows.net/pdk/pdk.tar.gz?sv=***&sr=***&sig=***"),
+    # A bare token is masked whole.
+    ("https://example.com/archive?abc123", "https://example.com/archive?***",
+     "https://example.com/archive?***"),
+    # Options are values too.
+    ("git+https://github.com/org/repo.git?lfs=false&submodules=0",
+     "git+https://github.com/org/repo.git?lfs=***&submodules=***",
+     "git+https://github.com/org/repo.git?lfs=***&submodules=***"),
+    # An '@' in the query is not userinfo.
+    ("https://example.com/archive?email=me@example.com", "https://example.com/archive?email=***",
+     "https://example.com/archive?email=***"),
+    ("https://example.com?access_token=abc", "https://example.com?access_token=***",
+     "https://example.com?access_token=***"),
+
+    # Both, and the fragment kept.
+    ("https://user:token@example.com/archive?access_token=abc&v=1#part",
+     "https://example.com/archive?access_token=***&v=***#part",
+     "https://***:***@example.com/archive?access_token=***&v=***#part"),
+
+    # An empty host under a scheme urllib does not know keeps its '//'.
+    ("source:///archive?q=1", "source:///archive?q=***", "source:///archive?q=***"),
+    ("source://user@/archive?q=1", "source:///archive?q=***", "source://***@/archive?q=***"),
+    # No scheme.
+    ("/data/archive?q=1", "/data/archive?q=***", "/data/archive?q=***"),
+]
+
+
+@pytest.mark.parametrize("source,sent,logged", _MASKED_SOURCES)
+def test_masked_sources(source, sent, logged):
+    resolver = Resolver("testpath", None, source)
+
+    assert resolver.safe_source == sent
+    assert resolver.source_print == logged
+
+
+@pytest.mark.parametrize("source,sent,logged", _MASKED_SOURCES)
+def test_masked_sources_are_stable(source, sent, logged):
+    # Masking what is already masked changes nothing, so a source sent to a
+    # server and read back names the same thing.
+    assert Resolver("testpath", None, sent).safe_source == sent
+    assert Resolver("testpath", None, logged).source_print == logged
+
+
+@pytest.mark.parametrize("query,masked", [
+    ("", ""),
+    ("a=1", "a=***"),
+    ("a=1&b=2", "a=***&b=***"),
+    ("a=1&a=2", "a=***&a=***"),
+    ("a=", "a=***"),
+    ("a=b=c", "a=***"),
+    ("=value", "=***"),
+    ("token", "***"),
+    ("token&v=1", "***&v=***"),
+    ("a=1;b=2", "a=***;b=***"),
+    ("token;v=1", "***;v=***"),
+    ("a=1&&b=2", "a=***&&b=***"),
+    ("&a=1&", "&a=***&"),
+    ("na%20me=v", "na%20me=***"),
+    ("b+c=d", "b+c=***"),
+])
+def test_masked_query(query, masked):
+    assert Resolver._masked_query(query) == masked
+
+
+@pytest.mark.parametrize("source", [
+    "https://SECRET@example.com/archive",
+    "https://user:SECRET@example.com/archive",
+    "https://SECRET:@example.com/archive",
+    "https://user:SECRET@other@example.com/archive",
+    "https://example.com/archive?SECRET",
+    "https://example.com/archive?SECRET&v=1",
+    "https://example.com/archive?SECRET;v=1",
+    "https://example.com/archive?token=SECRET",
+    "https://example.com/archive?v=1&token=SECRET",
+    "https://example.com/archive?v=1;token=SECRET",
+    "https://example.com/archive?token=abc=SECRET",
+    "https://example.com/archive?token=SECRET#part",
+    "https://example.com?token=SECRET",
+    "git+https://oauth2:SECRET@gitlab.com/org/repo.git?lfs=false",
+    "https+private://user:SECRET@example.com/archive?sig=SECRET",
+])
+def test_masked_sources_never_carry_secret(source):
+    resolver = Resolver("testpath", None, source)
+
+    assert "SECRET" not in resolver.safe_source
+    assert "SECRET" not in resolver.source_print
+
+
+def test_safe_source_private():
+    resolver = Resolver("testpath", None, "https+private://user:token@example.com/archive?sig=abc")
+
+    assert resolver.is_private is True
+    assert resolver.safe_source == "https://example.com/archive?sig=***"
+    assert resolver.source_print == "https://***:***@example.com/archive?sig=***"
+
+
+@pytest.mark.parametrize("source,sent", [
+    ("https://${ARCHIVE_USER}:${ARCHIVE_TOKEN}@${ARCHIVE_HOST}/archive",
+     "https://${ARCHIVE_HOST}/archive"),
+    ("https://${ARCHIVE_HOST}/archive?access_token=${ARCHIVE_TOKEN}",
+     "https://${ARCHIVE_HOST}/archive?access_token=***"),
+    ("https://${ARCHIVE_HOST}/${ARCHIVE_TOKEN}/archive",
+     "https://${ARCHIVE_HOST}/${ARCHIVE_TOKEN}/archive"),
+    ("https://${ARCHIVE_HOST}/archive?${ARCHIVE_TOKEN}=1",
+     "https://${ARCHIVE_HOST}/archive?${ARCHIVE_TOKEN}=***"),
+    ("https://$ARCHIVE_HOST/archive?t=$ARCHIVE_TOKEN", "https://$ARCHIVE_HOST/archive?t=***"),
+])
+def test_safe_source_keeps_variables_unexpanded(monkeypatch, source, sent):
+    monkeypatch.setenv("ARCHIVE_HOST", "Example.com")
+    monkeypatch.setenv("ARCHIVE_USER", "someone")
+    monkeypatch.setenv("ARCHIVE_TOKEN", "SECRET")
+    resolver = Resolver("testpath", Project("testproj"), source)
+
+    # The resolver itself does see the values.
+    assert resolver.urlparse.hostname == "example.com"
+
+    assert resolver.safe_source == sent
+    assert "SECRET" not in resolver.safe_source
+    assert "someone" not in resolver.safe_source
+
+
+def test_safe_source_keeps_project_env_unexpanded():
+    project = Project("testproj")
+    project.set("option", "env", "ARCHIVE_TOKEN", "SECRET")
+    resolver = Resolver("testpath", project,
+                        "https://example.com/${ARCHIVE_TOKEN}/archive?t=${ARCHIVE_TOKEN}")
+
+    assert "SECRET" in resolver.urlparse.path
+    assert resolver.safe_source == "https://example.com/${ARCHIVE_TOKEN}/archive?t=***"
+
+
+@pytest.mark.parametrize("path,tag,kind,private,sent", [
+    ("https://user:token@example.com/pdk.tar.gz?X-Amz-Signature=abc", "v1",
+     HTTPResolver, False, "https://example.com/pdk.tar.gz?X-Amz-Signature=***"),
+    ("https+private://example.com/pdk.tar.gz?X-Amz-Signature=abc", "v1",
+     HTTPResolver, True, "https://example.com/pdk.tar.gz?X-Amz-Signature=***"),
+    ("git+https://oauth2:token@gitlab.com/org/repo.git?lfs=false", "abc",
+     GitResolver, False, "git+https://gitlab.com/org/repo.git?lfs=***"),
+    ("git+ssh+private://git@github.com/org/repo.git", "abc",
+     GitResolver, True, "git+ssh://github.com/org/repo.git"),
+    ("github://org/repo/v1/archive.tar.gz", "v1",
+     GithubResolver, False, "github://org/repo/v1/archive.tar.gz"),
+    ("github+private://org/repo/v1/archive.tar.gz", "v1",
+     GithubResolver, True, "github://org/repo/v1/archive.tar.gz"),
+    ("gitlab://gitlab.com/org/repo/v1/archive.tar.gz", "v1",
+     GitlabResolver, False, "gitlab://gitlab.com/org/repo/v1/archive.tar.gz"),
+    ("gitlab+private://gitlab.com/org/repo/v1/archive.tar.gz", "v1",
+     GitlabResolver, True, "gitlab://gitlab.com/org/repo/v1/archive.tar.gz"),
+    ("s3://bucket/pdks/archive.tar.gz", "v1",
+     S3Resolver, False, "s3://bucket/pdks/archive.tar.gz"),
+    ("s3+private://bucket/pdks/archive.tar.gz", "v1",
+     S3Resolver, True, "s3://bucket/pdks/archive.tar.gz"),
+    ("python://siliconcompiler", None,
+     PythonPathResolver, False, "python://siliconcompiler"),
+])
+def test_dataroot_safe_source(path, tag, kind, private, sent):
+    # The resolver a dataroot is registered as, which is what a remote run reads.
+    design = Design("test")
+    design.set_dataroot("root", path, tag=tag)
+    resolver = design._find_files_dataroot_resolvers(True)["root"]
+
+    assert type(resolver) is kind
+    assert resolver.is_private is private
+    assert resolver.safe_source == sent
+
+
+@pytest.mark.parametrize("kind,source,reference,cache_id", [
+    (Resolver, "https://user:token@Example.com:8443/pdk.tar.gz?access_token=abc&v=1", "v1",
+     "920fbf4f1ab2a27484412255f4fc53840c5a0b66"),
+    (Resolver, "https://bucket.s3.amazonaws.com/pdk.tar.gz?X-Amz-Signature=first", None,
+     "c9e5b40ae41ce710175184623a9e758bae1f1638"),
+    (Resolver, "https://[2001:db8::1]:443/archive", None,
+     "6d4f286b288367a543629eac23d5046a1b6fd5eb"),
+    (Resolver, "git+ssh://git@github.com/org/repo.git", "abc",
+     "0652534f69c6b56769a3696233513b7e19713585"),
+    (Resolver, "git+ssh+private://git@github.com/org/repo.git", "abc",
+     "0652534f69c6b56769a3696233513b7e19713585"),
+    (Resolver, "git+https://github.com/org/repo.git?lfs=false", "abc",
+     "33435a48a4c9a17e0a3e4c012f31e3d3fb6bb9e8"),
+    (Resolver, "github://org/repo/v1/archive.tar.gz", "v1",
+     "ac50cbd93d6bce60c6d134197714b43fde5088bf"),
+    # Rooted at a variable: a bare '/data' is not absolute on Windows, and
+    # would be joined to the working directory.
+    (FileResolver, "file://$DATA_ROOT/archive", None,
+     "f70ba53d46575c587cac27edca9e77e2db517c07"),
+    (FileResolver, "file+private://$DATA_ROOT/user@host/archive?v=1", None,
+     "a7ffae0347c5fd635f14fdcc1741e4d851b0d7f9"),
+])
+def test_cache_id_is_stable(monkeypatch, kind, source, reference, cache_id):
+    # A remote source's cache directory is named after its cache_id, so a
+    # changed one re-downloads every source already in the cache.
+    monkeypatch.setenv("DATA_ROOT", "/data")
+    assert kind("testpath", Project("testproj"), source, reference).cache_id == cache_id
+
+
+def test_cache_id_keeps_query_values():
+    first = Resolver("testpath", None, "https://example.com/archive?X-Amz-Signature=first")
+    second = Resolver("testpath", None, "https://example.com/archive?X-Amz-Signature=second")
+
+    assert first.safe_source == second.safe_source
+    assert first.cache_id != second.cache_id
+
+
+def test_cache_id_ignores_userinfo():
+    first = Resolver("testpath", None, "https://first:token@example.com/archive")
+    second = Resolver("testpath", None, "https://second:other@example.com/archive")
+
+    assert first.safe_source == second.safe_source
+    assert first.cache_id == second.cache_id
+
+
+def test_cache_id_follows_variables(monkeypatch):
+    source = "https://example.com/${ARCHIVE_VERSION}/archive"
+
+    monkeypatch.setenv("ARCHIVE_VERSION", "v1")
+    first = Resolver("testpath", Project("testproj"), source)
+    first_id = first.cache_id
+
+    monkeypatch.setenv("ARCHIVE_VERSION", "v2")
+    second = Resolver("testpath", Project("testproj"), source)
+
+    assert first.safe_source == second.safe_source == source
+    assert first_id != second.cache_id
+
+
+def test_safe_uri_ipv6_cache_id():
+    first = Resolver("testpath", None, "https://[2001:db8::1]:443/archive")
+    second = Resolver("testpath", None, "https://[2001:db8::2]:443/archive")
+
+    assert first.safe_source == "https://[2001:db8::1]:443/archive"
+    assert second.safe_source == "https://[2001:db8::2]:443/archive"
+    assert first.cache_id != second.cache_id
+
+
+@pytest.mark.parametrize("kind,source,reference,collection_id", [
+    (FileResolver, "/data/archive", None, "bf0faec33c99614c2e1d381338c5954474406575"),
+    (FileResolver, "file:///data/archive", None, "bf0faec33c99614c2e1d381338c5954474406575"),
+    (FileResolver, "file+private:///data/archive", None,
+     "bf0faec33c99614c2e1d381338c5954474406575"),
+    (FileResolver, "src", None, "24664d3e26d46dd44ac5f1a1d287abd5297a90e4"),
+    (FileResolver, "$DATA_ROOT/archive", None, "cb68a6e86a857859014c5d7bf0bc95f596afde82"),
+    (PythonPathResolver, "python://siliconcompiler", None,
+     "d3f5128df34461a06db28594289ff5d80574b787"),
+    (KeyPathResolver, "key://tool,openroad,task,place,refdir", None,
+     "4956e9c0d822c88ad0400e2f33ee4fb119303915"),
+    (Resolver, "https://example.com/pdk.tar.gz?v=1", "v1",
+     "21d569e6d54d3666851be4f489be7a7d2174d970"),
+    (Resolver, "https://user:token@example.com/pdk.tar.gz?v=1", "v1",
+     "21d569e6d54d3666851be4f489be7a7d2174d970"),
+    (Resolver, "https://example.com/pdk.tar.gz?v=1", "v2",
+     "89bd5be6b4c9d20a112ea1a9ea8518faa5aa4071"),
+    (Resolver, "git+ssh+private://git@github.com/org/repo.git", "abc",
+     "87ab05a69a9315f25bd160f89c92acc2133461e6"),
+    # An '@' in the path is not userinfo.
+    (Resolver, "https://example.com/pkg@1.0/archive.tar.gz", "v1",
+     "90aca9ddfb8c42b7a586c665746f6077e05e998c"),
+])
+def test_collection_id_is_stable(monkeypatch, kind, source, reference, collection_id):
+    # A collection is read by another SiliconCompiler, on another machine, which
+    # must name its files alike.
+    monkeypatch.setenv("DATA_ROOT", "/data")
+    assert kind("testpath", Project("testproj"), source, reference).collection_id == \
+        collection_id
+
+
+@pytest.mark.parametrize("source", [
+    "https://user:token@example.com/archive.tar.gz?X-Amz-Signature=abc&v=1",
+    "https://example.com/archive.tar.gz?token",
+    "https://example.com/archive.tar.gz?a=1;b=2#part?x",
+])
+def test_collection_id_survives_masking(source):
+    """A manifest sent off this machine carries the source as safe_source, and its
+    reader must name the collection's files alike."""
+    sent = Resolver("testpath", None, source, "v1")
+    read = Resolver("testpath", None, sent.safe_source, "v1")
+
+    assert sent.safe_source != source
+    assert sent.collection_id == read.collection_id
+
+
+def test_collection_id_ignores_query_values():
+    """One object presigned twice is one collection, though two caches."""
+    first = Resolver("testpath", None, "https://example.com/archive?X-Amz-Signature=first")
+    second = Resolver("testpath", None, "https://example.com/archive?X-Amz-Signature=second")
+
+    assert first.cache_id != second.cache_id
+    assert first.collection_id == second.collection_id
+
+
+@pytest.mark.parametrize("source", ["src", "$DATA_ROOT/archive", "~/archive"])
+def test_collection_id_ignores_variables_and_cwd(monkeypatch, source):
+    """Where this machine finds the data changes the cache_id, not the collection_id."""
+    monkeypatch.setenv("DATA_ROOT", "/first")
+    monkeypatch.setenv("HOME", "/first_home")
+    first = FileResolver("testpath", Project("testproj"), source)
+    first_cache_id = first.cache_id
+
+    os.makedirs("elsewhere")
+    monkeypatch.chdir("elsewhere")
+    monkeypatch.setenv("DATA_ROOT", "/second")
+    monkeypatch.setenv("HOME", "/second_home")
+    second = FileResolver("testpath", Project("testproj"), source)
+
+    assert first_cache_id != second.cache_id
+    assert first.collection_id == second.collection_id
+
+
+def test_collection_id_dataroot_follows_target():
+    """A dataroot:// names another dataroot in every schema, so the dataroot it
+    names identifies it."""
+    design_a = Design("designA")
+    design_a.set_dataroot("shared_name", "/dataA")
+    design_b = Design("designB")
+    design_b.set_dataroot("shared_name", "/dataB")
+    design_c = Design("designC")
+    design_c.set_dataroot("other_name", "/dataA")
+
+    res_a = DatarootResolver("n", design_a, "dataroot://shared_name/sub")
+    res_b = DatarootResolver("n", design_b, "dataroot://shared_name/sub")
+    res_c = DatarootResolver("n", design_c, "dataroot://other_name/sub")
+
+    assert res_a.cache_id == res_b.cache_id
+    assert res_a.collection_id != res_b.collection_id
+    assert res_a.collection_id == res_c.collection_id
+    assert res_a.collection_id != \
+        DatarootResolver("n", design_a, "dataroot://shared_name/other").collection_id
+
+
+@pytest.mark.parametrize("dataroots,collection_id", [
+    ({}, "55f8fb5943dc88a8de05b75e9e74e0796f5bc81a"),
+    ({"dataA": "dataroot://dataB", "dataB": "dataroot://dataA"},
+     "632ef1b0d96d72118a856505cf519c5326ae2f01"),
+])
+def test_collection_id_dataroot_without_target(dataroots, collection_id):
+    """A dataroot:// whose target cannot be found, undefined or in a cycle, still has
+    an ID, so a file found without it is still collected."""
+    design = Design("testdesign")
+    for name, path in dataroots.items():
+        design.set_dataroot(name, path)
+
+    assert DatarootResolver("thisname", design, "dataroot://dataA").collection_id == \
+        collection_id
+
+
+def test_init_with_env_project():
+    project = Project("testproj")
+    project.set("option", "env", "FILE_PATH", "this")
+    resolver = Resolver("testpath", project, "source://${FILE_PATH}", reference="ref")
+
+    assert resolver.name == "testpath"
+    assert resolver.root is project
+    assert resolver.source == "source://${FILE_PATH}"
+    assert resolver.reference == "ref"
+    assert resolver.urlscheme == "source"
+    assert resolver.urlpath == "this"
+    assert isinstance(resolver.logger, logging.Logger)
+
+
+def test_resolve():
+    resolver = Resolver("testpath", Project("testproj"), "source://this")
+    with pytest.raises(NotImplementedError, match=r"^child class must implement this$"):
+        resolver.resolve()
+
+
+def test_display_name_with_schema():
+    """Test display_name returns name when schema exists but has empty keypath."""
+    project = Project("testproj")
+    resolver = Resolver("mydata", project, "source://this")
+
+    # For root-level schemas with empty keypath, display_name should be just the name
+    display = resolver.display_name
+    assert display == "mydata"
+
+
+def test_display_name_without_schema():
+    """Test display_name returns just the name when no schema is provided."""
+    resolver = Resolver("mydata", None, "source://this")
+
+    # display_name should be just the name without keypath
+    assert resolver.display_name == "mydata"
+
+
+def test_display_name_with_nested_schema():
+    """Test display_name includes keypath when schema is nested."""
+    design = Design("testdesign")
+    with design.active_fileset("rtl"):
+        design.add_idir(".")
+
+    project = Project(design)
+
+    # Get a nested design schema from the project
+    library_design = project.get("library", "testdesign", field="schema")
+    resolver = Resolver("packagedata", library_design, "source://this")
+
+    # display_name should include the keypath in brackets
+    display = resolver.display_name
+    assert display == "packagedata [library,testdesign]"
+
+
+def test_display_name_consistency():
+    """Test that display_name is consistent across multiple calls."""
+    project = Project("testproj")
+    resolver = Resolver("data", project, "source://path")
+
+    # Multiple calls should return the same value
+    display1 = resolver.display_name
+    display2 = resolver.display_name
+    assert display1 == display2
+
+
+def test_display_name_format_with_keypath():
+    """Test that display_name follows the expected format when keypath exists."""
+    design = Design("testdesign")
+    with design.active_fileset("rtl"):
+        design.add_idir(".")
+
+    project = Project(design)
+    library_design = project.get("library", "testdesign", field="schema")
+
+    resolver = Resolver("myresolver", library_design, "source://this")
+
+    # Format should be: "name [keypath,...]"
+    display = resolver.display_name
+    # Should have brackets and the name at the start
+    assert display.startswith("myresolver [")
+    assert display.endswith("]")
+
+
+def test_find_resolver_not_found():
+    with pytest.raises(ValueError,
+                       match=r"^Source URI 'nosupport://help.me/file' is not supported$"):
+        Resolver.find_resolver("nosupport://help.me/file")
+
+
+def test_find_resolver_key():
+    assert Resolver.find_resolver("key://this") is KeyPathResolver
+
+
+def test_find_resolver_file():
+    assert Resolver.find_resolver("file://this") is FileResolver
+
+
+def test_find_resolver_file_dot():
+    assert Resolver.find_resolver(".") is FileResolver
+
+
+def test_find_resolver_file_empty():
+    assert Resolver.find_resolver("/this/path") is FileResolver
+
+
+def test_find_resolver_python():
+    assert Resolver.find_resolver("python://siliconcompiler") is PythonPathResolver
+
+
+@pytest.mark.parametrize("source,resolver", [
+    ("http://host/file", "HTTPResolver"),
+    ("https://host/file", "HTTPResolver"),
+    ("git://host/repo", "GitResolver"),
+    ("git+https://host/repo", "GitResolver"),
+    ("git+ssh://host/repo", "GitResolver"),
+    ("ssh://host/repo", "GitResolver"),
+    ("github://owner/repo/ref/file", "GithubResolver"),
+    ("github+private://owner/repo/ref/file", "GithubResolver"),
+    ("gitlab://host/group/project/ref/file", "GitlabResolver"),
+    ("gitlab+private://host/group/project/ref/file", "GitlabResolver"),
+    ("s3://bucket/key", "S3Resolver"),
+    ("s3+private://bucket/key", "S3Resolver"),
+    ("scp://host/file", "SCPResolver"),
+    ("http+private://host/file", "HTTPResolver"),
+    ("https+private://host/file", "HTTPResolver"),
+    ("git+private://host/repo", "GitResolver"),
+    ("git+https+private://host/repo", "GitResolver"),
+    ("git+ssh+private://host/repo", "GitResolver"),
+    ("ssh+private://host/repo", "GitResolver"),
+    ("scp+private://host/file", "SCPResolver")
+])
+def test_find_resolver_builtin_without_plugins(source, resolver, fake_plugins):
+    """The remote resolvers are registered in code, so they work with no plugins at all."""
+    assert Resolver.find_resolver(source).__name__ == resolver
+
+
+def test_find_resolver_plugin(fake_plugins):
+    """A plugin can add a new scheme and override a built-in one."""
+    class PluginResolver(Resolver):
+        pass
+
+    def get_resolver():
+        return {"myscheme": PluginResolver, "https": PluginResolver}
+
+    fake_plugins("path_resolver", "myscheme", get_resolver)
+
+    assert Resolver.find_resolver("myscheme://host/file") is PluginResolver
+    assert Resolver.find_resolver("https://host/file") is PluginResolver
+    # Schemes the plugin does not claim keep their built-in resolver
+    assert Resolver.find_resolver("scp://host/file").__name__ == "SCPResolver"
+
+
+def test_populate_resolvers_marker_written_last(fake_plugins):
+    """The registry is not marked populated until every scheme is registered."""
+    midway = {}
+
+    def get_resolver():
+        # Plugins are loaded at the tail of population, so the registry is as
+        # complete here as it ever gets before the marker lands.
+        settings = MPManager().get_transient_settings()
+        midway["marked"] = settings.get("resolvers", _RESOLVERS_POPULATED, False)
+        midway["https"] = settings.get("resolvers", "https", None)
+        return {}
+
+    fake_plugins("path_resolver", "probe", get_resolver)
+
+    Resolver.find_resolver("https://host/file")
+
+    assert midway["marked"] is False, "marked populated while population was still running"
+    assert midway["https"] is not None, "marker check ran before https was registered"
+    assert MPManager().get_transient_settings().get("resolvers", _RESOLVERS_POPULATED) is True
+
+
+def test_find_resolver_concurrent_population(monkeypatch):
+    """
+    Threads that call find_resolver while the registry is still being populated all get
+    HTTPResolver, not an unsupported-scheme error, though https is registered last.
+    """
+    real_get_resolver = siliconcompiler.package.https.get_resolver
+
+    def slow_get_resolver():
+        time.sleep(0.5)
+        return real_get_resolver()
+
+    monkeypatch.setattr(siliconcompiler.package.https, "get_resolver", slow_get_resolver)
+
+    barrier = threading.Barrier(8)
+    results = []
+
+    def resolve():
+        barrier.wait(timeout=10)
+        try:
+            results.append(Resolver.find_resolver("https://host/archive.tar.gz"))
+        except Exception as e:
+            # Recorded rather than raised: an exception in a thread would
+            # otherwise only reach stderr and the test would pass.
+            results.append(e)
+
+    threads = [threading.Thread(target=resolve) for _ in range(barrier.parties)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+        assert not thread.is_alive(), "population deadlocked"
+
+    assert len(results) == barrier.parties
+    assert all(result is HTTPResolver for result in results), results
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="requires fork")
+def test_find_resolver_after_fork_mid_population(monkeypatch, wait_for_child):
+    """
+    A child forked while the resolver registry is half populated rebuilds it rather than
+    trusting the inherited partial copy, which the lock cannot guard across a fork.
+    """
+    real_get_resolver = siliconcompiler.package.https.get_resolver
+    stalled = threading.Event()
+    release = threading.Event()
+
+    def stalling_get_resolver():
+        # Population has written the local schemes by now, but no remote one.
+        stalled.set()
+        release.wait(timeout=10)
+        return real_get_resolver()
+
+    monkeypatch.setattr(siliconcompiler.package.https, "get_resolver", stalling_get_resolver)
+
+    thread = threading.Thread(
+        target=lambda: Resolver.find_resolver("https://host/archive.tar.gz"))
+    thread.start()
+    assert stalled.wait(timeout=10), "population never reached the https registration"
+
+    with forking():
+        pid = os.fork()
+    if pid == 0:
+        # The child inherits the stall too, and would hang on its own rebuild.
+        siliconcompiler.package.https.get_resolver = real_get_resolver
+        try:
+            found = Resolver.find_resolver("https://host/archive.tar.gz")
+            os._exit(0 if found is HTTPResolver else 1)
+        except BaseException:
+            os._exit(1)
+
+    try:
+        exited, resolved = wait_for_child(pid)
+    finally:
+        # Always let the stalled thread finish, or it outlives the test and
+        # trips over the torn-down MPManager.
+        release.set()
+        thread.join(timeout=10)
+
+    assert exited, "forked child hung instead of rebuilding the registry"
+    assert resolved, "forked child trusted the half-written registry it inherited"
+
+
+def test_file_env_var():
+    resolver = FileResolver("test", None, "$THIS_PATH/hello")
+    assert resolver.source == "file://$THIS_PATH/hello"
+    assert resolver.urlpath == "$THIS_PATH/hello"
+    assert resolver.resolve() == "$THIS_PATH/hello"
+
+
+def test_file_env_var_cwd(monkeypatch):
+    class TestProject(Project):
+        def valid(*_args, **_kwargs):
+            return False
+
+    project = TestProject()
+    monkeypatch.setattr(project, "_Project__cwd", "thiscwd")
+
+    resolver = FileResolver("test", project, "THIS_PATH/$hello")
+    path = os.path.join("thiscwd", "THIS_PATH/$hello")
+    assert resolver.source == f"file://{path}"
+    assert resolver.urlpath == path
+
+
+def test_file_source_rel_cwd(monkeypatch):
+    class TestProject(Project):
+        def valid(*_args, **_kwargs):
+            return False
+
+    project = TestProject()
+    monkeypatch.setattr(project, "_Project__cwd", "thiscwd")
+
+    resolver = FileResolver("test", project, "THIS_PATH/hello")
+    path = os.path.join("thiscwd", "THIS_PATH/hello")
+    assert resolver.source == f"file://{path}"
+    assert resolver.urlpath == path
+
+
+def test_file_source_abs():
+    abspath = os.path.abspath("abs")
+    resolver = FileResolver("test", None, abspath)
+    assert resolver.source == f"file://{abspath}"
+    assert resolver.urlpath == abspath
+
+
+def test_file_env_var_with_scheme():
+    resolver = FileResolver("test", None, "file://$THIS_PATH/hello")
+    assert resolver.source == "file://$THIS_PATH/hello"
+    assert resolver.urlpath == "$THIS_PATH/hello"
+
+
+def test_file_env_var_start_with_root():
+    class Project(BaseSchema):
+        __cwd = "thiscwd"
+
+        def valid(*_args, **_kwargs):  # keep interface, silence linters
+            return False
+
+    resolver = FileResolver("test", Project(), "$THIS_PATH/hello")
+    assert resolver.source == "file://$THIS_PATH/hello"
+    assert resolver.urlpath == "$THIS_PATH/hello"
+    assert resolver.resolve() == "$THIS_PATH/hello"
+
+
+def test_file_env_var_brace_form():
+    resolver = FileResolver("test", None, "${THIS_PATH}/hello")
+    assert resolver.source == "file://${THIS_PATH}/hello"
+    assert resolver.urlpath == "${THIS_PATH}/hello"
+
+
+def test_cache_id_different_name():
+    res0 = Resolver("testpath0", Project("testproj"), "file://.", reference="ref")
+    res1 = Resolver("testpath1", Project("testproj"), "file://.", reference="ref")
+
+    assert res0.cache_id == res1.cache_id
+
+
+def test_cache_id_different_ref():
+    res0 = Resolver("testpath0", Project("testproj"), "file://.", reference="ref0")
+    res1 = Resolver("testpath1", Project("testproj"), "file://.", reference="ref1")
+
+    assert res0.cache_id != res1.cache_id
+
+
+def test_cache_id_different_source():
+    res0 = Resolver("testpath0", Project("testproj"), "file://test0", reference="ref")
+    res1 = Resolver("testpath1", Project("testproj"), "file://test1", reference="ref")
+
+    assert res0.cache_id != res1.cache_id
+
+
+def test_get_path_new_data(project_logger, caplog):
+    class AlwaysNew(RemoteResolver):
+        def check_cache(self):
+            return False
+
+        @property
+        def cache_path(self):
+            return os.path.abspath("path")
+
+        def resolve_remote(self):
+            pass
+
+    os.makedirs("path", exist_ok=True)
+
+    proj = Project("testproj")
+    project_logger(proj)
+    proj.logger.setLevel(logging.INFO)
+
+    resolver = AlwaysNew("alwaysnew", proj, "notused", "notused")
+    assert resolver.get_path() == os.path.abspath("path")
+
+    assert "Saved alwaysnew data to " in caplog.text
+
+
+@pytest.mark.parametrize("errorcls", (KeyboardInterrupt, IOError, SystemExit))
+def test_get_path_new_data_error(errorcls):
+    class AlwaysNew(RemoteResolver):
+        def check_cache(self):
+            return False
+
+        @property
+        def cache_path(self):
+            return os.path.abspath("path")
+
+        def resolve_remote(self):
+            raise errorcls("Match me")
+
+    os.makedirs("path", exist_ok=True)
+
+    proj = Project("testproj")
+
+    resolver = AlwaysNew("alwaysnew", proj, "notused", "notused")
+    with patch("shutil.rmtree") as rmtree:
+        with pytest.raises(errorcls, match=r"^Match me$"):
+            resolver.get_path()
+        rmtree.assert_called_once_with(os.path.abspath("path"))
+
+
+@pytest.mark.parametrize("errorcls", (KeyboardInterrupt, IOError, SystemExit))
+def test_get_path_new_data_error_failed_to_clean(project_logger, errorcls, caplog):
+    class AlwaysNew(RemoteResolver):
+        def check_cache(self):
+            return False
+
+        @property
+        def cache_path(self):
+            return os.path.abspath("path")
+
+        def resolve_remote(self):
+            raise KeyboardInterrupt("Match me")
+
+    os.makedirs("path", exist_ok=True)
+
+    proj = Project("testproj")
+    project_logger(proj)
+    proj.logger.setLevel(logging.INFO)
+
+    def dummy_rm(tree):
+        raise errorcls("this error")
+
+    resolver = AlwaysNew("alwaysnew", proj, "notused", "notused")
+    with patch("shutil.rmtree") as rmtree:
+        rmtree.side_effect = dummy_rm
+        with pytest.raises(KeyboardInterrupt, match=r"^Match me$"):
+            resolver.get_path()
+        rmtree.assert_called_once_with(os.path.abspath("path"))
+
+    assert f"Exception occurred during cleanup: this error ({errorcls.__name__})" in caplog.text
+
+
+def test_get_path_old_data(project_logger, caplog):
+    class AlwaysOld(RemoteResolver):
+        def check_cache(self):
+            return True
+
+        @property
+        def cache_path(self):
+            return os.path.abspath("path")
+
+        def resolve_remote(self):
+            pass
+
+    os.makedirs("path", exist_ok=True)
+
+    proj = Project("testproj")
+    project_logger(proj)
+    proj.logger.setLevel(logging.INFO)
+
+    resolver = AlwaysOld("alwaysold", proj, "notused", "notused")
+    assert resolver.get_path() == os.path.abspath("path")
+
+    assert "Found alwaysold data at " in caplog.text
+
+
+def test_get_path_usecache(project_logger, caplog):
+    class AlwaysCache(RemoteResolver):
+        def check_cache(self):
+            return True
+
+        @property
+        def cache_path(self):
+            return os.path.abspath("path")
+
+        def resolve_remote(self):
+            pass
+
+    os.makedirs("path", exist_ok=True)
+
+    proj = Project("testproj")
+    project_logger(proj)
+    proj.logger.setLevel(logging.INFO)
+
+    resolver = AlwaysCache("alwayscache", proj, "notused", "notused")
+    MPManager.get_path_cache().set(resolver.cache_id, "path")
+    assert resolver.get_path() == "path"
+
+    assert caplog.text == ""
+
+
+def test_get_path_not_found():
+    class AlwaysOld(RemoteResolver):
+        def check_cache(self):
+            return True
+
+        @property
+        def cache_path(self):
+            return os.path.abspath("path")
+
+        def resolve_remote(self):
+            pass
+
+    proj = Project("testproj")
+
+    resolver = AlwaysOld("alwaysmissing", proj, "notused", "notused")
+    with pytest.raises(FileNotFoundError, match=r"^Unable to locate 'alwaysmissing' at .*path$"):
+        resolver.get_path()
+
+
+def test_remote_init():
+    resolver = RemoteResolver("thisname", Project("testproj"), "https://filepath", "ref")
+
+    assert resolver.name == "thisname"
+    assert resolver.source == "https://filepath"
+    assert resolver.reference == "ref"
+    assert resolver.urlscheme == "https"
+    assert resolver.urlpath == "filepath"
+    assert isinstance(resolver.logger, logging.Logger)
+
+
+def test_remote_init_no_ref():
+    with pytest.raises(ValueError,
+                       match=r"^A reference \(e.g., version, commit\) is required for thisname$"):
+        RemoteResolver("thisname", Project("testproj"), "https://filepath")
+
+
+def test_remote_child_impl():
+    resolver = RemoteResolver("thisname", Project("testproj"), "https://filepath", "ref")
+
+    with pytest.raises(NotImplementedError, match=r"^child class must implement this$"):
+        resolver.resolve_remote()
+
+    with pytest.raises(NotImplementedError, match=r"^child class must implement this$"):
+        resolver.check_cache()
+
+
+@pytest.mark.nocache
+def test_remote_cache_dir_default():
+    resolver = RemoteResolver("thisname", Project("testproj"), "https://filepath", "ref")
+    assert resolver.cache_dir == Path.home() / ".sc" / "cache" / "dataroot"
+
+
+def test_remote_cache_dir_no_root():
+    resolver = RemoteResolver("thisname", None, "https://filepath", "ref")
+    assert resolver.cache_dir == Path.home() / ".sc" / "cache" / "dataroot"
+
+
+def test_remote_cache_dir_from_schema():
+    project = Project("testproj")
+    project.option.set_cachedir(os.path.abspath("."))
+    resolver = RemoteResolver("thisname", project, "https://filepath", "ref")
+    assert resolver.cache_dir == Path(os.path.abspath("dataroot"))
+
+
+def test_remote_cache_dir_from_schema_not_found():
+    project = Project("testproj")
+    project.option.set_cachedir("thispath")
+
+    resolver = RemoteResolver("thisname", project, "https://filepath", "ref")
+    assert resolver.cache_dir == Path(os.path.abspath("thispath")) / "dataroot"
+
+
+def test_remote_cache_name():
+    resolver = RemoteResolver("thisname", Project("testproj"), "https://filepath", "ref")
+    assert resolver.cache_name == "thisname-ref-c7a4a1c3dfc3975e"
+
+
+def test_remote_cache_path():
+    project = Project("testproj")
+    project.option.set_cachedir("thispath")
+
+    resolver = RemoteResolver("thisname", project, "https://filepath", "ref")
+    with patch("os.makedirs") as mkdir:
+        assert resolver.cache_path == \
+            Path(os.path.abspath("thispath/dataroot/thisname-ref-c7a4a1c3dfc3975e"))
+        mkdir.assert_called_once()
+
+
+def test_remote_cache_path_cache_exist():
+    project = Project("testproj")
+    project.option.set_cachedir(".")
+    os.makedirs("dataroot")
+
+    resolver = RemoteResolver("thisname", project, "https://filepath", "ref")
+    with patch("os.makedirs") as mkdir:
+        assert resolver.cache_path == \
+            Path(os.path.abspath("dataroot/thisname-ref-c7a4a1c3dfc3975e"))
+        mkdir.assert_not_called()
+
+
+def test_remote_lock_file():
+    project = Project("testproj")
+    project.option.set_cachedir("thispath")
+
+    resolver = RemoteResolver("thisname", project, "https://filepath", "ref")
+    with patch("os.makedirs") as mkdir:
+        assert resolver.lock_file == \
+            Path(os.path.abspath("thispath/dataroot/thisname-ref-c7a4a1c3dfc3975e.lock"))
+        mkdir.assert_called_once()
+
+
+def test_remote_sc_lock_file():
+    project = Project("testproj")
+    project.option.set_cachedir("thispath")
+
+    resolver = RemoteResolver("thisname", project, "https://filepath", "ref")
+    with patch("os.makedirs") as mkdir:
+        assert resolver.sc_lock_file == \
+            Path(os.path.abspath("thispath/dataroot/thisname-ref-c7a4a1c3dfc3975e.sc_lock"))
+        mkdir.assert_called_once()
+
+
+def test_remote_resolve_cached():
+    project = Project("testproj")
+    project.option.set_cachedir(".")
+
+    resolver = RemoteResolver("thisname", project, "https://filepath", "ref")
+
+    with patch("siliconcompiler.package.RemoteResolver.lock") as lock, \
+         patch("siliconcompiler.package.RemoteResolver.check_cache") as check_cache, \
+         patch("siliconcompiler.package.RemoteResolver.resolve_remote") as resolve_remote:
+        check_cache.return_value = True
+        assert resolver.resolve() == Path(os.path.abspath("dataroot/thisname-ref-c7a4a1c3dfc3975e"))
+        lock.assert_called_once()
+        check_cache.assert_called_once()
+        resolve_remote.assert_not_called()
+
+
+class FailingResolver(RemoteResolver):
+    """A remote source that never resolves, counting each attempt."""
+
+    def __init__(self, *args, error=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.calls = 0
+        self.error = error if error else FileNotFoundError("simulated 404")
+
+    def check_cache(self):
+        return False
+
+    @property
+    def cache_path(self):
+        return Path(os.path.abspath("neverthere"))
+
+    def resolve_remote(self):
+        self.calls += 1
+        raise self.error
+
+
+@pytest.fixture
+def failing_resolver():
+    """Builds a failing remote resolver with retry delays disabled."""
+    def build(root=None, source="https://filepath", reference="ref", error=None):
+        if root is None:
+            root = Project("testproj")
+            root.option.set_cachedir(".")
+        resolver = FailingResolver("thisname", root, source, reference, error=error)
+        resolver.cache.set_retry_delay(0)
+        return resolver
+
+    return build
+
+
+@pytest.mark.parametrize("error,permanent", (
+    (FileNotFoundError("404"), False),
+    (ConnectionError("reset by peer"), False),
+    (TimeoutError("no answer"), False),
+    (tarfile.ReadError("truncated"), False),
+    (zipfile.BadZipFile("truncated"), False),
+    (TypeError("neither tar nor zip"), False),
+    (EOFError("compressed file ended early"), False),
+    # Splatted rather than indexed: with no Zstandard bindings the tuple is empty,
+    # and subscripting it would fail the whole module's collection.
+    *[(error("corrupt frame"), False) for error in utils.zstd_errors()],
+    (PermanentResolutionError("settled"), True),
+    (DataSourceUnavailableError("no such release"), True),
+))
+def test_is_permanent_failure(error, permanent):
+    """
+    A transfer that broke may work next time; a source that has answered has
+    already said everything it is going to say.
+    """
+    resolver = Resolver("thisname", Project("testproj"), "https://filepath", "ref")
+
+    assert resolver.is_permanent_failure(error) is permanent
+
+
+# The extraction filters, and so their errors, only exist on releases carrying the
+# PEP 706 backport; an older one has no such error to classify.
+@pytest.mark.skipif(not hasattr(tarfile, "FilterError"),
+                    reason="release predates the PEP 706 extraction filters")
+@pytest.mark.parametrize("build", (
+    lambda: tarfile.LinkOutsideDestinationError(tarfile.TarInfo("pkg/link"), "/elsewhere"),
+    lambda: tarfile.AbsoluteLinkError(tarfile.TarInfo("pkg/link")),
+    lambda: tarfile.SpecialFileError(tarfile.TarInfo("pkg/dev")),
+), ids=("link-outside", "absolute-link", "special-file"))
+def test_is_permanent_failure_for_archive_contents(build):
+    """
+    An archive the extraction filter refuses will be refused just as firmly on a
+    fresh copy, so re-downloading it settles nothing.
+    """
+    resolver = Resolver("thisname", Project("testproj"), "https://filepath", "ref")
+
+    assert resolver.is_permanent_failure(build()) is True
+
+
+def test_get_path_permanent_failure_is_not_retried(failing_resolver):
+    """One attempt is all a settled failure gets, whatever the budget allows."""
+    resolver = failing_resolver(error=PermanentResolutionError("settled"))
+
+    with pytest.raises(PermanentResolutionError):
+        resolver.get_path()
+
+    for _ in range(5):
+        with pytest.raises(DataRootResolutionError):
+            resolver.get_path()
+
+    assert resolver.calls == 1
+    assert resolver.cache.attempts(resolver.cache_id) == 1
+    assert resolver.cache.is_permanent(resolver.cache_id)
+
+
+def test_get_path_permanent_failure_does_not_wait(failing_resolver):
+    """Nothing is gained by backing off before a retry that will not happen."""
+    resolver = failing_resolver(error=PermanentResolutionError("settled"))
+    resolver.cache.set_retry_delay(30)
+
+    with patch("siliconcompiler.package.cache.time.sleep") as sleep:
+        with pytest.raises(PermanentResolutionError):
+            resolver.get_path()
+        with pytest.raises(DataRootResolutionError):
+            resolver.get_path()
+
+    sleep.assert_not_called()
+
+
+def test_get_path_permanent_abandoned_message(failing_resolver):
+    resolver = failing_resolver(error=DataSourceUnavailableError("no such release"))
+
+    with pytest.raises(DataSourceUnavailableError):
+        resolver.get_path()
+
+    with pytest.raises(DataRootResolutionError, match=(
+            r"^Unable to resolve 'thisname' from https://filepath \(ref\), and retrying "
+            r"cannot change the outcome, giving up\. Error: DataSourceUnavailableError: "
+            r"no such release$")):
+        resolver.get_path()
+
+
+def test_get_path_permanent_abandoned_is_logged(failing_resolver, project_logger, caplog):
+    project = Project("testproj")
+    project.option.set_cachedir(".")
+    project_logger(project)
+    project.logger.setLevel(logging.INFO)
+
+    resolver = failing_resolver(root=project, error=PermanentResolutionError("settled"))
+    with pytest.raises(PermanentResolutionError):
+        resolver.get_path()
+
+    # Reported on the attempt that settled it, not on some later lookup
+    assert "and retrying cannot change the outcome, giving up" in caplog.text
+
+
+def test_get_path_permanent_failure_of_a_local_source(failing_resolver):
+    """
+    A source that is not worth retrying is not worth bookkeeping either: it fails
+    the same way every time whether or not the failure was recorded.
+    """
+    class Failing(Resolver):
+        def resolve(self):
+            raise PermanentResolutionError("settled")
+
+    resolver = Failing("thisname", Project("testproj"), "source://x")
+    assert not resolver.is_retryable
+
+    for _ in range(3):
+        with pytest.raises(PermanentResolutionError):
+            resolver.get_path()
+
+    assert not resolver.cache.is_permanent(resolver.cache_id)
+
+
+def test_get_path_failure_is_bounded(failing_resolver):
+    """Repeated lookups must consume a budget, not re-download forever."""
+    resolver = failing_resolver()
+
+    for _ in range(10):
+        with pytest.raises((FileNotFoundError, DataRootResolutionError)):
+            resolver.get_path()
+
+    assert resolver.calls == 3
+    assert resolver.cache.attempts(resolver.cache_id) == 3
+    assert resolver.cache.is_exhausted(resolver.cache_id)
+
+
+def test_get_path_failure_raises_original_until_exhausted(failing_resolver):
+    resolver = failing_resolver()
+
+    # Every real attempt reports the underlying error
+    for _ in range(3):
+        with pytest.raises(FileNotFoundError, match="^simulated 404$"):
+            resolver.get_path()
+
+    # After that the source is abandoned without another attempt
+    with pytest.raises(DataRootResolutionError):
+        resolver.get_path()
+    assert resolver.calls == 3
+
+
+def test_get_path_abandoned_message(failing_resolver):
+    resolver = failing_resolver()
+
+    for _ in range(3):
+        with pytest.raises(FileNotFoundError):
+            resolver.get_path()
+
+    with pytest.raises(DataRootResolutionError, match=(
+            r"^Unable to resolve 'thisname' from https://filepath \(ref\) after 3 attempt\(s\), "
+            r"giving up\. Last error: FileNotFoundError: simulated 404$")):
+        resolver.get_path()
+
+
+def test_get_path_abandoned_is_logged(failing_resolver, project_logger, caplog):
+    project = Project("testproj")
+    project.option.set_cachedir(".")
+    project_logger(project)
+    project.logger.setLevel(logging.INFO)
+
+    resolver = failing_resolver(root=project)
+    for _ in range(3):
+        with pytest.raises(FileNotFoundError):
+            resolver.get_path()
+
+    assert "Unable to resolve 'thisname' from https://filepath (ref) after 3 attempt(s)" \
+        in caplog.text
+
+
+def test_get_path_max_attempts_honored(failing_resolver):
+    resolver = failing_resolver()
+    resolver.cache.set_max_attempts(1)
+
+    with pytest.raises(FileNotFoundError):
+        resolver.get_path()
+    with pytest.raises(DataRootResolutionError):
+        resolver.get_path()
+
+    assert resolver.calls == 1
+
+
+def test_get_path_budget_is_shared_between_resolvers(failing_resolver):
+    """
+    The budget is tracked per source for the whole process, so two resolvers --
+    even ones belonging to different projects -- draw from one pool rather than
+    each getting their own three attempts.
+    """
+    first = failing_resolver(root=Project("testproj0"))
+    second = failing_resolver(root=Project("testproj1"))
+
+    for _ in range(2):
+        with pytest.raises(FileNotFoundError):
+            first.get_path()
+    with pytest.raises(FileNotFoundError):
+        second.get_path()
+
+    with pytest.raises(DataRootResolutionError):
+        second.get_path()
+
+    assert first.calls == 2
+    assert second.calls == 1
+
+
+def test_get_path_budget_is_per_source(failing_resolver):
+    project = Project("testproj")
+    project.option.set_cachedir(".")
+
+    first = failing_resolver(root=project, source="https://filepath")
+    second = failing_resolver(root=project, source="https://otherpath")
+
+    for _ in range(4):
+        with pytest.raises((FileNotFoundError, DataRootResolutionError)):
+            first.get_path()
+    with pytest.raises(FileNotFoundError):
+        second.get_path()
+
+    assert first.calls == 3
+    assert second.calls == 1
+
+
+def test_get_path_retries_wait(failing_resolver):
+    """Backoff grows exponentially and is skipped on the first try."""
+    resolver = failing_resolver()
+    resolver.cache.set_retry_delay(2)
+    resolver.cache.set_retry_backoff(2)
+
+    with patch("siliconcompiler.package.cache.random.uniform",
+               side_effect=lambda low, high: (low + high) / 2), \
+         patch("siliconcompiler.package.cache.time.sleep") as sleep:
+        for _ in range(3):
+            with pytest.raises(FileNotFoundError):
+                resolver.get_path()
+
+    # First attempt is immediate; the two retries back off
+    assert [call.args[0] for call in sleep.call_args_list] == [2, 4]
+
+
+def test_get_path_retry_waits_are_randomized(failing_resolver):
+    """Two workers that failed together must not retry at the same moment."""
+    delays = set()
+
+    # A distinct source per round, so each starts with a fresh budget: the cache
+    # is process-wide, so reusing one source would exhaust it on the first round.
+    for num in range(20):
+        resolver = failing_resolver(source=f"https://filepath{num}")
+        resolver.cache.set_retry_delay(10)
+
+        with patch("siliconcompiler.package.cache.time.sleep") as sleep:
+            with pytest.raises(FileNotFoundError):
+                resolver.get_path()
+            with pytest.raises(FileNotFoundError):
+                resolver.get_path()
+
+        delays.add(sleep.call_args_list[0].args[0])
+
+    assert len(delays) > 1
+
+
+def test_get_path_success_clears_failures(failing_resolver):
+    """A source that recovers is cached and never attempted again."""
+    resolver = failing_resolver()
+
+    def flaky():
+        resolver.calls += 1
+        if resolver.calls < 3:
+            raise FileNotFoundError("simulated 404")
+        os.makedirs("neverthere", exist_ok=True)
+
+    with patch.object(FailingResolver, "resolve_remote", side_effect=flaky):
+        for _ in range(2):
+            with pytest.raises(FileNotFoundError):
+                resolver.get_path()
+        assert resolver.cache.attempts(resolver.cache_id) == 2
+
+        assert resolver.get_path() == os.path.abspath("neverthere")
+        assert resolver.calls == 3
+        assert resolver.cache.attempts(resolver.cache_id) == 0
+
+        # Now cached, so no further attempts
+        assert resolver.get_path() == os.path.abspath("neverthere")
+        assert resolver.calls == 3
+
+
+@pytest.mark.parametrize("errorcls", (KeyboardInterrupt, SystemExit))
+def test_get_path_interrupt_does_not_consume_budget(failing_resolver, errorcls):
+    """An interrupt says nothing about whether a source is reachable."""
+    resolver = failing_resolver()
+
+    def interrupt():
+        resolver.calls += 1
+        raise errorcls("interrupted")
+
+    with patch("shutil.rmtree"), \
+         patch.object(FailingResolver, "resolve_remote", side_effect=interrupt):
+        for _ in range(5):
+            with pytest.raises(errorcls):
+                resolver.get_path()
+
+    assert resolver.calls == 5
+    assert resolver.cache.attempts(resolver.cache_id) == 0
+
+
+def test_get_path_local_failure_is_not_tracked():
+    """Local sources fail instantly, so there is nothing to budget."""
+    design = Design("testdesign")
+    design.set_dataroot("dataA", "dataroot://dataB")
+    design.set_dataroot("dataB", "dataroot://dataA")
+
+    resolver = DatarootResolver("thisname", design, "dataroot://dataA")
+
+    for _ in range(5):
+        with pytest.raises(RuntimeError, match="Circular dataroot reference detected"):
+            resolver.get_path()
+
+    assert resolver.cache.attempts(resolver.cache_id) == 0
+
+
+def test_find_files_failure_is_bounded():
+    """
+    A dataroot is resolved once per path entry, so a failing dataroot used to be
+    re-downloaded once per file, on every find_files call.
+    """
+    design = Design("testdesign")
+    design.set_dataroot("remote", "https://filepath", tag="ref")
+    with design.active_fileset("rtl"), design.active_dataroot("remote"):
+        for num in range(5):
+            design.add_file(f"file{num}.v")
+
+    MPManager.get_path_cache().set_retry_delay(0)
+
+    calls = []
+
+    def fail():
+        calls.append(1)
+        raise FileNotFoundError("simulated 404")
+
+    with patch("siliconcompiler.package.https.HTTPResolver.check_cache", return_value=False), \
+         patch("siliconcompiler.package.https.HTTPResolver.resolve_remote", side_effect=fail), \
+         patch("shutil.rmtree"):
+        for _ in range(3):
+            assert design.find_files("fileset", "rtl", "file", "verilog",
+                                     missing_ok=True) == [None] * 5
+
+    # Was 5 attempts per call (once per file), 15 in total
+    assert len(calls) == 3
+
+
+def test_remote_resolve():
+    project = Project("testproj")
+    project.option.set_cachedir(".")
+
+    resolver = RemoteResolver("thisname", project, "https://filepath", "ref")
+
+    with patch("siliconcompiler.package.RemoteResolver.lock") as lock, \
+         patch("siliconcompiler.package.RemoteResolver.check_cache") as check_cache, \
+         patch("siliconcompiler.package.RemoteResolver.resolve_remote") as resolve_remote:
+        check_cache.return_value = False
+        assert resolver.resolve() == Path(os.path.abspath("dataroot/thisname-ref-c7a4a1c3dfc3975e"))
+        lock.assert_called_once()
+        check_cache.assert_called_once()
+        resolve_remote.assert_called_once()
+
+
+def test_remote_resolve_cached_different_name():
+    project = Project("testproj")
+    project.option.set_cachedir(".")
+
+    resolver = RemoteResolver("thisname", project, "https://filepath", "ref")
+
+    with patch("siliconcompiler.package.RemoteResolver.lock") as lock, \
+         patch("siliconcompiler.package.RemoteResolver.check_cache") as check_cache, \
+         patch("siliconcompiler.package.RemoteResolver.resolve_remote") as resolve_remote:
+        check_cache.return_value = False
+        assert resolver.resolve() == Path(os.path.abspath("dataroot/thisname-ref-c7a4a1c3dfc3975e"))
+        Path(os.path.abspath("dataroot/thisname-ref-c7a4a1c3dfc3975e")).mkdir(exist_ok=True)
+        lock.assert_called_once()
+        check_cache.assert_called_once()
+        resolve_remote.assert_called_once()
+        assert resolver.get_path() == os.path.abspath("dataroot/thisname-ref-c7a4a1c3dfc3975e")
+
+    resolver = RemoteResolver("thisname1", project, "https://filepath", "ref")
+    with patch("siliconcompiler.package.RemoteResolver.lock") as lock, \
+         patch("siliconcompiler.package.RemoteResolver.check_cache") as check_cache, \
+         patch("siliconcompiler.package.RemoteResolver.resolve_remote") as resolve_remote:
+        check_cache.return_value = False
+        # This will use the same of the other resolver despite the name change
+        assert resolver.get_path() == os.path.abspath("dataroot/thisname-ref-c7a4a1c3dfc3975e")
+        lock.assert_not_called()
+        check_cache.assert_not_called()
+        resolve_remote.assert_not_called()
+
+
+def test_remote_lock():
+    project = Project("testproj")
+    project.option.set_cachedir(".")
+
+    resolver = RemoteResolver("thisname", project, "https://filepath", "ref")
+
+    with resolver.lock():
+        assert os.path.exists(resolver.lock_file)
+        assert not os.path.exists(resolver.sc_lock_file)
+
+    assert os.path.exists(resolver.lock_file)
+    assert not os.path.exists(resolver.sc_lock_file)
+
+
+def test_remote_lock_after_lock():
+    project = Project("testproj")
+    project.option.set_cachedir(".")
+
+    resolver = RemoteResolver("thisname", project, "https://filepath", "ref")
+
+    with resolver.lock():
+        assert os.path.exists(resolver.lock_file)
+        assert not os.path.exists(resolver.sc_lock_file)
+
+    assert os.path.exists(resolver.lock_file)
+    assert not os.path.exists(resolver.sc_lock_file)
+
+    with resolver.lock():
+        assert os.path.exists(resolver.lock_file)
+        assert not os.path.exists(resolver.sc_lock_file)
+
+    assert os.path.exists(resolver.lock_file)
+    assert not os.path.exists(resolver.sc_lock_file)
+
+
+def test_remote_timeout_defaults():
+    resolver = RemoteResolver("thisname", None, "https://filepath", "ref")
+    assert resolver.lock_timeout == 600
+    assert resolver.request_timeout == 60
+
+
+def test_remote_request_timeout():
+    resolver = RemoteResolver("thisname", None, "https://filepath", "ref")
+    resolver.set_request_timeout(5)
+    assert resolver.request_timeout == 5
+    assert resolver.lock_timeout == 600
+
+
+def test_remote_lock_within_lock_thread():
+    project = Project("testproj")
+    project.option.set_cachedir(".")
+
+    resolver0 = RemoteResolver("thisname", project, "https://filepath", "ref")
+    resolver1 = RemoteResolver("thisname", project, "https://filepath", "ref")
+
+    # change second resolver to wait 1 second
+    resolver1.set_lock_timeout(1)
+    assert resolver1.lock_timeout == 1
+
+    thread_lock = resolver0.thread_lock()
+
+    with resolver0.lock():
+        assert os.path.exists(resolver0.lock_file)
+        assert not os.path.exists(resolver0.sc_lock_file)
+
+        with pytest.raises(RuntimeError, match=r"^Failed to access .*\. "
+                                               r"Another thread is currently holding the lock\.$"):
+            with resolver1.lock():
+                assert False, "should not get here"
+
+        # The waiter timing out must not hand away the holder's lock
+        assert thread_lock.locked()
+
+    assert not thread_lock.locked()
+
+    assert os.path.exists(resolver0.lock_file)
+    assert not os.path.exists(resolver0.sc_lock_file)
+
+
+def test_remote_lock_timeout_does_not_release_holder():
+    """
+    A thread that gives up waiting must not release the lock. threading.Lock has
+    no owner, so releasing it would admit a third thread into the download.
+    """
+    project = Project("testproj")
+    project.option.set_cachedir(".")
+
+    holder = RemoteResolver("thisname", project, "https://filepath", "ref")
+    waiter = RemoteResolver("thisname", project, "https://filepath", "ref")
+    intruder = RemoteResolver("thisname", project, "https://filepath", "ref")
+
+    waiter.set_lock_timeout(1)
+    intruder.set_lock_timeout(1)
+
+    # Isolate the thread lock from the inter-process lock
+    @contextlib.contextmanager
+    def dummy_lock():
+        yield
+    for resolver in (holder, waiter, intruder):
+        object.__setattr__(resolver, "_RemoteResolver__file_lock", dummy_lock)
+
+    with holder.lock():
+        with pytest.raises(RuntimeError, match=r"Another thread is currently holding the lock\."):
+            with waiter.lock():
+                pytest.fail("should not get here")
+
+        with pytest.raises(RuntimeError, match=r"Another thread is currently holding the lock\."):
+            with intruder.lock():
+                pytest.fail("should not get here")
+
+
+def test_remote_thread_lock_is_per_source():
+    """Same name, different source: the two must not contend."""
+    project = Project("testproj")
+    project.option.set_cachedir(".")
+
+    resolver0 = RemoteResolver("thisname", project, "https://filepath", "ref")
+    resolver1 = RemoteResolver("thisname", project, "https://otherpath", "ref")
+
+    assert resolver0.thread_lock() is not resolver1.thread_lock()
+
+
+def test_remote_thread_lock_is_shared_per_source():
+    project = Project("testproj")
+    project.option.set_cachedir(".")
+
+    resolver0 = RemoteResolver("thisname", project, "https://filepath", "ref")
+    resolver1 = RemoteResolver("othername", project, "https://filepath", "ref")
+
+    assert resolver0.thread_lock() is resolver1.thread_lock()
+
+
+def test_remote_lock_within_lock_thread_multiple_tries(monkeypatch):
+    project = Project("testproj")
+    project.option.set_cachedir(".")
+
+    resolver0 = RemoteResolver("thisname", project, "https://filepath", "ref")
+    resolver1 = RemoteResolver("thisname", project, "https://filepath", "ref")
+
+    # change second resolver to wait 10 second
+    resolver1.set_lock_timeout(10)
+    assert resolver1.lock_timeout == 10
+
+    # Allow filelock to pass
+    @contextlib.contextmanager
+    def dummy_lock():
+        yield
+    monkeypatch.setattr(resolver0, "_RemoteResolver__file_lock", dummy_lock)
+
+    with resolver0.lock():
+        class DummyLock:
+            def __init__(self):
+                self.calls = 0
+                pass
+
+            def acquire_lock(self, timeout=None):
+                self.calls += 1
+                if self.calls == 1:
+                    return False
+                return True
+
+            def release(self):
+                self.released = True
+
+            def locked(self):
+                return False
+
+        lock = DummyLock()
+
+        def gen_dummy_lock(*args, **kwargs):
+            return lock
+
+        monkeypatch.setattr(RemoteResolver, "thread_lock", gen_dummy_lock)
+        with resolver1.lock():
+            assert lock.calls == 2
+        assert lock.calls == 2
+
+    assert os.path.exists(resolver0.lock_file)
+    assert not os.path.exists(resolver0.sc_lock_file)
+
+
+def test_remote_lock_within_lock_file(monkeypatch):
+    """
+    The file lock alone keeps out another thread of this process, which fcntl on
+    its own does not: it is held per process.
+    """
+    project = Project("testproj")
+    project.option.set_cachedir(".")
+
+    resolver0 = RemoteResolver("thisname", project, "https://filepath", "ref")
+    resolver1 = RemoteResolver("thisname", project, "https://filepath", "ref")
+
+    # change second resolver to wait 1 second
+    resolver1.set_lock_timeout(1)
+    assert resolver1.lock_timeout == 1
+
+    # Isolate the file lock from the thread lock
+    @contextlib.contextmanager
+    def dummy_lock():
+        yield
+    for resolver in (resolver0, resolver1):
+        monkeypatch.setattr(resolver, "_RemoteResolver__thread_lock", dummy_lock)
+
+    holding = threading.Event()
+    release = threading.Event()
+
+    def holder():
+        with resolver0.lock():
+            holding.set()
+            release.wait(timeout=30)
+
+    thread = threading.Thread(target=holder)
+    thread.start()
+    try:
+        assert holding.wait(timeout=30)
+        assert os.path.exists(resolver0.lock_file)
+        assert not os.path.exists(resolver0.sc_lock_file)
+
+        with pytest.raises(RuntimeError, match=r"^Failed to access .*\. .*\.lock is still locked. "
+                           r"If this is a mistake, please delete the lock file\.$"):
+            with resolver1.lock():
+                pass
+    finally:
+        release.set()
+        thread.join(timeout=30)
+
+    assert os.path.exists(resolver0.lock_file)
+    assert not os.path.exists(resolver0.sc_lock_file)
+
+
+def test_remote_lock_exception():
+    project = Project("testproj")
+    project.option.set_cachedir(".")
+
+    resolver = RemoteResolver("thisname", project, "https://filepath", "ref")
+
+    with pytest.raises(ValueError):
+        with resolver.lock():
+            assert os.path.exists(resolver.lock_file)
+            assert not os.path.exists(resolver.sc_lock_file)
+            raise ValueError
+
+    assert os.path.exists(resolver.lock_file)
+    assert not os.path.exists(resolver.sc_lock_file)
+
+    # try lock again
+    with pytest.raises(ValueError):
+        with resolver.lock():
+            assert os.path.exists(resolver.lock_file)
+            assert not os.path.exists(resolver.sc_lock_file)
+            raise ValueError
+
+
+def test_remote_lock_failed():
+    project = Project("testproj")
+    project.option.set_cachedir(".")
+
+    resolver = RemoteResolver("thisname", project, "https://filepath", "ref")
+    resolver.set_lock_timeout(1)
+
+    with patch("fasteners.InterProcessLock.acquire") as acquire:
+        acquire.return_value = False
+        with pytest.raises(RuntimeError,
+                           match=r"^Failed to access .*\. .*\.lock is still locked\. "
+                           r"If this is a mistake, please delete the lock file\.$"):
+            with resolver.lock():
+                assert False, "Should not gain lock"
+            acquire.assert_called_once()
+
+    assert not os.path.exists(resolver.lock_file)
+    assert not os.path.exists(resolver.sc_lock_file)
+
+
+def test_remote_lock_revert_to_file():
+    project = Project("testproj")
+    project.option.set_cachedir(".")
+
+    resolver = RemoteResolver("thisname", project, "https://filepath", "ref")
+
+    with patch("fasteners.InterProcessLock.acquire") as acquire:
+        def fail_lock(*args, **kwargs):
+            raise RuntimeError
+        acquire.side_effect = fail_lock
+
+        with resolver.lock():
+            assert not os.path.exists(resolver.lock_file)
+            assert os.path.exists(resolver.sc_lock_file)
+
+    assert not os.path.exists(resolver.lock_file)
+    assert not os.path.exists(resolver.sc_lock_file)
+
+
+def test_remote_lock_revert_to_file_failed():
+    project = Project("testproj")
+    project.option.set_cachedir(".")
+
+    resolver = RemoteResolver("thisname", project, "https://filepath", "ref")
+    resolver.set_lock_timeout(1)
+
+    with patch("fasteners.InterProcessLock.acquire") as acquire:
+        def fail_lock(*args, **kwargs):
+            raise RuntimeError
+        acquire.side_effect = fail_lock
+
+        # Generate lock
+        resolver.sc_lock_file.touch()
+
+        start = time.monotonic()
+        with pytest.raises(RuntimeError,
+                           match=r"^Failed to access .*\. Lock .*\.sc_lock still exists\.$"):
+            with resolver.lock():
+                pass
+        # Waited out its timeout, and no longer
+        assert 1 <= time.monotonic() - start < 10
+
+    assert not os.path.exists(resolver.lock_file)
+    assert os.path.exists(resolver.sc_lock_file)
+
+
+def test_file_resolver_abs_path():
+    resolver = FileResolver("thisname", Project("testproj"), os.path.abspath("test"))
+    assert resolver.resolve() == os.path.abspath("test")
+
+
+def test_file_resolver_with_file():
+    resolver = FileResolver("thisname", Project("testproj"), "file://test")
+    assert resolver.resolve() == os.path.abspath("test")
+
+
+def test_file_resolver_with_abspath():
+    resolver = FileResolver("thisname", Project("testproj"), f"file://{os.path.abspath('../test')}")
+    assert resolver.resolve() == os.path.abspath("../test")
+
+
+def test_file_resolver_with_relpath():
+    resolver = FileResolver("thisname", Project("testproj"), "file://test")
+    assert resolver.resolve() == os.path.abspath("test")
+
+
+def test_file_resolver_with_private():
+    resolver = FileResolver("thisname", Project("testproj"), "file+private://test")
+    assert resolver.is_private is True
+    assert resolver.resolve() == os.path.abspath("test")
+
+
+@pytest.mark.parametrize("scheme", ["file", "file+private"])
+def test_file_resolver_windows_safe_source(monkeypatch, scheme):
+    path = r"D:\a\siliconcompiler\siliconcompiler\examples\heartbeat"
+    monkeypatch.setenv("WINDOWS_SOURCE_PATH", path)
+    resolver = FileResolver("thisname", Project("testproj"),
+                            f"{scheme}://$WINDOWS_SOURCE_PATH")
+
+    assert resolver.safe_source == "file://$WINDOWS_SOURCE_PATH"
+    assert resolver.cache_id
+
+
+# Rooted at a variable, so each source is the same on every platform: a bare
+# '/data' is not absolute on Windows, and would be joined to the working
+# directory.
+@pytest.mark.parametrize("source,sent", [
+    ("file://$DATA_ROOT/user@host/archive", "file://$DATA_ROOT/user@host/archive"),
+    ("file://$DATA_ROOT/archive?v=1", "file://$DATA_ROOT/archive?v=1"),
+    ("file://$DATA_ROOT/archive#1", "file://$DATA_ROOT/archive#1"),
+    ("file://$DATA_ROOT/user:token@host/archive", "file://$DATA_ROOT/user:token@host/archive"),
+    ("file+private://$DATA_ROOT/user@host/archive?v=1", "file://$DATA_ROOT/user@host/archive?v=1"),
+    ("$DATA_ROOT/archive?v=1", "file://$DATA_ROOT/archive?v=1"),
+])
+def test_file_resolver_safe_source_keeps_path(source, sent):
+    # A path has no userinfo or query to mask: every character is its name's.
+    resolver = FileResolver("thisname", Project("testproj"), source)
+    assert resolver.safe_source == sent
+
+
+def test_file_resolver_safe_source_keeps_abspath():
+    # On Windows this is 'file://C:\...\user@host\archive?v=1', where the
+    # backslashes leave the whole path in the URL's host.
+    path = os.path.join(os.path.abspath("data"), "user@host", "archive?v=1")
+    resolver = FileResolver("thisname", Project("testproj"), path)
+    assert resolver.safe_source == f"file://{path}"
+
+
+def test_python_path_resolver():
+    resolver = PythonPathResolver("thisname", Project("testproj"), "python://siliconcompiler")
+    assert resolver.resolve() == os.path.dirname(siliconcompiler.__file__)
+
+
+def test_python_path_resolver_with_urlpath():
+    """Test that PythonPathResolver correctly extracts module name from source."""
+    resolver = PythonPathResolver("test_module", None, "python://json")
+    assert resolver.urlpath == "json"
+    assert resolver.resolve() is not None
+
+
+def test_python_path_resolver_with_nested_module():
+    """Test PythonPathResolver with nested module."""
+    resolver = PythonPathResolver("test_nested", None, "python://xml.etree")
+    resolved = resolver.resolve()
+    assert resolved is not None
+    assert os.path.exists(resolved)
+
+
+def test_python_path_resolver_with_path():
+    """A path after the module is a directory inside it, imported or not."""
+    root = PythonPathResolver("root", None, "python://siliconcompiler")
+    common = PythonPathResolver("common", None, "python://siliconcompiler/tools/_common")
+
+    assert common.urlpath == "siliconcompiler"
+    assert common.get_path() == \
+        os.path.join(os.path.dirname(siliconcompiler.__file__), "tools", "_common")
+    # Each is cached apart, so neither stands in for the other
+    assert root.get_path() == os.path.dirname(siliconcompiler.__file__)
+    assert common.cache_id != root.cache_id
+    assert common.collection_id != root.collection_id
+
+
+def test_python_path_resolver_reference_ignored():
+    """Test that PythonPathResolver ignores the reference parameter."""
+    resolver = PythonPathResolver("thisname", None, "python://siliconcompiler", reference="v1.0")
+    # Reference should be ignored for Python modules
+    assert resolver.reference is None
+    assert resolver.resolve() == os.path.dirname(siliconcompiler.__file__)
+
+
+def test_python_path_resolver_not_found():
+    """Test that PythonPathResolver raises error for non-existent module."""
+    resolver = PythonPathResolver("test_missing", None, "python://nonexistent_module_xyz")
+    with pytest.raises(ModuleNotFoundError):
+        resolver.resolve()
+
+
+def test_python_path_resolver_absolute_path():
+    """Test that resolved path is absolute."""
+    resolver = PythonPathResolver("thisname", None, "python://siliconcompiler")
+    resolved = resolver.resolve()
+    assert os.path.isabs(resolved)
+
+
+def test_python_path_resolver_get_python_module_mapping():
+    """Test get_python_module_mapping returns a valid dictionary."""
+    mapping = PythonPathResolver.get_python_module_mapping()
+    assert isinstance(mapping, dict)
+    # Should contain some common modules or siliconcompiler
+    assert len(mapping) > 0
+    # Each key should be a module name, each value should be a list of distribution names
+    for module_name, dist_names in mapping.items():
+        assert isinstance(module_name, str)
+        assert isinstance(dist_names, list)
+        assert all(isinstance(dn, str) for dn in dist_names)
+
+
+def test_python_path_resolver_get_python_module_mapping_cached():
+    """Test that get_python_module_mapping uses LRU cache."""
+    # Call it twice and ensure it returns the same object (cached)
+    mapping1 = PythonPathResolver.get_python_module_mapping()
+    mapping2 = PythonPathResolver.get_python_module_mapping()
+    assert mapping1 is mapping2
+
+
+def test_python_path_resolver_is_module_editable_not_found():
+    """Test is_python_module_editable returns False for non-existent module."""
+    result = PythonPathResolver.is_python_module_editable("nonexistent_module_xyz_123")
+    assert result is False
+
+
+def test_python_path_resolver_is_module_editable_standard_lib():
+    """Test is_python_module_editable with standard library modules."""
+    # Standard library modules should not be editable
+    result = PythonPathResolver.is_python_module_editable("json")
+    # json is a standard library module, so should be False
+    # It might not be in the distribution mapping at all
+    assert result is False
+
+
+def test_python_path_resolver_is_module_editable_installed():
+    """Test is_python_module_editable with installed package."""
+    # pytest should be installed
+    result = PythonPathResolver.is_python_module_editable("pytest")
+    # pytest is typically not installed in editable mode
+    assert result is False
+
+
+def test_python_path_resolver_is_module_editable_siliconcompiler():
+    """Test is_python_module_editable with siliconcompiler."""
+    result = PythonPathResolver.is_python_module_editable("siliconcompiler")
+    assert isinstance(result, bool)
+    # siliconcompiler could be editable during development, or not
+
+
+def test_python_path_resolver_set_dataroot_editable_module():
+    """Test set_dataroot with an editable module."""
+    from siliconcompiler.schema_support.pathschema import PathSchema
+
+    schema = PathSchema()
+
+    # Mock is_python_module_editable to return True
+    with patch.object(PythonPathResolver, "is_python_module_editable", return_value=True):
+        PythonPathResolver.set_dataroot(
+            schema,
+            "test_data",
+            "siliconcompiler",
+            "fallback/path",
+            "v1.0"
+        )
+
+        # Check that dataroot was set with python:// source
+        assert schema.get("dataroot", "test_data", "path") == "python://siliconcompiler"
+        assert schema.get("dataroot", "test_data", "tag") is None
+
+
+def test_python_path_resolver_set_dataroot_non_editable_module():
+    """Test set_dataroot with a non-editable module."""
+    from siliconcompiler.schema_support.pathschema import PathSchema
+
+    schema = PathSchema()
+
+    # Mock is_python_module_editable to return False
+    with patch.object(PythonPathResolver, "is_python_module_editable", return_value=False):
+        PythonPathResolver.set_dataroot(
+            schema,
+            "test_data",
+            "some_module",
+            "fallback/path",
+            "v1.0"
+        )
+
+        # Check that dataroot was set with fallback path
+        assert schema.get("dataroot", "test_data", "path") == "fallback/path"
+        assert schema.get("dataroot", "test_data", "tag") == "v1.0"
+
+
+def test_python_path_resolver_set_dataroot_with_path_append():
+    """Test set_dataroot with path appending for editable module."""
+    from siliconcompiler.schema_support.pathschema import PathSchema
+
+    schema = PathSchema()
+
+    # Mock is_python_module_editable to return True
+    with patch.object(PythonPathResolver, "is_python_module_editable", return_value=True):
+        with patch.object(PythonPathResolver, "__init__", return_value=None):
+            # We need to mock the constructor and resolve separately
+            with patch("siliconcompiler.package.PythonPathResolver.resolve") as mock_resolve:
+                # Mock the resolve method to return a test path
+                mock_resolve.return_value = "/path/to/module"
+
+                PythonPathResolver.set_dataroot(
+                    schema,
+                    "test_data",
+                    "siliconcompiler",
+                    "fallback/path",
+                    python_module_path_append="subdir"
+                )
+
+                # Check that path was appended correctly
+                expected_path = os.path.abspath(os.path.join("/path/to/module", "subdir"))
+                assert schema.get("dataroot", "test_data", "path") == expected_path
+
+
+def test_python_path_resolver_set_dataroot_no_path_append():
+    """Test set_dataroot with editable module but no path appending."""
+    from siliconcompiler.schema_support.pathschema import PathSchema
+
+    schema = PathSchema()
+
+    # Mock is_python_module_editable to return True
+    with patch.object(PythonPathResolver, "is_python_module_editable", return_value=True):
+        PythonPathResolver.set_dataroot(
+            schema,
+            "test_data",
+            "siliconcompiler",
+            "fallback/path",
+            python_module_path_append=None
+        )
+
+        # Check that dataroot was set with python:// source
+        assert schema.get("dataroot", "test_data", "path") == "python://siliconcompiler"
+
+
+def test_python_path_resolver_get_path_integration():
+    """Test the full get_path flow for PythonPathResolver."""
+    resolver = PythonPathResolver("test_module", None, "python://siliconcompiler")
+    path = resolver.get_path()
+
+    assert isinstance(path, str)
+    assert os.path.exists(path)
+    assert os.path.isabs(path)
+    assert path == os.path.dirname(siliconcompiler.__file__)
+
+
+def test_python_path_resolver_cache_id():
+    """Test that cache IDs are consistent and different for different sources."""
+    resolver1 = PythonPathResolver("test1", None, "python://siliconcompiler")
+    resolver2 = PythonPathResolver("test2", None, "python://siliconcompiler")
+    resolver3 = PythonPathResolver("test3", None, "python://json")
+
+    # Same source should have same cache ID (regardless of name)
+    assert resolver1.cache_id == resolver2.cache_id
+    # Different sources should have different cache IDs
+    assert resolver1.cache_id != resolver3.cache_id
+
+
+def test_keypath_resolver():
+    design = Design("testdesign")
+    with design.active_fileset("rtl"):
+        design.add_idir(".")
+
+    proj = Project(design)
+
+    resolver = KeyPathResolver("thisname", proj, "key://library,testdesign,fileset,rtl,idir")
+    assert resolver.resolve() == os.path.abspath(".")
+
+
+def test_keypath_resolver_no_root():
+    resolver = KeyPathResolver("thisname", None, "key://option,dir,testdir")
+    with pytest.raises(RuntimeError,
+                       match=r"^A root schema has not been defined for 'thisname'$"):
+        resolver.resolve()
+
+
+def test_resolver_cache_property():
+    """Every resolver reads the one cache the process owns."""
+    project = Project("testproj")
+
+    assert Resolver("testpath", project, "source://this").cache \
+        is MPManager.get_path_cache()
+
+
+def test_resolver_cache_property_no_root():
+    """A resolver without a schema context reaches the same cache."""
+    assert Resolver("testpath", None, "source://this").cache is MPManager.get_path_cache()
+
+
+def test_resolver_cache_shared_between_projects():
+    """
+    Cache IDs are content hashes, so two projects asking for the same source at
+    the same reference share the entry instead of each resolving it.
+    """
+    project0 = Project("testproj")
+    project1 = Project("testproj")
+
+    res0 = Resolver("name0", project0, "source://this", reference="ref")
+    res1 = Resolver("name1", project1, "source://this", reference="ref")
+    assert res0.cache_id == res1.cache_id
+
+    res0.cache.set(res0.cache_id, "/resolved/once")
+    assert res1.cache.get(res1.cache_id) == "/resolved/once"
+
+
+def test_dataroot_resolver_does_not_share_cache():
+    """
+    A dataroot name means something different in every schema, so two schemas
+    using one name must not collide in the process-wide cache and hand each other
+    the wrong path.
+    """
+    os.makedirs("dataA", exist_ok=True)
+    os.makedirs("dataB", exist_ok=True)
+
+    design_a = Design("designA")
+    design_a.set_dataroot("shared_name", os.path.abspath("dataA"))
+    design_b = Design("designB")
+    design_b.set_dataroot("shared_name", os.path.abspath("dataB"))
+
+    res_a = DatarootResolver("shared_name", design_a, "dataroot://shared_name")
+    res_b = DatarootResolver("shared_name", design_b, "dataroot://shared_name")
+
+    # Same source string, so the same cache ID: the entry cannot be shared
+    assert res_a.cache_id == res_b.cache_id
+    assert res_a.is_indirect
+
+    assert res_a.get_path() == os.path.abspath("dataA")
+    assert res_b.get_path() == os.path.abspath("dataB")
+
+
+def test_keypath_resolver_does_not_share_cache():
+    """The same keypath names a different file in every schema."""
+    os.makedirs("dataA", exist_ok=True)
+    os.makedirs("dataB", exist_ok=True)
+
+    design_a = Design("designA")
+    with design_a.active_fileset("rtl"):
+        design_a.add_idir("dataA")
+    design_b = Design("designB")
+    with design_b.active_fileset("rtl"):
+        design_b.add_idir("dataB")
+
+    res_a = KeyPathResolver("k", design_a, "key://fileset,rtl,idir")
+    res_b = KeyPathResolver("k", design_b, "key://fileset,rtl,idir")
+
+    assert res_a.cache_id == res_b.cache_id
+    assert res_a.is_indirect
+
+    assert res_a.get_path() == os.path.abspath("dataA")
+    assert res_b.get_path() == os.path.abspath("dataB")
+
+
+@pytest.mark.parametrize("build,indirect,retryable", (
+    (lambda p: Resolver("n", p, "source://x"), False, False),
+    (lambda p: FileResolver("n", p, os.path.abspath(".")), False, False),
+    (lambda p: PythonPathResolver("n", p, "python://siliconcompiler"), False, False),
+    (lambda p: RemoteResolver("n", p, "https://x", "ref"), False, True),
+    (lambda p: KeyPathResolver("n", p, "key://option,builddir"), True, False),
+    (lambda p: DatarootResolver("n", p, "dataroot://x"), True, False),
+), ids=("resolver", "file", "python", "remote", "keypath", "dataroot"))
+def test_resolver_kind_matrix(build, indirect, retryable):
+    """
+    Only an expensive source is worth retrying, and only an indirection opts out
+    of the cache and the announcement.
+    """
+    resolver = build(Project("testproj"))
+
+    assert resolver.is_indirect is indirect
+    assert resolver.is_retryable is retryable
+
+
+def test_indirect_resolver_does_not_repeat_the_log():
+    """
+    An indirection resolves every time, so it must not announce the location on
+    every call -- and the resolver it delegates to already reported it once.
+    Without this, a fileset behind a dataroot:// emitted one line per file per
+    find_files call.
+    """
+    os.makedirs("data", exist_ok=True)
+    for num in range(10):
+        Path(f"data/f{num}.v").touch()
+
+    design = Design("testdesign")
+    design.set_dataroot("inner", os.path.abspath("data"))
+    design.set_dataroot("outer", "dataroot://inner")
+    with design.active_fileset("rtl"), design.active_dataroot("outer"):
+        for num in range(10):
+            design.add_file(f"f{num}.v")
+
+    messages = []
+
+    class Collect(logging.Handler):
+        def emit(self, record):
+            messages.append(record.getMessage())
+
+    # Resolvers log under the root "siliconcompiler" logger, which does not
+    # propagate, so attach directly rather than using caplog.
+    sc_logger = logging.getLogger("siliconcompiler")
+    handler = Collect()
+    sc_logger.addHandler(handler)
+    old_level = sc_logger.level
+    sc_logger.setLevel(logging.INFO)
+    try:
+        for _ in range(3):
+            found = design.find_files("fileset", "rtl", "file", "verilog")
+            assert len(found) == 10
+    finally:
+        sc_logger.removeHandler(handler)
+        sc_logger.setLevel(old_level)
+
+    # Exactly one announcement, from the dataroot the indirection points at
+    assert len([msg for msg in messages if "data at" in msg]) == 1
+
+
+def test_resolve_touches_lock_on_cache_hit():
+    """A cache hit bumps the lock file's mtime, which cleanup reads as the entry's last use."""
+    class AlwaysCached(RemoteResolver):
+        def check_cache(self):
+            return True
+
+        def resolve_remote(self):
+            raise AssertionError("cache hit must not download")
+
+    os.makedirs("cache", exist_ok=True)
+    proj = Project("testproj")
+    proj.option.set_cachedir("cache")
+
+    resolver = AlwaysCached("cached", proj, "notused", "notused")
+    resolver.lock_file.touch()
+    stale = (datetime.now() - timedelta(days=100)).timestamp()
+    os.utime(resolver.lock_file, (stale, stale))
+
+    resolver.resolve()
+
+    assert resolver.lock_file.stat().st_mtime > stale
+
+
+def test_resolve_touches_lock_after_download():
+    class AlwaysNew(RemoteResolver):
+        def check_cache(self):
+            return False
+
+        def resolve_remote(self):
+            os.makedirs(self.cache_path, exist_ok=True)
+
+    os.makedirs("cache", exist_ok=True)
+    proj = Project("testproj")
+    proj.option.set_cachedir("cache")
+
+    resolver = AlwaysNew("fresh", proj, "notused", "notused")
+
+    resolver.resolve()
+
+    assert resolver.lock_file.exists()
+    assert datetime.now().timestamp() - resolver.lock_file.stat().st_mtime < 60
+
+
+def test_touch_lock_failure_is_not_fatal(project_logger, caplog):
+    class AlwaysCached(RemoteResolver):
+        def check_cache(self):
+            return True
+
+        def resolve_remote(self):
+            raise AssertionError("cache hit must not download")
+
+    os.makedirs("cache", exist_ok=True)
+    proj = Project("testproj")
+    project_logger(proj)
+    proj.logger.setLevel(logging.DEBUG)
+    caplog.set_level(logging.DEBUG)
+    proj.option.set_cachedir("cache")
+
+    resolver = AlwaysCached("cached", proj, "notused", "notused")
+
+    with patch("pathlib.Path.touch", side_effect=OSError("read-only")):
+        assert resolver.resolve() == resolver.cache_path
+
+    assert "Could not update access time of" in caplog.text
+
+
+def test_make_readonly_single_file(tmp_path):
+    """Test making a single file read-only."""
+    # Create a test file
+    test_file = tmp_path / "test.txt"
+    test_file.write_text("content")
+    # Set explicit initial permissions (0o644) to avoid umask variability
+    os.chmod(test_file, 0o644)
+
+    # Verify it has write permission bit initially
+    mode_before = os.stat(test_file).st_mode
+    assert mode_before & stat.S_IWUSR
+
+    # Make it read-only
+    project = Project("testproj_single_file")
+    project.option.set_cachedir(str(tmp_path))
+    resolver = RemoteResolver("test", project, "https://example.com", "v1.0")
+    resolver._make_readonly(test_file)
+
+    # Verify it's read-only by checking permission bits
+    assert os.access(test_file, os.R_OK)
+
+    # Check exact permissions (444)
+    mode = os.stat(test_file).st_mode
+    assert mode & stat.S_IRUSR
+    assert mode & stat.S_IRGRP
+    assert mode & stat.S_IROTH
+    assert not (mode & stat.S_IWUSR)
+    assert not (mode & stat.S_IWGRP)
+    assert not (mode & stat.S_IWOTH)
+
+
+def test_make_readonly_single_file_path_object(tmp_path):
+    """Test making a single file read-only using Path object."""
+    # Create a test file
+    test_file = tmp_path / "test.txt"
+    test_file.write_text("content")
+
+    # Make it read-only using Path object
+    project = Project("testproj_path_object")
+    project.option.set_cachedir(str(tmp_path))
+    resolver = RemoteResolver("test", project, "https://example.com", "v1.0")
+    resolver._make_readonly(Path(test_file))
+
+    # Check exact permissions
+    mode = os.stat(test_file).st_mode
+    assert not (mode & stat.S_IWUSR)
+    assert not (mode & stat.S_IWGRP)
+    assert not (mode & stat.S_IWOTH)
+
+
+def test_make_readonly_directory_simple(tmp_path):
+    """Test making a directory with files read-only."""
+    # Create a directory with files
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    (cache_dir / "file1.txt").write_text("content1")
+    (cache_dir / "file2.txt").write_text("content2")
+
+    # Make directory and contents read-only
+    project = Project("testproj_dir_simple")
+    project.option.set_cachedir(str(tmp_path))
+    resolver = RemoteResolver("test", project, "https://example.com", "v1.0")
+    resolver._make_readonly(cache_dir)
+
+    # Verify all files have write bits removed
+    for fpath in [cache_dir / "file1.txt", cache_dir / "file2.txt"]:
+        mode = os.stat(fpath).st_mode
+        assert not (mode & stat.S_IWUSR)
+        assert not (mode & stat.S_IWGRP)
+        assert not (mode & stat.S_IWOTH)
+
+    # Verify we can still read files
+    assert os.access(cache_dir / "file1.txt", os.R_OK)
+    assert os.access(cache_dir / "file2.txt", os.R_OK)
+
+    # Verify we can still traverse the directory
+    assert os.access(cache_dir, os.X_OK)
+
+
+def test_make_readonly_nested_directories(tmp_path):
+    """Test making nested directories with files read-only."""
+    # Create nested directory structure
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    (cache_dir / "file1.txt").write_text("root")
+
+    subdir1 = cache_dir / "subdir1"
+    subdir1.mkdir()
+    (subdir1 / "file2.txt").write_text("sub1")
+
+    subdir2 = subdir1 / "subdir2"
+    subdir2.mkdir()
+    (subdir2 / "file3.txt").write_text("sub2")
+
+    subdir3 = subdir2 / "subdir3"
+    subdir3.mkdir()
+    (subdir3 / "file4.txt").write_text("sub3")
+
+    # Make entire tree read-only
+    project = Project("testproj_nested")
+    project.option.set_cachedir(str(tmp_path))
+    resolver = RemoteResolver("test", project, "https://example.com", "v1.0")
+    resolver._make_readonly(cache_dir)
+
+    # Verify all files are read-only by checking permission bits
+    for fpath in cache_dir.rglob("*.txt"):
+        mode = os.stat(fpath).st_mode
+        assert not (mode & stat.S_IWUSR), f"{fpath} should have write bit removed"
+        assert not (mode & stat.S_IWGRP), f"{fpath} should have group write bit removed"
+        assert not (mode & stat.S_IWOTH), f"{fpath} should have other write bit removed"
+
+    # Verify all directories are readable and traversable
+    for dpath in [cache_dir, subdir1, subdir2, subdir3]:
+        assert os.access(dpath, os.R_OK), f"{dpath} should be readable"
+        assert os.access(dpath, os.X_OK), f"{dpath} should be traversable"
+
+
+def test_make_readonly_empty_directory(tmp_path):
+    """Test making an empty directory read-only."""
+    # Create an empty directory
+    cache_dir = tmp_path / "empty_cache"
+    cache_dir.mkdir()
+
+    # Make it read-only
+    project = Project("testproj_empty_dir")
+    project.option.set_cachedir(str(tmp_path))
+    resolver = RemoteResolver("test", project, "https://example.com", "v1.0")
+    resolver._make_readonly(cache_dir)
+
+    # Verify directory is readable and still traversable
+    assert os.access(cache_dir, os.R_OK)
+    assert os.access(cache_dir, os.X_OK)
+
+    # Verify it's not writable by checking stat mode bits
+    mode = os.stat(cache_dir).st_mode
+    assert not (mode & stat.S_IWUSR)
+
+
+def test_make_readonly_preserves_read_access(tmp_path):
+    """Test that making read-only only removes write permissions, preserving others."""
+    # Create a file with restrictive permissions initially
+    test_file = tmp_path / "test.txt"
+    test_file.write_text("content")
+    # Make it only readable by owner (400)
+    test_file.chmod(stat.S_IRUSR)
+
+    # Make it read-only (this should only remove write bits, not add read bits)
+    project = Project("testproj_preserves_read")
+    project.option.set_cachedir(str(tmp_path))
+    resolver = RemoteResolver("test", project, "https://example.com", "v1.0")
+    resolver._make_readonly(test_file)
+
+    # Verify owner can still read
+    mode = os.stat(test_file).st_mode
+    assert mode & stat.S_IRUSR
+    # Verify none can write (since the original file had no write bits anyway)
+    assert not (mode & stat.S_IWUSR)
+    assert not (mode & stat.S_IWGRP)
+    assert not (mode & stat.S_IWOTH)
+
+
+def test_make_readonly_preserves_executable_bit_file(tmp_path):
+    """Test that making read-only preserves the executable bit on files (Unix only)."""
+    # Create an executable file
+    test_file = tmp_path / "script.sh"
+    test_file.write_text("#!/bin/bash\necho hello")
+    test_file.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR |
+                    stat.S_IRGRP | stat.S_IXGRP |
+                    stat.S_IROTH | stat.S_IXOTH)  # 755
+
+    # Make it read-only
+    project = Project("testproj_exec_bit")
+    project.option.set_cachedir(str(tmp_path))
+    resolver = RemoteResolver("test", project, "https://example.com", "v1.0")
+    resolver._make_readonly(test_file)
+
+    # Verify core behavior: write bits removed
+    mode = os.stat(test_file).st_mode
+    assert not (mode & stat.S_IWUSR)
+    assert not (mode & stat.S_IWGRP)
+    assert not (mode & stat.S_IWOTH)
+
+    # Unix-specific: verify execute bits preserved
+    if sys.platform != "win32":
+        assert os.access(test_file, os.X_OK)
+        # Check exact permissions
+        assert mode & stat.S_IRUSR
+        assert mode & stat.S_IXUSR
+        assert mode & stat.S_IRGRP
+        assert mode & stat.S_IXGRP
+        assert mode & stat.S_IROTH
+        assert mode & stat.S_IXOTH
+        assert not (mode & stat.S_IWUSR)
+        assert not (mode & stat.S_IWGRP)
+        assert not (mode & stat.S_IWOTH)
+
+
+def test_make_readonly_removes_write_preserves_exec(tmp_path):
+    """Test that making read-only removes write but preserves read and execute."""
+    # Create a file with write permission (644)
+    test_file = tmp_path / "test.txt"
+    test_file.write_text("content")
+    test_file.chmod(stat.S_IRUSR | stat.S_IWUSR |
+                    stat.S_IRGRP |
+                    stat.S_IROTH)  # 644
+
+    # Make it read-only
+    project = Project("testproj_remove_write")
+    project.option.set_cachedir(str(tmp_path))
+    resolver = RemoteResolver("test", project, "https://example.com", "v1.0")
+    resolver._make_readonly(test_file)
+
+    # Verify permissions changed from 644 to 444
+    mode = os.stat(test_file).st_mode
+    assert mode & stat.S_IRUSR
+    assert mode & stat.S_IRGRP
+    assert mode & stat.S_IROTH
+    assert not (mode & stat.S_IWUSR)
+    assert not (mode & stat.S_IWGRP)
+    assert not (mode & stat.S_IWOTH)
+    # Verify no execute bit
+    assert not (mode & stat.S_IXUSR)
+    assert not (mode & stat.S_IXGRP)
+    assert not (mode & stat.S_IXOTH)
+
+
+def test_make_readonly_directory_with_mixed_permissions(tmp_path):
+    """Test making directory read-only removes write permissions while preserving read/exec."""
+    # Create a directory with files having different permissions
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+
+    file1 = cache_dir / "file1.txt"
+    file1.write_text("content1")
+    file1.chmod(stat.S_IRUSR | stat.S_IWUSR)  # rw- --- ---
+
+    file2 = cache_dir / "file2.txt"
+    file2.write_text("content2")
+    file2.chmod(stat.S_IRUSR | stat.S_IRGRP)  # r-- r-- ---
+
+    # Make directory and contents read-only
+    project = Project("testproj_mixed_perms")
+    project.option.set_cachedir(str(tmp_path))
+    resolver = RemoteResolver("test", project, "https://example.com", "v1.0")
+    resolver._make_readonly(cache_dir)
+
+    # Verify all files have write permissions removed
+    for fpath in [file1, file2]:
+        mode = os.stat(fpath).st_mode
+        assert not (mode & stat.S_IWUSR), f"{fpath}: owner should not be able to write"
+        assert not (mode & stat.S_IWGRP), f"{fpath}: group should not be able to write"
+        assert not (mode & stat.S_IWOTH), f"{fpath}: others should not be able to write"
+
+    # Verify file1 preserved its original read permission (owner only)
+    mode1 = os.stat(file1).st_mode
+    assert mode1 & stat.S_IRUSR, "file1: owner should be able to read"
+
+    # Verify file2 preserved its original read permissions (owner and group)
+    mode2 = os.stat(file2).st_mode
+    assert mode2 & stat.S_IRUSR, "file2: owner should be able to read"
+    assert mode2 & stat.S_IRGRP, "file2: group should be able to read"
+
+
+def test_make_readonly_directory_preserves_execute_bit(tmp_path):
+    """Test that making directories read-only preserves execute bit (Unix only)."""
+    # Create a directory structure
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+
+    subdir = cache_dir / "subdir"
+    subdir.mkdir()
+    (cache_dir / "test.txt").write_text("content")
+
+    # Set directory with specific permissions (755)
+    subdir.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR |
+                 stat.S_IRGRP | stat.S_IXGRP |
+                 stat.S_IROTH | stat.S_IXOTH)
+
+    # Make read-only
+    project = Project("testproj_dir_exec_bit")
+    project.option.set_cachedir(str(tmp_path))
+    resolver = RemoteResolver("test", project, "https://example.com", "v1.0")
+    resolver._make_readonly(cache_dir)
+
+    # Core behavior: verify write bits removed
+    mode = os.stat(subdir).st_mode
+    assert not (mode & stat.S_IWUSR)
+    assert not (mode & stat.S_IWGRP)
+    assert not (mode & stat.S_IWOTH)
+
+    # Unix-specific: verify execute bits preserved (555 instead of 755)
+    if sys.platform != "win32":
+        assert os.access(subdir, os.X_OK)
+        assert mode & stat.S_IXUSR
+        assert mode & stat.S_IXGRP
+        assert mode & stat.S_IXOTH
+
+
+def test_make_readonly_string_path(tmp_path):
+    """Test making files read-only using string path instead of Path object."""
+    # Create a test file
+    test_file = tmp_path / "test.txt"
+    test_file.write_text("content")
+
+    # Make it read-only using string path
+    project = Project("testproj_string_path")
+    project.option.set_cachedir(str(tmp_path))
+    resolver = RemoteResolver("test", project, "https://example.com", "v1.0")
+    resolver._make_readonly(str(test_file))
+
+    # Verify it's read-only
+    mode = os.stat(test_file).st_mode
+    assert not (mode & stat.S_IWUSR)
+
+
+def test_make_readonly_error_handling(project_logger, tmp_path, monkeypatch, caplog):
+    """Test error handling when chmod fails in resolve() flow."""
+    import logging
+
+    # Create a mock remote resolver that succeeds initially
+    class TestResolver(RemoteResolver):
+        def check_cache(self):
+            return False  # Cache is invalid, will fetch
+
+        def resolve_remote(self):
+            # Create a test file to simulate successful download
+            (Path(self.cache_path) / "test.txt").parent.mkdir(parents=True, exist_ok=True)
+            (Path(self.cache_path) / "test.txt").write_text("content")
+
+    # Create project with logging
+    project = Project("testproj")
+    project_logger(project)
+    project.logger.setLevel(logging.WARNING)
+    caplog.set_level(logging.WARNING)
+
+    resolver = TestResolver("test", project, "https://example.com", "v1.0")
+
+    # Mock os.chmod to simulate permission error
+    def mock_chmod(path, mode, **kwargs):
+        raise PermissionError("Permission denied")
+
+    monkeypatch.setattr("os.chmod", mock_chmod)
+
+    # resolve() should catch the chmod error and log warning
+    # (the cache won't be made read-only, but resolve succeeds)
+    result = resolver.resolve()
+
+    # Verify that the cache path exists (resolve succeeded)
+    assert Path(result).exists()
+    # Verify that warning was logged about chmod failure
+    assert "Could not make cache read-only" in caplog.text
+
+
+def test_make_readonly_skips_git_directory(tmp_path):
+    """_make_readonly must leave .git/ writable so git internals (e.g. LFS
+    clean filter buffering through .git/lfs/tmp) keep working after the cache
+    is sealed."""
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    (cache_dir / "payload.txt").write_text("data")
+
+    git_dir = cache_dir / ".git"
+    git_dir.mkdir()
+    lfs_tmp = git_dir / "lfs" / "tmp"
+    lfs_tmp.mkdir(parents=True)
+    (lfs_tmp / "scratch").write_text("buffer")
+
+    project = Project("testproj_git_skip")
+    project.option.set_cachedir(str(tmp_path))
+    resolver = RemoteResolver("test", project, "https://example.com", "v1.0")
+    resolver._make_readonly(cache_dir)
+
+    # Working tree payload is sealed
+    payload_mode = os.stat(cache_dir / "payload.txt").st_mode
+    assert not (payload_mode & stat.S_IWUSR)
+
+    # .git/ and everything beneath it remain writable
+    for p in [git_dir, lfs_tmp, lfs_tmp / "scratch"]:
+        assert os.stat(p).st_mode & stat.S_IWUSR, f"{p} should remain writable"
+
+    # Sanity: we can still create new files inside .git/lfs/tmp/
+    (lfs_tmp / "fresh").write_text("ok")
+
+
+def test_make_readonly_skips_nested_git_directory(tmp_path):
+    """Submodule .git/modules/<name>/ trees (nested .git directories) must
+    also stay writable."""
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+
+    submodule = cache_dir / "sub"
+    submodule.mkdir()
+    (submodule / "payload.txt").write_text("data")
+    nested_git = submodule / ".git"
+    nested_git.mkdir()
+    (nested_git / "config").write_text("[core]\n")
+
+    project = Project("testproj_nested_git_skip")
+    project.option.set_cachedir(str(tmp_path))
+    resolver = RemoteResolver("test", project, "https://example.com", "v1.0")
+    resolver._make_readonly(cache_dir)
+
+    # Submodule payload is sealed
+    assert not (os.stat(submodule / "payload.txt").st_mode & stat.S_IWUSR)
+    # Nested .git/ remains writable
+    assert os.stat(nested_git).st_mode & stat.S_IWUSR
+    assert os.stat(nested_git / "config").st_mode & stat.S_IWUSR
+
+
+def test_make_writable_single_file(tmp_path):
+    """Test making a read-only file writable."""
+    # Create a read-only file
+    test_file = tmp_path / "test.txt"
+    test_file.write_text("content")
+    test_file.chmod(stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)  # 444
+
+    # Verify it doesn't have write permission bit
+    mode_before = os.stat(test_file).st_mode
+    assert not (mode_before & stat.S_IWUSR)
+
+    # Make it writable
+    project = Project("testproj_writable_single")
+    project.option.set_cachedir(str(tmp_path))
+    resolver = RemoteResolver("test", project, "https://example.com", "v1.0")
+    resolver._make_writable(test_file)
+
+    # Verify owner write permission bit is now set
+    mode_after = os.stat(test_file).st_mode
+    assert mode_after & stat.S_IWUSR
+
+
+def test_make_writable_directory(tmp_path):
+    """Test making a read-only directory writable."""
+    # Create a directory with read-only files
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    file1 = cache_dir / "file1.txt"
+    file1.write_text("content1")
+
+    # Make everything read-only
+    project = Project("testproj")
+    resolver = RemoteResolver("test", project, "https://example.com", "v1.0")
+    resolver._make_readonly(cache_dir)
+
+    # Verify it's read-only via stat mode
+    mode_file = os.stat(file1).st_mode
+    mode_dir = os.stat(cache_dir).st_mode
+    assert not (mode_file & stat.S_IWUSR)
+    assert not (mode_dir & stat.S_IWUSR)
+
+    # Make writable
+    resolver._make_writable(cache_dir)
+
+    # Verify owner can write via stat mode
+    mode_file = os.stat(file1).st_mode
+    mode_dir = os.stat(cache_dir).st_mode
+    assert mode_file & stat.S_IWUSR
+    assert mode_dir & stat.S_IWUSR
+
+
+def test_make_readonly_then_delete(tmp_path):
+    """Test that we can delete a read-only cache after making it writable."""
+    # Create a read-only cache directory
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    (cache_dir / "file1.txt").write_text("content1")
+    (cache_dir / "subdir").mkdir()
+    (cache_dir / "subdir" / "file2.txt").write_text("content2")
+
+    # Make it read-only
+    project = Project("testproj")
+    resolver = RemoteResolver("test", project, "https://example.com", "v1.0")
+    resolver._make_readonly(cache_dir)
+
+    # Verify it's read-only via stat mode
+    mode_file1 = os.stat(cache_dir / "file1.txt").st_mode
+    mode_subdir = os.stat(cache_dir / "subdir").st_mode
+    assert not (mode_file1 & stat.S_IWUSR)
+    assert not (mode_subdir & stat.S_IWUSR)
+
+    # Make writable and delete (should not raise)
+    resolver._make_writable(cache_dir)
+    shutil.rmtree(cache_dir)
+
+    # Verify deletion succeeded
+    assert not cache_dir.exists()
+
+
+def test_make_writable_preserves_read_and_exec(tmp_path):
+    """Test that making writable preserves existing read and execute permissions."""
+    # Create an executable file that's read-only
+    exec_file = tmp_path / "script.sh"
+    exec_file.write_text("#!/bin/bash\necho hello")
+    exec_file.chmod(stat.S_IRUSR | stat.S_IXUSR)  # r-x --- --- (500)
+
+    # Make writable
+    project = Project("testproj")
+    resolver = RemoteResolver("test", project, "https://example.com", "v1.0")
+    resolver._make_writable(exec_file)
+
+    # Verify it's still executable
+    assert os.access(exec_file, os.X_OK)
+    # Verify owner write permission bit is now set
+    mode_after = os.stat(exec_file).st_mode
+    assert mode_after & stat.S_IWUSR
+    # Verify it's still readable
+    assert os.access(exec_file, os.R_OK)
+
+
+def test_dataroot_resolver_init():
+    """Test DatarootResolver initialization."""
+    project = Project("testproj")
+    resolver = DatarootResolver("testdata", project, "dataroot://mydata")
+
+    assert resolver.name == "testdata"
+    assert resolver.source == "dataroot://mydata"
+    assert resolver.reference is None
+    assert resolver.urlscheme == "dataroot"
+    assert resolver.urlpath == "mydata"
+    assert isinstance(resolver.logger, logging.Logger)
+
+
+def test_dataroot_resolver_init_no_schema():
+    """Test DatarootResolver initialization without schema."""
+    resolver = DatarootResolver("testdata", None, "dataroot://mydata")
+
+    assert resolver.name == "testdata"
+    assert resolver.source == "dataroot://mydata"
+    assert resolver.schema is None
+    assert resolver.urlpath == "mydata"
+
+
+def test_dataroot_resolver_resolve_no_schema_context():
+    """Test DatarootResolver.resolve() raises error when schema context is missing."""
+    resolver = DatarootResolver("testdata", None, "dataroot://mydata")
+
+    with pytest.raises(RuntimeError,
+                       match=r"^A schema context is required for 'testdata'$"):
+        resolver.resolve()
+
+
+def test_dataroot_resolver_resolve_undefined_dataroot():
+    """Test DatarootResolver.resolve() raises error when dataroot is not defined."""
+    design = Design("testdesign")
+    # Don't set any dataroot, so 'mydata' will not be defined
+    resolver = DatarootResolver("testdata", design, "dataroot://mydata")
+
+    with pytest.raises(RuntimeError,
+                       match=r"^Dataroot 'mydata' is not defined for 'testdata'$"):
+        resolver.resolve()
+
+
+def test_dataroot_resolver_design_in_project():
+    """A design's dataroot:// resolves alike on its own and held by a project,
+    where the design's parent is the project's library section."""
+    os.makedirs("data/sub")
+    with open("data/sub/top.v", "w") as f:
+        f.write("module top(); endmodule\n")
+
+    design = Design("top")
+    design.set_dataroot("base", os.path.abspath("data"))
+    design.set_dataroot("alias", "dataroot://base/sub")
+    design.add_file("top.v", dataroot="alias", fileset="rtl")
+    alone_id = DatarootResolver("n", design, "dataroot://alias").collection_id
+
+    ASIC(design)
+    assert design._parent() is not design
+
+    assert design.find_files("fileset", "rtl", "file", "verilog") == \
+        [os.path.abspath("data/sub/top.v")]
+    assert design.get_dataroot("alias") == os.path.abspath("data/sub")
+    assert DatarootResolver("n", design, "dataroot://alias").collection_id == alone_id
+
+
+def test_dataroot_resolver_registry_above():
+    """A schema without a registry of its own uses its holder's, as find_files does."""
+    inner = PathSchema()
+    EditableSchema(inner).remove("dataroot")
+    outer = PathSchema()
+    EditableSchema(outer).insert("inner", inner)
+    outer.set_dataroot("base", os.path.abspath("."))
+    outer.set_dataroot("alias", "dataroot://base")
+
+    assert DatarootResolver("n", inner, "dataroot://alias").resolve() == os.path.abspath(".")
+
+
+def test_dataroot_resolver_resolve_with_file_path(tmp_path):
+    """Test DatarootResolver.resolve() with a file:// dataroot."""
+    design = Design("testdesign")
+    with design.active_fileset("rtl"):
+        design.add_idir(".")
+
+    # Create a test data directory
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "file.txt").write_text("test data")
+
+    # Set a dataroot pointing to the file path
+    design.set_dataroot("mydata", str(data_dir))
+
+    # Create a resolver that references this dataroot
+    resolver = DatarootResolver("testdata", design, "dataroot://mydata")
+
+    resolved_path = resolver.resolve()
+
+    # Should resolve to the data directory (may have trailing slash)
+    assert os.path.normpath(resolved_path) == os.path.normpath(str(data_dir))
+    assert os.path.exists(resolved_path.rstrip('/'))
+
+
+def test_dataroot_resolver_resolve_with_tag(tmp_path):
+    """Test DatarootResolver.resolve() with a dataroot that has a tag."""
+    design = Design("testdesign")
+    with design.active_fileset("rtl"):
+        design.add_idir(".")
+
+    # Create test data directories
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "file.txt").write_text("test data")
+
+    # Set a dataroot with a tag
+    design.set_dataroot("mydata", str(data_dir), tag="v1.0")
+
+    # Create a resolver that references this dataroot
+    resolver = DatarootResolver("testdata", design, "dataroot://mydata")
+
+    resolved_path = resolver.resolve()
+
+    # Should resolve to the data directory (may have trailing slash)
+    assert os.path.normpath(resolved_path) == os.path.normpath(str(data_dir))
+
+
+def test_dataroot_resolver_resolve_with_nested_path(tmp_path):
+    """Test DatarootResolver.resolve() with a nested path component."""
+    design = Design("testdesign")
+    with design.active_fileset("rtl"):
+        design.add_idir(".")
+
+    # Create test data directory with subdirectories
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "subdir").mkdir()
+    (data_dir / "subdir" / "file.txt").write_text("nested data")
+
+    # Set a dataroot pointing to the data directory
+    design.set_dataroot("mydata", str(data_dir))
+
+    # Create a resolver that references this dataroot with a nested path
+    # Note: URLs are parsed as scheme://netloc/path
+    # For 'dataroot://mydata/subdir', netloc='mydata' and path='/subdir'
+    # The resolver should strip the leading / and join it to the base path
+    resolver = DatarootResolver("testdata", design, "dataroot://mydata/subdir")
+
+    resolved_path = resolver.resolve()
+
+    # Verify the nested path is correctly resolved
+    expected_path = os.path.normpath(str(data_dir / "subdir"))
+    assert os.path.normpath(resolved_path) == expected_path
+
+
+def test_dataroot_resolver_resolve_with_python_package():
+    """Test DatarootResolver.resolve() with a python:// dataroot."""
+    design = Design("testdesign")
+    with design.active_fileset("rtl"):
+        design.add_idir(".")
+
+    # Set a dataroot pointing to a Python package
+    design.set_dataroot("mydata", "python://siliconcompiler")
+
+    # Create a resolver that references this dataroot
+    resolver = DatarootResolver("testdata", design, "dataroot://mydata")
+
+    resolved_path = resolver.resolve()
+
+    # Should resolve to the siliconcompiler package directory
+    expected_path = os.path.dirname(siliconcompiler.__file__)
+    assert os.path.normpath(resolved_path) == os.path.normpath(expected_path)
+
+
+def test_dataroot_resolver_resolve_multiple_dataroots(tmp_path):
+    """Test DatarootResolver with multiple dataroots defined."""
+    design = Design("testdesign")
+    with design.active_fileset("rtl"):
+        design.add_idir(".")
+
+    # Create multiple test data directories
+    data_dir1 = tmp_path / "data1"
+    data_dir1.mkdir()
+    (data_dir1 / "file1.txt").write_text("data1")
+
+    data_dir2 = tmp_path / "data2"
+    data_dir2.mkdir()
+    (data_dir2 / "file2.txt").write_text("data2")
+
+    # Set multiple dataroots
+    design.set_dataroot("data1", str(data_dir1))
+    design.set_dataroot("data2", str(data_dir2))
+
+    # Create resolvers for each dataroot
+    resolver1 = DatarootResolver("testdata1", design, "dataroot://data1")
+    resolver2 = DatarootResolver("testdata2", design, "dataroot://data2")
+
+    # Each should resolve to its respective directory (normalize for comparison)
+    assert os.path.normpath(resolver1.resolve()) == os.path.normpath(str(data_dir1))
+    assert os.path.normpath(resolver2.resolve()) == os.path.normpath(str(data_dir2))
+
+
+def test_dataroot_resolver_resolve_with_display_name(tmp_path):
+    """Test DatarootResolver with display_name for nested schemas."""
+    design = Design("testdesign")
+    with design.active_fileset("rtl"):
+        design.add_idir(".")
+
+    # Create test data directory
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "file.txt").write_text("test data")
+
+    # Set a dataroot
+    design.set_dataroot("mydata", str(data_dir))
+
+    # Create a resolver with the design as schema
+    resolver = DatarootResolver("testdata", design, "dataroot://mydata")
+
+    # display_name should include the name
+    assert "testdata" in resolver.display_name
+
+    # Should still be able to resolve
+    resolved_path = resolver.resolve()
+    assert os.path.normpath(resolved_path) == os.path.normpath(str(data_dir))
+
+
+def test_dataroot_resolver_caching(tmp_path):
+    """Test that DatarootResolver uses caching properly."""
+    design = Design("testdesign")
+    with design.active_fileset("rtl"):
+        design.add_idir(".")
+
+    # Create test data directory
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "file.txt").write_text("test data")
+
+    # Set a dataroot
+    design.set_dataroot("mydata", str(data_dir))
+
+    # Create a resolver
+    resolver = DatarootResolver("testdata", design, "dataroot://mydata")
+
+    # First resolution
+    path1 = resolver.get_path()
+
+    # Second resolution should use cache
+    path2 = resolver.get_path()
+
+    # Should return the same path (from cache)
+    assert path1 == path2
+
+
+def test_dataroot_resolver_subdirectory_path(tmp_path):
+    """Test DatarootResolver with subdirectory path in dataroot URL."""
+    design = Design("testdesign")
+    with design.active_fileset("rtl"):
+        design.add_idir(".")
+
+    # Create test data directory with nested subdirectories
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "physical").mkdir()
+    (data_dir / "physical" / "impl").mkdir()
+    (data_dir / "physical" / "impl" / "design.gds").write_text("GDS data")
+
+    # Set a dataroot pointing to the base data directory
+    design.set_dataroot("mydata", str(data_dir))
+
+    # Create a resolver that references a subdirectory of the dataroot
+    resolver = DatarootResolver("testdata", design, "dataroot://mydata/physical/impl")
+
+    resolved_path = resolver.resolve()
+
+    # Should resolve to the nested subdirectory
+    expected_path = str(data_dir / "physical" / "impl")
+    # Normalize for comparison since set_dataroot may add trailing slash
+    assert os.path.normpath(resolved_path) == os.path.normpath(expected_path)
+
+
+def test_dataroot_resolver_subdirectory_with_file(tmp_path):
+    """Test DatarootResolver accessing a specific file within dataroot subdirectories."""
+    design = Design("testdesign")
+    with design.active_fileset("rtl"):
+        design.add_idir(".")
+
+    # Create test data directory with nested subdirectories
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "physical").mkdir()
+    (data_dir / "physical" / "impl").mkdir()
+    (data_dir / "physical" / "impl" / "design.gds").write_text("GDS data")
+    (data_dir / "physical" / "impl" / "design.def").write_text("DEF data")
+
+    # Set a dataroot pointing to the base data directory
+    design.set_dataroot("mydata", str(data_dir))
+
+    # Create a resolver that references a subdirectory of the dataroot
+    resolver = DatarootResolver("testdata", design, "dataroot://mydata/physical/impl")
+
+    resolved_path = resolver.resolve()
+
+    # Should resolve to the nested subdirectory
+    expected_path = str(data_dir / "physical" / "impl")
+    assert os.path.normpath(resolved_path) == os.path.normpath(expected_path)
+
+    # Verify files exist at that location
+    assert os.path.exists(os.path.join(resolved_path, "design.gds"))
+    assert os.path.exists(os.path.join(resolved_path, "design.def"))
+
+
+def test_dataroot_resolver_deep_nested_path(tmp_path):
+    """Test DatarootResolver with deeply nested subdirectory paths."""
+    design = Design("testdesign")
+    with design.active_fileset("rtl"):
+        design.add_idir(".")
+
+    # Create test data directory with deep nesting
+    data_dir = tmp_path / "data"
+    deep_path = data_dir / "level1" / "level2" / "level3" / "level4"
+    deep_path.mkdir(parents=True)
+    (deep_path / "file.txt").write_text("nested file")
+
+    # Set a dataroot pointing to the base data directory
+    design.set_dataroot("mydata", str(data_dir))
+
+    # Create a resolver that references deeply nested subdirectory
+    resolver = DatarootResolver("testdata", design,
+                                "dataroot://mydata/level1/level2/level3/level4")
+
+    resolved_path = resolver.resolve()
+
+    # Should resolve to the deeply nested subdirectory
+    expected_path = str(deep_path)
+    assert os.path.normpath(resolved_path) == os.path.normpath(expected_path)
+
+    # Verify file exists at that location
+    assert os.path.exists(os.path.join(resolved_path, "file.txt"))
+
+
+def test_dataroot_resolver_python_package_subdirectory():
+    """Test DatarootResolver accessing a subdirectory within a python:// package."""
+    design = Design("testdesign")
+    with design.active_fileset("rtl"):
+        design.add_idir(".")
+
+    # Set a dataroot pointing to a Python package
+    design.set_dataroot("mydata", "python://siliconcompiler")
+
+    # Create a resolver that references a subdirectory of the python package
+    # (e.g., tools subdirectory)
+    resolver = DatarootResolver("testdata", design, "dataroot://mydata/tools")
+
+    resolved_path = resolver.resolve()
+
+    # Should resolve to the tools subdirectory within the package
+    expected_path = os.path.join(os.path.dirname(siliconcompiler.__file__), "tools")
+    assert os.path.normpath(resolved_path) == os.path.normpath(expected_path)
+
+
+def test_dataroot_resolver_find_resolver():
+    """Test that dataroot:// scheme is properly registered."""
+    resolver_cls = Resolver.find_resolver("dataroot://some/data")
+    assert resolver_cls is DatarootResolver
+
+
+def test_dataroot_resolver_self_referential():
+    """Test that self-referential dataroots raise RuntimeError."""
+    design = Design("test")
+    design.set_dataroot("mydata", "dataroot://mydata")
+
+    resolver = DatarootResolver("test", design, "dataroot://mydata")
+    with pytest.raises(RuntimeError, match="Circular dataroot reference detected"):
+        resolver.get_path()
+
+
+def test_dataroot_resolver_mutually_referential():
+    """Test that mutually-referential dataroots raise RuntimeError."""
+    design = Design("test")
+    design.set_dataroot("dataA", "dataroot://dataB")
+    design.set_dataroot("dataB", "dataroot://dataA")
+
+    resolver = DatarootResolver("test", design, "dataroot://dataA")
+    with pytest.raises(RuntimeError, match="Circular dataroot reference detected"):
+        resolver.get_path()

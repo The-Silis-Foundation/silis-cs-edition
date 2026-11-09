@@ -1,0 +1,5 @@
+if(EXISTS "/home/eatheswar/silisfoundation/silis/core/synthengine/build/OpenSTA_build/search/test/cpp/TestSearchStaDesign[1]_tests.cmake")
+  include("/home/eatheswar/silisfoundation/silis/core/synthengine/build/OpenSTA_build/search/test/cpp/TestSearchStaDesign[1]_tests.cmake")
+else()
+  add_test(TestSearchStaDesign_NOT_BUILT TestSearchStaDesign_NOT_BUILT)
+endif()

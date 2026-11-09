@@ -1,0 +1,35 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Open Floorplan Studio (Port 6084)",
+      "type": "shell",
+      "command": "code --command \"simpleBrowser.show\" \"http://localhost:6084/vnc.html?autoconnect=true&resize=remote\"",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "never",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "Open 2D Layout Canvas (Port 6081)",
+      "type": "shell",
+      "command": "code --command \"simpleBrowser.show\" \"http://localhost:6081/vnc.html?autoconnect=true&resize=remote\"",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "never",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "Open Frontend Studio & Waveforms (Port 6082)",
+      "type": "shell",
+      "command": "code --command \"simpleBrowser.show\" \"http://localhost:6082/vnc.html?autoconnect=true&resize=remote\"",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "never",
+        "panel": "shared"
+      }
+    }
+  ]
+}

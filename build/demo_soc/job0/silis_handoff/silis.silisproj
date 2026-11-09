@@ -1,0 +1,9 @@
+{
+  "project_name": "demo_soc",
+  "top_module": "demo_soc",
+  "pdk": "sky130",
+  "rtl_files": [],
+  "macros": [],
+  "auto_sdc": false,
+  "vhdl_std": "08"
+}

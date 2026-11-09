@@ -1,0 +1,46 @@
+# ==============================================================================
+# Silis CS Edition Git Ignore Rules
+# ==============================================================================
+
+# Temporary EDA outputs & run logs
+results/
+reports/
+*.log
+*.rpt
+*.vcd
+*.fst
+*.ghw
+*.out
+a.out
+*.v_converted.v
+run_floorplan.tcl
+temp.def
+temp.v
+
+# Python bytecode & pytest caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Editor temporary backups
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Temporary local caches
+.silis_auth_cache.json
+.silis_pdk_cache.json
+.silis_recent.json
+.silis_ui_settings.json
+
+# Build directories & intermediate CMake objects (preserve .so libraries)
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+*.o
+*.obj
+*.a

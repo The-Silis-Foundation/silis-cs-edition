@@ -1,0 +1,5 @@
+if(EXISTS "/home/eatheswar/silisfoundation/silis/core/synthengine/build/OpenSTA_build/search/test/cpp/TestSearchIncremental[1]_tests.cmake")
+  include("/home/eatheswar/silisfoundation/silis/core/synthengine/build/OpenSTA_build/search/test/cpp/TestSearchIncremental[1]_tests.cmake")
+else()
+  add_test(TestSearchIncremental_NOT_BUILT TestSearchIncremental_NOT_BUILT)
+endif()

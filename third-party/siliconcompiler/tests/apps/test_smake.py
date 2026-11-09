@@ -1,0 +1,186 @@
+import pytest
+import os
+import sys
+
+from contextlib import contextmanager
+
+from siliconcompiler.apps import smake
+
+
+@pytest.fixture(autouse=True)
+def isolate_sys(monkeypatch):
+    monkeypatch.setattr(smake.sys, "path", sys.path.copy())
+    monkeypatch.setattr(smake.sys, "modules", sys.modules.copy())
+
+    # Resolved now, in the test's own directory: smake changes into its -C
+    # directory before it asks for one, which put this in the source tree.
+    path = os.path.abspath("tmp")
+
+    @contextmanager
+    def tmpdir(*args, **kwargs):
+        os.makedirs(path, exist_ok=True)
+        yield path
+
+    monkeypatch.setattr(smake.tempfile, "TemporaryDirectory", tmpdir)
+
+
+@pytest.mark.parametrize('target', ('asic', 'lint'))
+def test_smake(target, monkeypatch, capfd, datadir):
+    '''Test smake'''
+
+    monkeypatch.setattr('sys.argv', [
+        'smake', '-C', datadir, target])
+    assert smake.main() == 0
+    assert f"{target.upper()} MAKE" in capfd.readouterr().out
+
+
+def test_smake_default(monkeypatch, capfd, datadir):
+    '''Test smake'''
+
+    monkeypatch.setattr('sys.argv', [
+        'smake', '-C', datadir])
+    assert smake.main() == 0
+    assert "LINT MAKE" in capfd.readouterr().out
+
+
+def test_smake_default_missing(monkeypatch, capfd):
+    '''Test smake'''
+
+    monkeypatch.setattr('sys.argv', ['smake'])
+    assert smake.main() == 1
+    output = capfd.readouterr().out
+    assert "Error: Unable to process source file make.py" in output
+    assert "does not exist" in output
+
+
+def test_smake_default_dir_missing(monkeypatch, capfd):
+    '''Test smake'''
+
+    monkeypatch.setattr('sys.argv', ['smake', '-C', 'testdir'])
+    assert smake.main() == 1
+    assert "Unable to change directory to testdir" in capfd.readouterr().out
+
+
+def test_smake_file_missing(monkeypatch, capfd, datadir):
+    '''Test smake fails when the file specified with -f does not exist.'''
+
+    monkeypatch.setattr('sys.argv', [
+        'smake', '-C', datadir, '-f', 'does_not_exist.py', 'asic'])
+    assert smake.main() == 1
+    output = capfd.readouterr().out
+    assert "Error: Unable to process source file does_not_exist.py" in output
+    assert "does not exist" in output
+
+
+@pytest.mark.parametrize('target', ('target0', 'target1'))
+def test_smake_with_argument(target, monkeypatch, capfd, datadir):
+    '''Test smake'''
+
+    monkeypatch.setattr('sys.argv', [
+        'smake', '-C', datadir, 'has_arg', '--target', target])
+    assert smake.main() == 0
+    assert f"target {target}" in capfd.readouterr().out
+
+
+@pytest.mark.parametrize('target', ('target0', 'target1'))
+def test_smake_with_argument2(target, monkeypatch, capfd, datadir):
+    '''Test smake'''
+
+    monkeypatch.setattr('sys.argv', [
+        'smake', '-C', datadir, 'has_arg2', '--target', target, '--count', '5'])
+    assert smake.main() == 0
+    assert f"target {target} 5" in capfd.readouterr().out
+
+
+@pytest.mark.parametrize('target', (None, 'target0', 'target1'))
+def test_smake_with_argument3(target, monkeypatch, capfd, datadir):
+    '''Test smake'''
+
+    args = ['--count', '5']
+    if target is not None:
+        args += ['--target', target]
+    monkeypatch.setattr('sys.argv', [
+        'smake', '-C', datadir, '-f', 'make_decorated.py',
+        'has_arg3'] + args)
+    assert smake.main() == 0
+    assert f"target {target} 5" in capfd.readouterr().out
+
+
+@pytest.mark.parametrize('target', ('target0', 'target1'))
+def test_smake_with_argument4(target, monkeypatch, capfd, datadir):
+    '''Test smake'''
+
+    args = ['--count', '5', '--target', target, '--target', 'thistoo']
+    monkeypatch.setattr('sys.argv', [
+        'smake', '-C', datadir, '-f', 'make_decorated.py',
+        'has_arg4'] + args)
+    assert smake.main() == 0
+    assert f"target {target} thistoo 5" in capfd.readouterr().out
+
+
+def test_smake_help(monkeypatch, capfd, datadir):
+    '''Test smake'''
+
+    monkeypatch.setattr('sys.argv', ['smake', '-C', datadir, '-h'])
+    with pytest.raises(SystemExit):
+        assert smake.main() == 0
+    output = capfd.readouterr()
+    assert "LOOK FOR THIS TEXT IN HELP" in output.out
+    assert "lint" in output.out
+    assert "asic" in output.out
+    assert "LINT HELP" in output.out
+
+
+def test_smake_help_no_file(monkeypatch, capfd, tmp_path):
+    '''Test that smake --help works even when the source file is missing.'''
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr('sys.argv', ['smake', '--help'])
+    with pytest.raises(SystemExit) as exc:
+        smake.main()
+    assert exc.value.code == 0
+    output = capfd.readouterr().out
+    # The usage line should still be printed.
+    assert "usage:" in output.lower()
+    # The file-not-found error should NOT appear when only help was requested.
+    assert "Error: Unable to process source file" not in output
+
+
+def test_smake_file(monkeypatch, capfd, datadir):
+    '''Test smake with -f'''
+
+    monkeypatch.setattr('sys.argv', [
+        'smake', '-C', datadir, '-f', 'make_other.py', 'asic'])
+    assert smake.main() == 0
+    assert "ASIC OTHER" in capfd.readouterr().out
+
+
+def test_smake_file_with_import(monkeypatch, capfd, datadir):
+    '''Test smake with -f'''
+
+    monkeypatch.setattr('sys.argv', [
+        'smake', '-C', datadir, '-f', 'make_with_import.py', 'asic_here'])
+    assert smake.main() == 0
+    output = capfd.readouterr()
+    assert "ASIC MAKE" in output.out
+    assert "ASIC IMPORT" in output.out
+
+
+def test_smake_file_decorated_asic(monkeypatch, capfd, datadir):
+    '''Test smake with decorated functions'''
+
+    exec_file = os.path.join(datadir, 'make_decorated.py')
+    monkeypatch.setattr('sys.argv', [exec_file, 'asic'])
+    assert smake.main(exec_file) == 0
+    output = capfd.readouterr()
+    assert "ASIC MAKE DECORATED" in output.out
+
+
+def test_smake_file_decorated_lint(monkeypatch, capfd, datadir):
+    '''Test smake with decorated functions'''
+
+    exec_file = os.path.join(datadir, 'make_decorated.py')
+    monkeypatch.setattr('sys.argv', [exec_file, 'lint'])
+    assert smake.main(exec_file) == 0
+    output = capfd.readouterr()
+    assert "LINT MAKE" in output.out

@@ -1,0 +1,1417 @@
+import logging
+import pytest
+
+import os
+import os.path
+import psutil
+import struct
+import sys
+import tarfile
+import types
+
+from importlib.metadata import entry_points
+from io import BytesIO
+from unittest.mock import patch
+
+from siliconcompiler import Design, Flowgraph, Project, utils
+from siliconcompiler.tools.builtin.nop import NOPTask
+from siliconcompiler.utils import \
+    truncate_text, safecompare, get_cores, grep, \
+    get_plugins, tar_extract_kwargs, \
+    default_sc_dir, default_credentials_file, default_cache_dir, \
+    default_email_credentials_file, default_sc_path, default_sc_system_path
+from siliconcompiler.utils import (
+    _load_pyproject_data,
+    _installed_distribution_versions,
+    _evaluate_requirement,
+    _check_optional_group,
+    _check_project_dependencies,
+    _locate_pyproject_for_module,
+    _find_editable_pyproject_paths,
+    check_python_dependencies,
+)
+
+
+@pytest.mark.parametrize("text", (
+    "testing-without-numbers", "testing-with-numbers0", "testing-with-numbers00"))
+@pytest.mark.parametrize("length", (8, 10, 15))
+def test_truncate_text_lengths(text, length):
+    expect = min(len(text), length)
+
+    assert len(truncate_text(text, length)) == expect
+
+
+def test_truncate_text():
+    text = "test"
+    assert truncate_text(text, 8) == "test"
+    assert truncate_text(text, 10) == "test"
+    assert truncate_text(text, 15) == "test"
+
+    text = "testing-without-numbers"
+    assert truncate_text(text, 8) == "testi..."
+    assert truncate_text(text, 10) == "testing..."
+    assert truncate_text(text, 15) == "testing-with..."
+
+    text = "testing-without-numbers0"
+    assert truncate_text(text, 8) == "test...0"
+    assert truncate_text(text, 10) == "testin...0"
+    assert truncate_text(text, 15) == "testing-wit...0"
+
+    text = "testing-without-numbers90"
+    assert truncate_text(text, 8) == "tes...90"
+    assert truncate_text(text, 10) == "testi...90"
+    assert truncate_text(text, 15) == "testing-wi...90"
+
+    text = "testing-without-numbers9123"
+    assert truncate_text(text, 8) == "tes...23"
+    assert truncate_text(text, 10) == "testi...23"
+    assert truncate_text(text, 15) == "testing-wi...23"
+
+    assert truncate_text("test", 1) == "test"
+    assert truncate_text("testing-without-numbers", 1) == "te..."
+    assert truncate_text("testing-without-numbers0", 1) == "t...0"
+    assert truncate_text("testing-without-numbers9123", 1) == "...23"
+
+
+@pytest.mark.parametrize("a,op,b,expect", [
+    (1, ">", 2, False),
+    (1, ">", 1, False),
+    (2, ">", 1, True),
+    (1, ">=", 2, False),
+    (1, ">=", 1, True),
+    (2, ">=", 1, True),
+    (1, "<", 2, True),
+    (1, "<", 1, False),
+    (2, "<", 1, False),
+    (1, "<=", 2, True),
+    (1, "<=", 1, True),
+    (2, "<=", 1, False),
+    (1, "==", 2, False),
+    (1, "==", 1, True),
+    (2, "==", 1, False),
+    (1, "!=", 2, True),
+    (1, "!=", 1, False),
+    (2, "!=", 1, True)
+])
+def test_safecompare(a, op, b, expect):
+    assert safecompare(a, op, b) is expect
+
+
+def test_safecompare_invalid_operator():
+    with pytest.raises(ValueError, match=r"^Illegal comparison operation !$"):
+        safecompare(1, "!", 2)
+
+
+@pytest.fixture(autouse=True)
+def disable_affinity(monkeypatch):
+    """Give every get_cores() test a deterministic baseline by removing
+    os.sched_getaffinity (as on macOS/Windows). Tests that exercise the
+    affinity path re-add it explicitly with raising=False."""
+    monkeypatch.delattr(os, 'sched_getaffinity', raising=False)
+
+
+def test_get_cores_affinity(monkeypatch):
+    # sched_getaffinity is preferred when available so cpuset/taskset limits
+    # are honored, regardless of the machine's total core count.
+    monkeypatch.setattr(os, 'sched_getaffinity', lambda pid: {0, 1, 2, 3},
+                        raising=False)
+    monkeypatch.setattr(
+        psutil, 'cpu_count',
+        lambda logical: pytest.fail('affinity should be preferred'))
+    assert get_cores() == 4
+
+
+def test_get_cores_affinity_respects_cpuset(monkeypatch):
+    # Even on a large machine, a narrow affinity mask caps the reported cores.
+    monkeypatch.setattr(os, 'sched_getaffinity', lambda pid: {2, 5},
+                        raising=False)
+    monkeypatch.setattr(psutil, 'cpu_count', lambda logical: 64)
+    assert get_cores() == 2
+
+
+def test_get_cores_affinity_physical(monkeypatch):
+    # Physical count scales the affinity-limited logical count down by the
+    # machine's hyperthreading ratio (2 threads/core here -> 6/2 == 3).
+    monkeypatch.setattr(os, 'sched_getaffinity', lambda pid: set(range(6)),
+                        raising=False)
+
+    def cpu_count(logical):
+        return 16 if logical else 8
+
+    monkeypatch.setattr(psutil, 'cpu_count', cpu_count)
+    assert get_cores() == 6
+    assert get_cores(physical=True) == 3
+
+
+def test_get_cores_affinity_physical_single_logical_core(monkeypatch):
+    # A tight affinity mask (single logical CPU) on a hyperthreaded machine
+    # must still report at least one physical core rather than truncating to
+    # 0 and falling through to the machine-wide fallback.
+    monkeypatch.setattr(os, 'sched_getaffinity', lambda pid: {0},
+                        raising=False)
+
+    def cpu_count(logical):
+        return 16 if logical else 8
+
+    monkeypatch.setattr(psutil, 'cpu_count', cpu_count)
+    assert get_cores(physical=True) == 1
+
+
+def test_get_cores_affinity_physical_no_hyperthreading(monkeypatch):
+    # No hyperthreading -> physical count equals the affinity-limited count.
+    monkeypatch.setattr(os, 'sched_getaffinity', lambda pid: {0, 1, 2, 3},
+                        raising=False)
+
+    def cpu_count(logical):
+        return 8
+
+    monkeypatch.setattr(psutil, 'cpu_count', cpu_count)
+    assert get_cores(physical=True) == 4
+
+
+def test_get_cores_logical(monkeypatch):
+    def cpu_count(logical):
+        assert logical
+        return 2
+
+    monkeypatch.setattr(psutil, 'cpu_count', cpu_count)
+    assert get_cores() == 2
+
+
+def test_get_cores_physical(monkeypatch):
+    def cpu_count(logical):
+        assert not logical
+        return 2
+
+    monkeypatch.setattr(psutil, 'cpu_count', cpu_count)
+    assert get_cores(physical=True) == 2
+
+
+def test_get_cores_use_os(monkeypatch):
+    def psutil_cpu_count(logical):
+        return None
+
+    def os_cpu_count():
+        return 6
+
+    monkeypatch.setattr(psutil, 'cpu_count', psutil_cpu_count)
+    monkeypatch.setattr(os, 'cpu_count', os_cpu_count)
+    assert get_cores() == 6
+    assert get_cores(physical=True) == 3
+
+
+def test_get_cores_use_os_one_core(monkeypatch):
+    def psutil_cpu_count(logical):
+        return None
+
+    def os_cpu_count():
+        return 1
+
+    monkeypatch.setattr(psutil, 'cpu_count', psutil_cpu_count)
+    monkeypatch.setattr(os, 'cpu_count', os_cpu_count)
+    assert get_cores() == 1
+    assert get_cores(physical=True) == 1
+
+
+def test_get_cores_fallback(monkeypatch):
+    def psutil_cpu_count(logical):
+        return None
+
+    def os_cpu_count():
+        return None
+
+    monkeypatch.setattr(psutil, 'cpu_count', psutil_cpu_count)
+    monkeypatch.setattr(os, 'cpu_count', os_cpu_count)
+    assert get_cores() == 1
+    assert get_cores(physical=True) == 1
+
+
+def test_get_cores_empty_affinity_falls_back(monkeypatch):
+    # An empty affinity set is treated as "unknown" and falls through to psutil.
+    monkeypatch.setattr(os, 'sched_getaffinity', lambda pid: set(),
+                        raising=False)
+    monkeypatch.setattr(psutil, 'cpu_count', lambda logical: 4)
+    assert get_cores() == 4
+
+
+def test_get_plugin():
+    assert [] == get_plugins("nothingtofind")
+
+
+def test_no_internal_entrypoints():
+    """
+    siliconcompiler registers none of its own plugin entry points; built-ins are wired up in code.
+    A failure usually means stale install metadata: reinstall siliconcompiler.
+    """
+    for group in ("showtask", "path_resolver", "docs", "install"):
+        for entry in entry_points(group=f"siliconcompiler.{group}"):
+            # Match the module, not the string prefix, so external packages named
+            # siliconcompiler_something are not flagged.
+            module = entry.value.split(":")[0].strip()
+            assert module != "siliconcompiler" and not module.startswith("siliconcompiler."), \
+                f"siliconcompiler.{group} must not be registered by siliconcompiler itself"
+
+
+def test_get_plugin_discovery(fake_plugins):
+    def first():
+        pass
+
+    def second():
+        pass
+
+    fake_plugins("path_resolver", "https", first)
+    fake_plugins("path_resolver", "other", second)
+
+    assert get_plugins("path_resolver") == [first, second]
+    assert get_plugins("path_resolver", "https") == [first]
+    assert get_plugins("path_resolver", "other") == [second]
+    assert get_plugins("path_resolver", "notthere") == []
+    assert get_plugins("nothingtofind") == []
+
+
+def test_default_sc_dir():
+    with patch("pathlib.Path.home") as home:
+        home.return_value = "this"
+        assert default_sc_dir() == os.path.join("this", ".sc")
+
+
+def test_default_credentials_file():
+    with patch("pathlib.Path.home") as home:
+        home.return_value = "this"
+        assert default_credentials_file() == os.path.join("this", ".sc", "credentials")
+
+
+def test_default_cache_dir():
+    with patch("pathlib.Path.home") as home:
+        home.return_value = "this"
+        assert default_cache_dir() == os.path.join("this", ".sc", "cache")
+
+
+def test_default_email_credentials_file():
+    with patch("pathlib.Path.home") as home:
+        home.return_value = "this"
+        assert default_email_credentials_file() == os.path.join("this", ".sc", "email.json")
+
+
+@pytest.mark.parametrize("path", ["test0", "that", "this", "works"])
+def test_default_sc_path(path):
+    with patch("pathlib.Path.home") as home:
+        home.return_value = "this"
+        assert default_sc_path(path) == os.path.join("this", ".sc", path)
+
+
+def test_default_sc_system_path_env_override(monkeypatch):
+    monkeypatch.setenv("SC_SYSTEM_SETTINGS", os.path.join("custom", "settings.json"))
+    assert default_sc_system_path() == os.path.join("custom", "settings.json")
+
+
+def test_default_sc_system_path_posix_default(monkeypatch):
+    monkeypatch.delenv("SC_SYSTEM_SETTINGS", raising=False)
+    monkeypatch.setattr(sys, "platform", "linux")
+    assert default_sc_system_path() == \
+        os.path.join(os.sep, "etc", "siliconcompiler", "settings.json")
+
+
+def test_default_sc_system_path_windows_default(monkeypatch):
+    monkeypatch.delenv("SC_SYSTEM_SETTINGS", raising=False)
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setenv("PROGRAMDATA", r"C:\ProgramData")
+    assert default_sc_system_path() == \
+        os.path.join(r"C:\ProgramData", "siliconcompiler", "settings.json")
+
+
+@pytest.mark.parametrize("args,line,expected", [
+    # T1: Basic Match
+    ("hello", "this is a hello world", "this is a hello world"),
+    # T2: Basic No Match
+    ("goodbye", "this is a hello world", None),
+    # T3: Input Line None
+    ("hello", None, None),
+    # T4: Empty Pattern
+    ("", "line", None),
+    # T5: Invert Match (-v, Match found -> returns None)
+    ("-v hello", "contains hello", None),
+    # T6: Invert No Match (-v, No match -> returns Line)
+    ("-v goodbye", "contains hello", "contains hello"),
+    # T7: Ignore Case (-i, No Match without flag)
+    ("hello", "HELLO world", None),
+    # T8: Ignore Case (-i, Match with flag)
+    ("-i hello", "HELLO world", "HELLO world"),
+    # T9: Whole Word (-w, Substring match -> fail)
+    ("-w cat", "The catalog is big.", None),
+    # T10: Whole Word (-w, Word match -> success)
+    ("-w cat", "The cat sat.", "The cat sat."),
+    # T11: Exact Line (-x, Partial match -> fail)
+    ("-x hello", "hello world", None),
+    # T12: Exact Line (-x, Exact match -> success)
+    ("-x hello", "hello", "hello"),
+    # T13: Only Match (-o)
+    ("-o hello", "Hello hello world", "hello"),
+    # T14: Combined (-vi, Invert + Ignore Case)
+    ("-vi HELLO", "This is hello world", None),
+    # T15: Combined (-o -i)
+    ("-o -i world", "Hello WORLD", "WORLD"),
+    # T16: Combined (-xw, Exact + Word)
+    ("-xw test", "test", "test"),
+    # T17: Combined (-xw, Partial Fail)
+    ("-xw testing", "testing is hard", None),
+    # T20: Pattern with -e (Treats -hello as pattern)
+    ("-e -hello world", "-hello world is great", "-hello world is great"),
+])
+def test_grep_logic(args, line, expected):
+    """Tests the core logic and return values of the grep function."""
+    assert grep(logging.getLogger(), args, line) == expected
+
+
+def test_unknown_switch_error(caplog):
+    # T18: Unknown Switch Error
+    grep(logging.getLogger(), "-q hello", "test")
+    assert "Unknown switch: -q" in caplog.text
+
+
+def test_concatenated_unknown_switch_error(caplog):
+    # T19: Concatenated Unknown Switch
+    grep(logging.getLogger(), "-vq hello", "test")
+    assert "Unknown switch: -q" in caplog.text
+
+
+def test_invalid_regex_error(caplog):
+    # T21: Invalid Regex Pattern
+    grep(logging.getLogger(), "*", "test")
+    # Check that we logged an error starting with our specific message
+    assert "Invalid regex pattern" in caplog.text
+
+
+@pytest.fixture
+def logger():
+    return logging.getLogger("test-python-deps")
+
+
+class FakeDist:
+    """Minimal stand-in for an importlib.metadata Distribution."""
+
+    def __init__(self, name, version, raise_meta=False):
+        self._name = name
+        self.version = version
+        self._raise = raise_meta
+
+    @property
+    def metadata(self):
+        if self._raise:
+            raise RuntimeError("metadata unavailable")
+        return {"Name": self._name}
+
+
+class FakeSpec:
+    def __init__(self, origin=None, locations=None):
+        self.origin = origin
+        self.submodule_search_locations = locations
+
+
+def test_load_pyproject_data_valid(tmp_path):
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text('[project]\nname = "demo"\ndependencies = ["foo"]\n')
+    data = _load_pyproject_data(str(pyproject))
+    assert data["project"]["name"] == "demo"
+
+
+def test_load_pyproject_data_missing_file(tmp_path):
+    assert _load_pyproject_data(str(tmp_path / "does_not_exist.toml")) is None
+
+
+def test_load_pyproject_data_malformed(tmp_path):
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text("this is = not valid toml =====")
+    assert _load_pyproject_data(str(pyproject)) is None
+
+
+def test_load_pyproject_data_no_toml_parser(tmp_path, monkeypatch):
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text('[project]\nname = "demo"\n')
+
+    # Simulate an interpreter where neither tomllib nor tomli is available.
+    monkeypatch.setattr(utils, "tomllib", None)
+    assert _load_pyproject_data(str(pyproject)) is None
+
+
+def test_installed_distribution_versions(monkeypatch):
+    dists = [
+        FakeDist("Foo_Bar", "1.2.3"),
+        FakeDist("", "0.0.0"),                 # empty name -> skipped
+        FakeDist("broken", "9.9", raise_meta=True),  # metadata raises -> skipped
+        FakeDist("Foo-Bar", "2.0.0"),          # duplicate canonical -> first wins
+    ]
+    monkeypatch.setattr("importlib.metadata.distributions", lambda: iter(dists))
+
+    installed = _installed_distribution_versions()
+    assert installed == {"foo-bar": "1.2.3"}
+
+
+def test_evaluate_requirement_unparsable():
+    assert _evaluate_requirement("git+https://example.com/x.git", {}) == \
+        ("skip", None, None)
+
+
+def test_evaluate_requirement_marker_excluded():
+    # Marker that never applies on any supported interpreter.
+    assert _evaluate_requirement("foo; python_version < '3.0'", {}) == \
+        ("skip", None, None)
+
+
+def test_evaluate_requirement_missing():
+    assert _evaluate_requirement("foo >= 1.0", {}) == ("missing", "foo", None)
+
+
+def test_evaluate_requirement_incompatible():
+    result = _evaluate_requirement("foo >= 2.0", {"foo": "1.0"})
+    assert result == ("incompatible", "foo", "1.0")
+
+
+def test_evaluate_requirement_ok():
+    assert _evaluate_requirement("foo >= 1.0", {"foo": "2.0"}) == ("ok", "foo", "2.0")
+
+
+def test_evaluate_requirement_ok_no_specifier():
+    assert _evaluate_requirement("foo", {"foo": "2.0"}) == ("ok", "foo", "2.0")
+
+
+def test_evaluate_requirement_specifier_contains_raises(monkeypatch):
+    # An installed version that cannot be compared against the specifier -> skip.
+    class BadSpecifier:
+        def __bool__(self):
+            return True
+
+        def contains(self, *args, **kwargs):
+            raise RuntimeError("uncomparable version")
+
+    class FakeReq:
+        def __init__(self, _):
+            self.marker = None
+            self.name = "foo"
+            self.specifier = BadSpecifier()
+
+    monkeypatch.setattr("packaging.requirements.Requirement", FakeReq)
+    assert _evaluate_requirement("foo", {"foo": "weird"}) == ("skip", "foo", "weird")
+
+
+def test_evaluate_requirement_marker_evaluate_raises(monkeypatch):
+    class BadMarker:
+        def evaluate(self):
+            raise RuntimeError("bad marker")
+
+    class FakeReq:
+        def __init__(self, _):
+            self.marker = BadMarker()
+            self.name = "foo"
+            self.specifier = None
+
+    monkeypatch.setattr("packaging.requirements.Requirement", FakeReq)
+    assert _evaluate_requirement("foo", {}) == ("skip", None, None)
+
+
+def test_check_optional_group_non_string_and_all_skipped(logger, caplog):
+    with caplog.at_level(logging.WARNING):
+        # None entry is skipped; marker-excluded entry is skipped -> nothing applicable.
+        issues = _check_optional_group(
+            "docs", [None, "foo; python_version < '3.0'"], {}, "demo", logger)
+    assert issues == 0
+    assert caplog.records == []
+
+
+def test_check_optional_group_active_reports_missing(logger, caplog):
+    # Two members, one installed -> all-but-one -> active -> report the missing one.
+    with caplog.at_level(logging.WARNING):
+        issues = _check_optional_group(
+            "docs", ["present", "absent"], {"present": "1.0"}, "demo", logger)
+    assert issues == 1
+    assert caplog.messages == [
+        "optional group 'docs' in demo appears installed, but 'absent' is missing "
+        "(declared as 'absent')",
+    ]
+
+
+def test_check_optional_group_inactive_stays_silent(logger, caplog):
+    # Three members, only one installed -> not active -> no missing warnings.
+    with caplog.at_level(logging.WARNING):
+        issues = _check_optional_group(
+            "docs", ["a", "b", "c"], {"a": "1.0"}, "demo", logger)
+    assert issues == 0
+    assert caplog.records == []
+
+
+def test_check_optional_group_incompatible_always_reported(logger, caplog):
+    # Not active (too few installed), but an installed member conflicts -> reported.
+    with caplog.at_level(logging.WARNING):
+        issues = _check_optional_group(
+            "docs", ["a >= 2.0", "b", "c"], {"a": "1.0"}, "demo", logger)
+    assert issues == 1
+    assert caplog.messages == [
+        "installed 'a' (1.0) does not satisfy 'a >= 2.0' from optional group "
+        "'docs' in demo",
+    ]
+
+
+def test_check_optional_group_fully_installed_silent(logger, caplog):
+    with caplog.at_level(logging.WARNING):
+        issues = _check_optional_group(
+            "docs", ["a >= 1.0", "b"], {"a": "1.0", "b": "1.0"}, "demo", logger)
+    assert issues == 0
+    assert caplog.records == []
+
+
+def test_check_project_dependencies_not_a_dict(logger):
+    assert _check_project_dependencies("nope", {}, logger) == 0
+
+
+def test_check_project_dependencies_no_project_table(logger):
+    assert _check_project_dependencies({"build-system": {}}, {}, logger) == 0
+
+
+def test_check_project_dependencies_project_not_dict(logger):
+    assert _check_project_dependencies({"project": "oops"}, {}, logger) == 0
+
+
+def test_check_project_dependencies_core_missing_and_conflict(logger, caplog):
+    data = {
+        "project": {
+            "name": "demo",
+            "dependencies": [
+                "missingpkg >= 1.0",
+                "oldpkg >= 2.0",
+                None,                         # non-string -> skipped
+                "okpkg",                      # satisfied -> silent
+            ],
+        }
+    }
+    installed = {"oldpkg": "1.0", "okpkg": "1.0"}
+    with caplog.at_level(logging.WARNING):
+        issues = _check_project_dependencies(data, installed, logger)
+
+    assert issues == 2
+    # Core-only drift -> plain reinstall, no extras suffix.
+    assert caplog.messages == [
+        "required dependency 'missingpkg' is declared in demo's pyproject.toml "
+        "but is not installed",
+        "installed 'oldpkg' (1.0) does not satisfy 'oldpkg >= 2.0' declared in "
+        "demo's pyproject.toml",
+        "demo environment is out of sync with pyproject.toml; "
+        "run 'pip install -e .' to update",
+    ]
+
+
+def test_check_project_dependencies_default_name(logger, caplog):
+    data = {"project": {"dependencies": ["missingpkg"]}}
+    with caplog.at_level(logging.WARNING):
+        issues = _check_project_dependencies(data, {}, logger)
+    assert issues == 1
+    assert caplog.messages == [
+        "required dependency 'missingpkg' is declared in this project's "
+        "pyproject.toml but is not installed",
+        "this project environment is out of sync with pyproject.toml; "
+        "run 'pip install -e .' to update",
+    ]
+
+
+def test_check_project_dependencies_non_list_sections(logger, caplog):
+    data = {
+        "project": {
+            "name": "demo",
+            "dependencies": "not-a-list",
+            "optional-dependencies": {
+                "good": ["missingextra", "present"],
+                "bad": "not-a-list",           # skipped
+            },
+        }
+    }
+    installed = {"present": "1.0"}
+    with caplog.at_level(logging.WARNING):
+        issues = _check_project_dependencies(data, installed, logger)
+    # Only the "good" group is active (all-but-one) and reports its missing member;
+    # the affected optional group is named in the reinstall hint.
+    assert issues == 1
+    assert caplog.messages == [
+        "optional group 'good' in demo appears installed, but 'missingextra' is "
+        "missing (declared as 'missingextra')",
+        "demo environment is out of sync with pyproject.toml; "
+        "run 'pip install -e .[good]' to update",
+    ]
+
+
+def test_check_project_dependencies_hint_lists_multiple_groups(logger, caplog):
+    data = {
+        "project": {
+            "name": "demo",
+            "dependencies": ["coremissing"],
+            "optional-dependencies": {
+                "gui": ["presentgui", "missinggui"],     # active -> missing reported
+                "remote": ["presentremote >= 2.0"],      # installed but conflicting
+                "quiet": ["a", "b", "c"],                # inactive -> silent
+            },
+        }
+    }
+    installed = {"presentgui": "1.0", "presentremote": "1.0"}
+    with caplog.at_level(logging.WARNING):
+        issues = _check_project_dependencies(data, installed, logger)
+
+    assert issues == 3  # 1 core + 1 gui-missing + 1 remote-conflict
+    assert caplog.messages == [
+        "required dependency 'coremissing' is declared in demo's pyproject.toml "
+        "but is not installed",
+        "optional group 'gui' in demo appears installed, but 'missinggui' is "
+        "missing (declared as 'missinggui')",
+        "installed 'presentremote' (1.0) does not satisfy 'presentremote >= 2.0' "
+        "from optional group 'remote' in demo",
+        "demo environment is out of sync with pyproject.toml; "
+        "run 'pip install -e .[gui,remote]' to update",
+    ]
+
+
+def test_check_project_dependencies_ignores_dev_groups(logger, caplog):
+    # Development/testing groups are skipped even when active and out of sync.
+    data = {
+        "project": {
+            "name": "demo",
+            "optional-dependencies": {
+                "test": ["presenttest", "missingtest"],   # active drift, but ignored
+                "Lint": ["oldlint >= 2.0"],               # conflict, but ignored (case)
+                "docs": ["missingdoc", "presentdoc"],     # active drift, but ignored
+            },
+        }
+    }
+    installed = {"presenttest": "1.0", "oldlint": "1.0", "presentdoc": "1.0"}
+    with caplog.at_level(logging.WARNING):
+        issues = _check_project_dependencies(data, installed, logger)
+
+    assert issues == 0
+    assert caplog.records == []
+
+
+def test_check_project_dependencies_optional_not_dict(logger):
+    data = {"project": {"name": "demo", "optional-dependencies": "nope"}}
+    assert _check_project_dependencies(data, {}, logger) == 0
+
+
+def test_check_project_dependencies_clean_no_hint(logger, caplog):
+    data = {"project": {"name": "demo", "dependencies": ["okpkg >= 1.0"]}}
+    with caplog.at_level(logging.WARNING):
+        issues = _check_project_dependencies(data, {"okpkg": "2.0"}, logger)
+    assert issues == 0
+    assert caplog.records == []
+
+
+def test_locate_pyproject_find_spec_raises(monkeypatch):
+    def _boom(_):
+        raise ValueError("bad module")
+
+    monkeypatch.setattr("importlib.util.find_spec", _boom)
+    assert _locate_pyproject_for_module("whatever") is None
+
+
+def test_locate_pyproject_spec_none(monkeypatch):
+    monkeypatch.setattr("importlib.util.find_spec", lambda _: None)
+    assert _locate_pyproject_for_module("whatever") is None
+
+
+def test_locate_pyproject_from_origin(tmp_path, monkeypatch):
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "demo"\n')
+    origin = str(pkg / "__init__.py")
+    monkeypatch.setattr("importlib.util.find_spec", lambda _: FakeSpec(origin=origin))
+
+    found = _locate_pyproject_for_module("pkg")
+    assert found == str(tmp_path / "pyproject.toml")
+
+
+def test_locate_pyproject_not_found_within_limit(tmp_path, monkeypatch):
+    # Deeply nested with no pyproject.toml anywhere within the walk limit.
+    deep = tmp_path / "a" / "b" / "c" / "d" / "e"
+    deep.mkdir(parents=True)
+    origin = str(deep / "__init__.py")
+    monkeypatch.setattr("importlib.util.find_spec", lambda _: FakeSpec(origin=origin))
+    assert _locate_pyproject_for_module("pkg") is None
+
+
+def test_locate_pyproject_namespace_package(tmp_path, monkeypatch):
+    pkg = tmp_path / "nspkg"
+    pkg.mkdir()
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "demo"\n')
+    monkeypatch.setattr(
+        "importlib.util.find_spec",
+        lambda _: FakeSpec(origin="namespace", locations=[str(pkg)]))
+
+    assert _locate_pyproject_for_module("nspkg") == str(tmp_path / "pyproject.toml")
+
+
+def test_locate_pyproject_namespace_no_locations(monkeypatch):
+    monkeypatch.setattr(
+        "importlib.util.find_spec",
+        lambda _: FakeSpec(origin=None, locations=None))
+    assert _locate_pyproject_for_module("nspkg") is None
+
+
+def test_locate_pyproject_walk_stops_at_root(monkeypatch, tmp_path):
+    # Origin directly at a directory whose parent is itself (simulate fs root).
+    monkeypatch.setattr(
+        "importlib.util.find_spec",
+        lambda _: FakeSpec(origin="/__init__.py"))
+    assert _locate_pyproject_for_module("pkg") is None
+
+
+def _install_fake_resolver(monkeypatch, mapping, editable, locate):
+    import siliconcompiler.package as package
+
+    monkeypatch.setattr(
+        package.PythonPathResolver, "get_python_module_mapping",
+        staticmethod(lambda: mapping))
+    monkeypatch.setattr(
+        package.PythonPathResolver, "is_python_module_editable",
+        staticmethod(editable))
+    monkeypatch.setattr(utils, "_locate_pyproject_for_module", locate)
+
+
+def test_find_editable_pyproject_paths_happy(monkeypatch):
+    mapping = {"a": ["A"], "b": ["B"], "c": ["C"], "d": ["D"], "e": ["E"]}
+
+    def editable(module):
+        if module == "e":
+            raise RuntimeError("cannot determine")
+        return module in ("a", "b", "d")
+
+    def locate(module):
+        return {
+            "a": "/proj1/pyproject.toml",
+            "b": "/proj1/pyproject.toml",   # duplicate -> deduped
+            "d": None,                        # editable but no pyproject -> skipped
+        }[module]
+
+    _install_fake_resolver(monkeypatch, mapping, editable, locate)
+    assert _find_editable_pyproject_paths() == ["/proj1/pyproject.toml"]
+
+
+def test_find_editable_pyproject_paths_import_fails(monkeypatch):
+    broken = types.ModuleType("siliconcompiler.package")
+    monkeypatch.setitem(sys.modules, "siliconcompiler.package", broken)
+    assert _find_editable_pyproject_paths() == []
+
+
+def test_find_editable_pyproject_paths_mapping_raises(monkeypatch):
+    import siliconcompiler.package as package
+
+    def _boom():
+        raise RuntimeError("mapping failed")
+
+    monkeypatch.setattr(
+        package.PythonPathResolver, "get_python_module_mapping",
+        staticmethod(_boom))
+    assert _find_editable_pyproject_paths() == []
+
+
+def test_check_python_dependencies_happy(monkeypatch, tmp_path, logger, caplog):
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(
+        '[project]\nname = "demo"\ndependencies = ["missingpkg >= 1.0"]\n')
+
+    monkeypatch.setattr(
+        utils, "_find_editable_pyproject_paths", lambda: [str(pyproject)])
+    monkeypatch.setattr(
+        utils, "_installed_distribution_versions", lambda: {})
+
+    with caplog.at_level(logging.WARNING):
+        check_python_dependencies(logger)
+    assert caplog.messages == [
+        "required dependency 'missingpkg' is declared in demo's pyproject.toml "
+        "but is not installed",
+        "demo environment is out of sync with pyproject.toml; "
+        "run 'pip install -e .' to update",
+    ]
+
+
+def test_check_python_dependencies_skips_unparseable_pyproject(
+        monkeypatch, tmp_path, logger, caplog):
+    bad = tmp_path / "pyproject.toml"
+    bad.write_text("== not valid ==")
+
+    monkeypatch.setattr(utils, "_find_editable_pyproject_paths", lambda: [str(bad)])
+    monkeypatch.setattr(utils, "_installed_distribution_versions", lambda: {})
+
+    with caplog.at_level(logging.WARNING):
+        check_python_dependencies(logger)
+    assert caplog.records == []
+
+
+def test_check_python_dependencies_never_raises(monkeypatch, logger, caplog):
+    def _boom():
+        raise RuntimeError("catastrophe")
+
+    monkeypatch.setattr(utils, "_installed_distribution_versions", _boom)
+    with caplog.at_level(logging.DEBUG):
+        check_python_dependencies(logger)  # must not raise
+    assert caplog.messages == ["python dependency check skipped: catastrophe"]
+
+
+def test_check_python_dependencies_isolates_per_project(
+        monkeypatch, tmp_path, logger, caplog):
+    # A failure checking one project must not prevent the others being checked.
+    good = tmp_path / "good_pyproject.toml"
+    good.write_text('[project]\nname = "good"\ndependencies = ["missingpkg"]\n')
+
+    def fake_load(path):
+        if path == "/bad/pyproject.toml":
+            raise RuntimeError("boom")
+        return _load_pyproject_data(path)
+
+    monkeypatch.setattr(
+        utils, "_find_editable_pyproject_paths",
+        lambda: ["/bad/pyproject.toml", str(good)])
+    monkeypatch.setattr(utils, "_installed_distribution_versions", lambda: {})
+    monkeypatch.setattr(utils, "_load_pyproject_data", fake_load)
+
+    with caplog.at_level(logging.DEBUG):
+        check_python_dependencies(logger)
+
+    assert caplog.messages == [
+        "python dependency check skipped for /bad/pyproject.toml: boom",
+        "required dependency 'missingpkg' is declared in good's pyproject.toml "
+        "but is not installed",
+        "good environment is out of sync with pyproject.toml; "
+        "run 'pip install -e .' to update",
+    ]
+
+
+@pytest.fixture
+def symlink_archive():
+    """
+    Builds a tarball shaped like the IHP130 PDK: a file, and a symlink reaching
+    it from a sibling directory.
+    """
+    def build(linkname, linkpath="pkg/libs.tech/ngspice/install.py"):
+        buf = BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            data = b"installer\n"
+            info = tarfile.TarInfo("pkg/libs.tech/xschem/install.py")
+            info.size = len(data)
+            tar.addfile(info, BytesIO(data))
+
+            link = tarfile.TarInfo(linkpath)
+            link.type = tarfile.SYMTYPE
+            link.linkname = linkname
+            tar.addfile(link)
+        buf.seek(0)
+        return buf
+
+    return build
+
+
+def _extract(archive, **kwargs):
+    """Extracts into a directory of the test's own, returning the link it holds."""
+    dest = os.path.abspath("dest")
+    os.makedirs(dest, exist_ok=True)
+    with tarfile.open(fileobj=archive, mode="r:gz") as tar:
+        tar.extractall(path=dest, **kwargs)
+    return os.path.join(dest, "pkg", "libs.tech", "ngspice", "install.py")
+
+
+#: Both of these hold on the interpreter actually running the suite, whatever it
+#: is. The tests below that describe another release fake it with the
+#: broken_tarfile_data_filter fixture or by removing the filter, so these are
+#: snapshotted here, before any of that.
+_HAS_FILTERS = hasattr(tarfile, "data_filter")
+_MISHANDLES_SYMLINKS = utils._data_filter_mishandles_symlinks()
+
+needs_filters = pytest.mark.skipif(
+    not _HAS_FILTERS, reason="release predates the PEP 706 extraction filters")
+needs_working_filters = pytest.mark.skipif(
+    not _HAS_FILTERS or _MISHANDLES_SYMLINKS,
+    reason="release either predates the extraction filters or predates CPython gh-107845, "
+           "so tar_extract_kwargs answers with something other than the filter's name")
+
+
+@needs_working_filters
+def test_tar_extract_kwargs():
+    assert tar_extract_kwargs() == {"filter": "data"}
+
+
+@needs_filters
+@pytest.mark.parametrize("extraction_filter", ("tar", "fully_trusted"))
+def test_tar_extract_kwargs_other_filters(extraction_filter):
+    """Neither filter checks link targets, so neither is ever substituted."""
+    assert tar_extract_kwargs(extraction_filter) == {"filter": extraction_filter}
+
+
+def test_tar_extract_kwargs_legacy_python(monkeypatch):
+    """A release predating PEP 706 has no filter argument to pass."""
+    monkeypatch.delattr(tarfile, "data_filter", raising=False)
+    utils._data_filter_mishandles_symlinks.cache_clear()
+
+    assert tar_extract_kwargs() == {}
+
+    utils._data_filter_mishandles_symlinks.cache_clear()
+
+
+def test_tarfile_module_legacy_python(monkeypatch):
+    """A release predating PEP 706 reads archives with backports.zstd's tarfile, which filters."""
+    backport = pytest.importorskip("backports.zstd.tarfile")
+    monkeypatch.delattr(tarfile, "data_filter", raising=False)
+
+    assert utils.tarfile_module() is backport
+
+
+@needs_filters
+def test_data_filter_symlinks_probe_agrees_with_the_filter():
+    """
+    The probe has to report what this interpreter's filter actually does, so ask
+    the filter the same question directly -- from a different destination, since a
+    probe that only works against its own is no probe at all.
+    """
+    member = tarfile.TarInfo("dir/link")
+    member.type = tarfile.SYMTYPE
+    member.linkname = os.path.join(os.pardir, "dir", "target")
+
+    rejected = False
+    try:
+        tarfile.data_filter(member, os.path.abspath("dest"))
+    except tarfile.LinkOutsideDestinationError:
+        rejected = True
+
+    assert utils._data_filter_mishandles_symlinks() is rejected
+
+
+def test_data_filter_mishandled_symlinks_detected(broken_tarfile_data_filter):
+    assert utils._data_filter_mishandles_symlinks() is True
+
+
+def test_tar_extract_kwargs_substitutes_corrected_filter(broken_tarfile_data_filter):
+    """Only the 'data' filter checks link targets, so only it needs correcting."""
+    assert tar_extract_kwargs() == {"filter": utils._symlink_safe_data_filter}
+    assert tar_extract_kwargs("tar") == {"filter": "tar"}
+
+
+def test_data_filter_rejects_valid_symlink(broken_tarfile_data_filter, symlink_archive):
+    """The failure being worked around, so the workaround is shown to be needed."""
+    with pytest.raises(tarfile.LinkOutsideDestinationError,
+                       match=r"^'pkg/libs\.tech/ngspice/install\.py' would link to .*"
+                             r"which is outside the destination$"):
+        _extract(symlink_archive("../xschem/install.py"), filter=broken_tarfile_data_filter)
+
+
+def test_corrected_filter_extracts_valid_symlink(broken_tarfile_data_filter, symlink_archive):
+    link = _extract(symlink_archive("../xschem/install.py"), **tar_extract_kwargs())
+
+    # Written as the archive stored it -- separators aside, since Windows keeps its
+    # own -- and pointing at the real file
+    assert os.path.islink(link)
+    assert os.readlink(link).replace(os.sep, "/") == "../xschem/install.py"
+    with open(link, "rb") as f:
+        assert f.read() == b"installer\n"
+
+
+def test_corrected_filter_preserves_linkname(broken_tarfile_data_filter):
+    """The filter keeps the archive's linkname, './' and all, and only localizes separators."""
+    member = tarfile.TarInfo("pkg/libs.tech/ngspice/install.py")
+    member.type = tarfile.SYMTYPE
+    member.linkname = "../xschem/./install.py"
+
+    filtered = utils._symlink_safe_data_filter(member, os.path.abspath("dest"))
+    # Both halves matter: the structure is the archive's, and the separators are
+    # this platform's, which is what keeps the link followable on Windows.
+    assert filtered.linkname == "../xschem/./install.py".replace("/", os.sep)
+
+
+@pytest.mark.parametrize("linkname", (
+    "../../../../../etc/passwd",       # climbs out of the destination
+    "../../../..",                     # climbs out to a directory
+))
+def test_corrected_filter_still_rejects_escaping_symlink(broken_tarfile_data_filter,
+                                                         symlink_archive, linkname):
+    """Correcting a false positive must not cost the check itself."""
+    with pytest.raises(tarfile.LinkOutsideDestinationError):
+        _extract(symlink_archive(linkname), **tar_extract_kwargs())
+
+
+def test_corrected_filter_still_rejects_absolute_symlink(broken_tarfile_data_filter,
+                                                         symlink_archive):
+    # AbsoluteLinkError where '/etc/passwd' is an absolute path, and
+    # LinkOutsideDestinationError on Windows, where a drive-less path is not one and
+    # gets read as a relative climb out of the destination instead. Either way the
+    # filter is the one refusing it.
+    with pytest.raises(tarfile.FilterError):
+        _extract(symlink_archive("/etc/passwd"), **tar_extract_kwargs())
+
+
+def test_corrected_filter_still_rejects_escaping_name(broken_tarfile_data_filter,
+                                                      symlink_archive):
+    """A member whose own name escapes is rejected before its link is looked at."""
+    with pytest.raises(tarfile.OutsideDestinationError):
+        _extract(symlink_archive("install.py", linkpath="../evil/install.py"),
+                 **tar_extract_kwargs())
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="ntpath.realpath collapses '..' before it resolves a reparse point, so a "
+           "symlinked directory cannot change what the path above it means")
+def test_corrected_filter_still_rejects_a_link_through_a_planted_directory(
+        broken_tarfile_data_filter):
+    """
+    A link through a planted 'here' -> '.' directory is rejected: '../..' from here/inside
+    escapes on disk, though counting the name's components says it cannot.
+    """
+    dest = os.path.abspath("dest")
+    os.makedirs(os.path.join(dest, "inside"), exist_ok=True)
+    try:
+        os.symlink(".", os.path.join(dest, "here"), target_is_directory=True)
+    except OSError as e:  # pragma: no cover - Windows without the symlink privilege
+        pytest.skip(f"cannot plant a symlinked directory here: {e}")
+
+    member = tarfile.TarInfo("here/inside/link")
+    member.type = tarfile.SYMTYPE
+    member.linkname = os.path.join(os.pardir, os.pardir, "escaped")
+
+    with pytest.raises(tarfile.LinkOutsideDestinationError):
+        utils._symlink_safe_data_filter(member, dest)
+
+
+def test_corrected_filter_passes_through_non_symlinks(broken_tarfile_data_filter):
+    """A member with no link target is handed to the filter untouched."""
+    member = tarfile.TarInfo("file.txt")
+    member.size = 5
+
+    filtered = utils._symlink_safe_data_filter(member, os.getcwd())
+    assert filtered.name == "file.txt"
+    assert filtered.linkname == ""
+
+
+def test_corrected_filter_passes_through_hard_links(broken_tarfile_data_filter):
+    """
+    A hard link's target really is relative to the archive root, so it goes to the
+    filter unrerouted and whatever the filter makes of it stands.
+    """
+    def member():
+        hardlink = tarfile.TarInfo("dir/link")
+        hardlink.type = tarfile.LNKTYPE
+        hardlink.linkname = "dir/target"
+        return hardlink
+
+    dest = os.path.abspath("dest")
+    assert utils._symlink_safe_data_filter(member(), dest).linkname == \
+        tarfile.data_filter(member(), dest).linkname
+
+
+def test_corrected_filter_honors_a_skipped_member(broken_tarfile_data_filter, monkeypatch):
+    """A filter that skips a member returns None, which must be passed along."""
+    monkeypatch.setattr(tarfile, "data_filter", lambda member, dest: None)
+
+    member = tarfile.TarInfo("dir/link")
+    member.type = tarfile.SYMTYPE
+    member.linkname = "../dir/target"
+
+    assert utils._symlink_safe_data_filter(member, os.getcwd()) is None
+
+
+# Zstandard entered the stdlib in Python 3.14 (PEP 784) and is carried to 3.10-3.13
+# by the 'backports.zstd' dependency, so which module answers below depends on the
+# interpreter. Nothing here names one: the point is that every supported release
+# reaches a working implementation.
+def test_zstd_available():
+    """Every supported interpreter can read Zstandard, so a wrong dependency marker fails here."""
+    assert utils.zstd_available() is True, utils.zstd_unavailable_message()
+
+
+def test_zstd_module_matches_interpreter():
+    """The stdlib module is used where it exists, and the backport only below it."""
+    expected = "compression.zstd" if sys.version_info >= (3, 14) else "backports.zstd"
+
+    assert utils._zstd.__name__ == expected
+
+
+def test_open_zstd_stream_round_trip():
+    """A compressed frame reads back byte for byte."""
+    payload = b"the quick brown fox" * 1000
+
+    with utils.open_zstd_stream(BytesIO(utils._zstd.compress(payload))) as stream:
+        assert stream.read() == payload
+
+
+def test_open_zstd_stream_is_seekable():
+    """The decompressed stream is seekable, which tarfile needs for random access."""
+    with utils.open_zstd_stream(BytesIO(utils._zstd.compress(b"0123456789"))) as stream:
+        assert stream.seekable() is True
+        stream.seek(4)
+        assert stream.read(3) == b"456"
+        stream.seek(0)
+        assert stream.read(2) == b"01"
+
+
+def test_open_zstd_stream_reads_multiple_frames():
+    """Concatenated Zstandard frames read as one continuous stream."""
+    blob = utils._zstd.compress(b"first") + utils._zstd.compress(b"second")
+
+    with utils.open_zstd_stream(BytesIO(blob)) as stream:
+        assert stream.read() == b"firstsecond"
+
+
+def test_open_zstd_stream_rejects_other_data():
+    """Data that is not Zstandard raises one of the errors zstd_errors() reports."""
+    with pytest.raises(utils.zstd_errors()):
+        with utils.open_zstd_stream(BytesIO(b"not compressed with zstd")) as stream:
+            stream.read()
+
+
+def test_open_zstd_stream_leaves_the_source_open():
+    """Closing the decompressor leaves the source buffer open for another reader."""
+    source = BytesIO(utils._zstd.compress(b"payload"))
+
+    with utils.open_zstd_stream(source) as stream:
+        stream.read()
+
+    assert source.closed is False
+
+
+def test_open_zstd_stream_without_bindings(monkeypatch):
+    """Asked for zstd it cannot provide, the shim names what would fix it."""
+    monkeypatch.setattr(utils, "_zstd", None)
+
+    expected = "compression.zstd" if sys.version_info >= (3, 14) else "backports.zstd"
+    with pytest.raises(ModuleNotFoundError, match=expected):
+        utils.open_zstd_stream(BytesIO(b""))
+
+
+def test_zstd_errors_without_bindings(monkeypatch):
+    """Without bindings zstd_errors() is (), so an except clause using it matches nothing."""
+    monkeypatch.setattr(utils, "_zstd", None)
+
+    assert utils.zstd_errors() == ()
+
+
+def test_zstd_errors_reports_the_decompressor_error():
+    """The reported error is the one the selected bindings actually raise."""
+    assert utils.zstd_errors() == (utils._zstd.ZstdError,)
+
+
+@pytest.mark.parametrize("data,expected", (
+    (b"\x28\xb5\x2f\xfd", True),
+    (b"\x28\xb5\x2f\xfd\x00\x48\x65", True),
+    # Skippable frames (RFC 8878 3.1.2) span 0x184D2A50-0x184D2A5F, little-endian,
+    # so it is the first byte that varies. A stream may lead with one.
+    (b"\x50\x2a\x4d\x18", True),       # 0x184D2A50, the bottom of the range
+    (b"\x5f\x2a\x4d\x18", True),       # 0x184D2A5F, the top of it
+    (b"\x4f\x2a\x4d\x18", False),      # 0x184D2A4F, just below
+    (b"\x60\x2a\x4d\x18", False),      # 0x184D2A60, just above
+    (b"\x1f\x8b\x08\x00", False),      # gzip
+    (b"BZh9", False),                  # bzip2
+    (b"\xfd7zXZ\x00", False),          # xz
+    (b"PK\x03\x04", False),            # zip
+    (b"\x28\xb5\x2f", False),          # a short read is not a match
+    (b"", False),
+))
+def test_is_zstd(data, expected):
+    """The frame magic identifies zstd, and identifies nothing else as zstd."""
+    assert utils.is_zstd(data) is expected
+
+
+def test_is_zstd_accepts_a_leading_skippable_frame():
+    """A stream that opens with a skippable frame is Zstandard and still decompresses."""
+    frame = struct.pack("<II", 0x184D2A50, 4) + b"meta" + utils._zstd.compress(b"payload")
+
+    assert utils.is_zstd(frame) is True
+    with utils.open_zstd_stream(BytesIO(frame)) as stream:
+        assert stream.read() == b"payload"
+
+
+def test_is_zstd_recognizes_what_it_cannot_read(monkeypatch):
+    """
+    is_zstd() recognizes the format without bindings, so such a download is reported as
+    unsupported rather than unrecognized.
+    """
+    blob = utils._zstd.compress(b"payload")
+    monkeypatch.setattr(utils, "_zstd", None)
+
+    assert utils.is_zstd(blob) is True
+
+
+@pytest.mark.parametrize("stdlib", [True, False])
+def test_file_digest_matches_hashlib_on_every_python(monkeypatch, stdlib):
+    '''`hashlib.file_digest` where the interpreter has it (3.11+), and the
+    same answer from the chunked read before it.'''
+    import hashlib
+
+    data = bytes(range(256)) * 9000          # more than one chunk
+    with open("data.bin", "wb") as f:
+        f.write(data)
+    if not stdlib:
+        monkeypatch.delattr(hashlib, "file_digest", raising=False)
+
+    assert utils.file_digest("data.bin").hexdigest() == hashlib.sha256(data).hexdigest()
+    assert utils.file_digest("data.bin", "md5").hexdigest() == hashlib.md5(data).hexdigest()
+
+
+@pytest.mark.parametrize("stdlib", [True, False])
+def test_file_digest_continues_a_given_hash(monkeypatch, stdlib):
+    '''A callable in place of the name supplies the hash object to feed, as
+    `hashlib.file_digest` takes it, so a hash already holding data is continued
+    rather than restarted.'''
+    import hashlib
+
+    data = bytes(range(256)) * 9000          # more than one chunk
+    with open("data.bin", "wb") as f:
+        f.write(data)
+    if not stdlib:
+        monkeypatch.delattr(hashlib, "file_digest", raising=False)
+
+    hashobj = hashlib.sha256(b"prefix")
+    assert utils.file_digest("data.bin", lambda: hashobj) is hashobj
+    assert hashobj.hexdigest() == hashlib.sha256(b"prefix" + data).hexdigest()
+
+    assert utils.file_digest("data.bin", hashlib.sha1).hexdigest() == \
+        hashlib.sha1(data).hexdigest()
+
+
+@pytest.mark.parametrize("stdlib", [True, False])
+@pytest.mark.parametrize("size", [
+    0, 1,
+    2**18,                                   # one hashlib.file_digest buffer
+    2**20 - 1, 2**20, 2**20 + 1,             # either side of one fallback chunk
+    3 * 2**20 + 7])
+def test_file_digest_chunk_boundaries(monkeypatch, stdlib, size):
+    '''An empty file, and files ending on or either side of a chunk, hash the
+    same as their bytes do.'''
+    import hashlib
+
+    data = (bytes(range(256)) * (size // 256 + 1))[:size]
+    with open("data.bin", "wb") as f:
+        f.write(data)
+    if not stdlib:
+        monkeypatch.delattr(hashlib, "file_digest", raising=False)
+
+    assert utils.file_digest("data.bin").hexdigest() == hashlib.sha256(data).hexdigest()
+
+
+def test_file_digest_accepts_pathlib_path():
+    import hashlib
+    import pathlib
+
+    pathlib.Path("data.bin").write_bytes(b"payload")
+
+    assert utils.file_digest(pathlib.Path("data.bin")).hexdigest() == \
+        hashlib.sha256(b"payload").hexdigest()
+
+
+@pytest.mark.parametrize("stdlib", [True, False])
+def test_file_digest_returns_the_live_hash_object(monkeypatch, stdlib):
+    '''The hash object itself, as `hashlib.file_digest` returns it, so a caller
+    can take `digest()` or keep feeding it.'''
+    import hashlib
+
+    with open("data.bin", "wb") as f:
+        f.write(b"payload")
+    if not stdlib:
+        monkeypatch.delattr(hashlib, "file_digest", raising=False)
+
+    digest = utils.file_digest("data.bin", "sha512")
+    assert digest.name == "sha512"
+    assert digest.digest() == hashlib.sha512(b"payload").digest()
+
+    digest.update(b" and more")
+    assert digest.hexdigest() == hashlib.sha512(b"payload and more").hexdigest()
+
+
+@pytest.mark.parametrize("stdlib", [True, False])
+def test_file_digest_unknown_algorithm(monkeypatch, stdlib):
+    import hashlib
+
+    with open("data.bin", "wb") as f:
+        f.write(b"payload")
+    if not stdlib:
+        monkeypatch.delattr(hashlib, "file_digest", raising=False)
+
+    with pytest.raises(ValueError):
+        utils.file_digest("data.bin", "md56")
+
+
+@pytest.mark.parametrize("stdlib", [True, False])
+def test_file_digest_missing_file(monkeypatch, stdlib):
+    import hashlib
+
+    if not stdlib:
+        monkeypatch.delattr(hashlib, "file_digest", raising=False)
+
+    with pytest.raises(FileNotFoundError):
+        utils.file_digest("missing.bin")
+
+
+def test_file_digest_fallback_reads_in_chunks(monkeypatch):
+    '''Before 3.11 the file is read a chunk at a time, never whole, so a
+    multi-gigabyte GDS does not have to fit in memory to be hashed.'''
+    import builtins
+    import hashlib
+
+    data = b"x" * (3 * 2**20)
+    with open("data.bin", "wb") as f:
+        f.write(data)
+    monkeypatch.delattr(hashlib, "file_digest", raising=False)
+
+    reads = []
+
+    def recording_open(*args, **kwargs):
+        f = builtins.open(*args, **kwargs)
+        read = f.read
+
+        def recording_read(size=-1):
+            reads.append(size)
+            return read(size)
+
+        f.read = recording_read
+        return f
+
+    monkeypatch.setattr(utils, "open", recording_open, raising=False)
+
+    assert utils.file_digest("data.bin").hexdigest() == hashlib.sha256(data).hexdigest()
+    assert len(reads) > 1
+    assert all(0 < size <= 2**20 for size in reads)
+
+
+def test_find_schemas_searches_lazily_loaded_parts():
+    """Every part of the type is found, the history's included, in a project
+    loaded lazily from a manifest."""
+    proj = Project(Design("testdesign"))
+    proj._record_history()
+    proj.write_manifest("test.pkg.json")
+
+    found = utils.find_schemas(Project.from_manifest(filepath="test.pkg.json"), Design)
+
+    assert sorted(part._keypath for part in found) == [
+        ("history", "job0", "library", "testdesign"), ("library", "testdesign")]
+
+
+def test_mask_credentials():
+    """The copy has every dataroot path masked, a private one, a task's and the
+    history's included, and the project keeps what was registered."""
+    proj = Project(Design("testdesign"))
+    flow = Flowgraph("testflow")
+    flow.node("stepone", NOPTask())
+    proj.set_flow(flow)
+    design = proj.get("library", "testdesign", field="schema")
+    design.set_dataroot("ip", "git+https://alice:TOKEN@example.com/ip.git", "v1")
+    design.set_dataroot("secret", "git+https+private://alice:TOKEN@example.com/secret.git",
+                        "v1")
+    design.set_dataroot("local", "/home/me@corp/ip")
+    proj.set("tool", "builtin", "task", "nop", "dataroot", "scripts", "path",
+             "https://example.com/scripts.tar.gz?token=TOKEN")
+    proj._record_history()
+
+    masked = utils.mask_credentials(proj)
+
+    expect = {
+        ("library", "testdesign", "dataroot", "ip"): "git+https://example.com/ip.git",
+        ("library", "testdesign", "dataroot", "secret"):
+            "git+https+private://example.com/secret.git",
+        ("library", "testdesign", "dataroot", "local"): "/home/me@corp/ip",
+        ("tool", "builtin", "task", "nop", "dataroot", "scripts"):
+            "https://example.com/scripts.tar.gz?token=***",
+        ("history", "job0", "library", "testdesign", "dataroot", "ip"):
+            "git+https://example.com/ip.git",
+    }
+    assert {keypath: masked.get(*keypath, "path") for keypath in expect} == expect
+    assert proj.get("library", "testdesign", "dataroot", "ip", "path") == \
+        "git+https://alice:TOKEN@example.com/ip.git"
