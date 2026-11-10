@@ -56,6 +56,70 @@ function activate(context) {
 
     // 1b. Bottom Panel Dock Provider (Waveforms docked tabbed next to Terminal)
     let bottomDockWebview = null;
+    let activeSchematicPanel = null;
+
+    async function openSchematicPanel(projectName, viewColumn = vscode.ViewColumn.Beside) {
+        const pName = projectName || activeProject || 'demo_soc';
+        if (activeSchematicPanel) {
+            activeSchematicPanel.reveal(viewColumn);
+            return activeSchematicPanel;
+        }
+
+        const panel = vscode.window.createWebviewPanel(
+            'silisSchematic',
+            `Schematic: ${pName}`,
+            viewColumn,
+            { enableScripts: true, retainContextWhenHidden: true }
+        );
+        activeSchematicPanel = panel;
+
+        const uri = await resolveUrl(`http://127.0.0.1:8765/schematic/digitaljs.html?project=projects/${encodeURIComponent(pName)}`);
+        panel.webview.html = getIframeHtml(uri, 'Schematic: ' + pName);
+
+        panel.webview.onDidReceiveMessage(async (msg) => {
+            if (msg && msg.fromSilisSchem && msg.data) {
+                const cadMsg = msg.data;
+                if (cadMsg.type === 'contextAction') {
+                    if (cadMsg.action === 'addToWaveform' && cadMsg.leafName) {
+                        if (bottomDockWebview) {
+                            bottomDockWebview.webview.postMessage({ type: 'addSignal', signalName: cadMsg.leafName });
+                        }
+                        vscode.commands.executeCommand('silis-bottom-dock.focus');
+                    } else if ((cadMsg.action === 'gotoSource' || cadMsg.action === 'gotoDefinition') && cadMsg.sourcePositions && cadMsg.sourcePositions.length > 0) {
+                        const pos = cadMsg.sourcePositions[0];
+                        const wsFolders = vscode.workspace.workspaceFolders;
+                        if (wsFolders && wsFolders.length > 0) {
+                            let relPath = pos.name;
+                            if (!relPath.startsWith('projects/') && !relPath.startsWith('/')) {
+                                relPath = `projects/${pName}/${relPath}`;
+                            }
+                            const fileUri = relPath.startsWith('/')
+                                ? vscode.Uri.file(relPath)
+                                : vscode.Uri.joinPath(wsFolders[0].uri, relPath);
+                            const line = (pos.from && pos.from.line) ? pos.from.line : 1;
+                            const col = (pos.from && pos.from.column) ? pos.from.column : 0;
+                            try {
+                                const doc = await vscode.workspace.openTextDocument(fileUri);
+                                await vscode.window.showTextDocument(doc, {
+                                    viewColumn: vscode.ViewColumn.One,
+                                    selection: new vscode.Range(Math.max(0, line - 1), col, Math.max(0, line - 1), col),
+                                    preview: false
+                                });
+                            } catch (e) {
+                                console.error('[Silis Cross-Probe] Failed to open source document:', e);
+                            }
+                        }
+                    }
+                }
+            }
+        }, undefined, context.subscriptions);
+
+        panel.onDidDispose(() => {
+            activeSchematicPanel = null;
+        }, null, context.subscriptions);
+
+        return panel;
+    }
 
     async function loadWaveformInBottomDock(fileOrProject) {
         if (!fileOrProject) {
@@ -81,6 +145,25 @@ function activate(context) {
             const projDir = getActiveProjectDir();
             const uri = await resolveUrl(`http://127.0.0.1:8765/waveforms/index.html?project=${encodeURIComponent(projDir)}`);
             webviewView.webview.html = getIframeHtml(uri, 'ROHD Waveform Inspector');
+
+            webviewView.webview.onDidReceiveMessage(async (msg) => {
+                if (msg && msg.fromSilisRohd && msg.data) {
+                    const rohdMsg = msg.data;
+                    if (rohdMsg.type === 'cursorMoved' && activeSchematicPanel) {
+                        const timePs = rohdMsg.time || 0;
+                        const sigs = Array.isArray(rohdMsg.signals) ? rohdMsg.signals.join(',') : '';
+                        try {
+                            const query = `project=${encodeURIComponent(getActiveProjectDir())}&time=${timePs}${sigs ? '&signals=' + encodeURIComponent(sigs) : ''}`;
+                            const res = await callHttpApi(`http://127.0.0.1:8765/api/waveform/values?${query}`, 'GET');
+                            if (Array.isArray(res) && activeSchematicPanel) {
+                                activeSchematicPanel.webview.postMessage({ type: 'setValues', updates: res });
+                            }
+                        } catch (e) {
+                            console.error('[Silis Cross-Probe] Failed to query waveform values:', e);
+                        }
+                    }
+                }
+            });
 
             webviewView.onDidDispose(() => {
                 bottomDockWebview = null;
@@ -123,7 +206,7 @@ function activate(context) {
             try {
                 await callHttpApi('http://127.0.0.1:8765/api/peeker/load_def', 'POST', { def_path: document.fileName });
             } catch (e) {}
-            const uri = await resolveUrl('http://127.0.0.1:6081/vnc.html?autoconnect=true&resize=remote');
+            const uri = await resolveUrl('http://127.0.0.1:6081/vnc_lite.html?autoconnect=true&resize=scale');
             webviewPanel.webview.html = getIframeHtml(uri, 'Silis 2D Layout: ' + document.fileName);
         }
     };
@@ -135,7 +218,7 @@ function activate(context) {
     const gdsEditorProvider = {
         async resolveCustomTextEditor(document, webviewPanel) {
             webviewPanel.webview.options = { enableScripts: true, retainContextWhenHidden: true };
-            const uri = await resolveUrl('http://127.0.0.1:6081/vnc.html?autoconnect=true&resize=remote');
+            const uri = await resolveUrl('http://127.0.0.1:6081/vnc_lite.html?autoconnect=true&resize=scale');
             webviewPanel.webview.html = getIframeHtml(uri, 'Silis GDSII Viewer: ' + document.fileName);
         }
     };
@@ -266,7 +349,7 @@ function activate(context) {
         })
     );
 
-    // 6. Open / Switch Active Project
+    // 6. Open / Switch Active Project (Desktop Parity: Open top RTL on left, reveal in Explorer)
     context.subscriptions.push(
         vscode.commands.registerCommand('silis.openProject', async (projectName) => {
             if (!projectName) {
@@ -296,6 +379,56 @@ function activate(context) {
                     await callHttpApi('http://127.0.0.1:8765/api/active_project', 'POST', { name: activeProject });
                 } catch (e) {}
 
+                // Reveal project in file explorer
+                const wsFolders = vscode.workspace.workspaceFolders;
+                if (wsFolders && wsFolders.length > 0) {
+                    const projUri = vscode.Uri.joinPath(wsFolders[0].uri, 'projects', activeProject);
+                    try {
+                        await vscode.commands.executeCommand('revealInExplorer', projUri);
+                    } catch (e) {}
+
+                    // Open top RTL file in ViewColumn.One
+                    let topFileUri = null;
+                    try {
+                        const cfgUri = vscode.Uri.joinPath(projUri, 'silis.silisproj');
+                        const cfgBytes = await vscode.workspace.fs.readFile(cfgUri);
+                        const cfg = JSON.parse(Buffer.from(cfgBytes).toString('utf8'));
+                        if (cfg.rtl_files && cfg.rtl_files.length > 0) {
+                            topFileUri = vscode.Uri.joinPath(projUri, cfg.rtl_files[0]);
+                        } else if (cfg.top_module) {
+                            for (const cand of [
+                                `rtl/${cfg.top_module}.sv`,
+                                `rtl/${cfg.top_module}.v`,
+                                `${cfg.top_module}.sv`,
+                                `${cfg.top_module}.v`
+                            ]) {
+                                const candUri = vscode.Uri.joinPath(projUri, cand);
+                                try {
+                                    await vscode.workspace.fs.stat(candUri);
+                                    topFileUri = candUri;
+                                    break;
+                                } catch (e) {}
+                            }
+                        }
+                    } catch (e) {}
+
+                    if (!topFileUri) {
+                        try {
+                            const vFiles = await vscode.workspace.findFiles(`projects/${activeProject}/**/*.{v,sv}`);
+                            if (vFiles.length > 0) {
+                                topFileUri = vFiles.find(f => !f.fsPath.includes('tb_')) || vFiles[0];
+                            }
+                        } catch (e) {}
+                    }
+
+                    if (topFileUri) {
+                        try {
+                            const doc = await vscode.workspace.openTextDocument(topFileUri);
+                            await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.One, preview: false });
+                        } catch (e) {}
+                    }
+                }
+
                 vscode.window.showInformationMessage(`Active Project: ${activeProject}`);
 
                 if (dashboardPanel) {
@@ -323,22 +456,14 @@ function activate(context) {
         })
     );
 
-    // 8. Schematic Viewer (World 0)
+    // 8. Schematic Viewer (World 0: Split beside RTL)
     context.subscriptions.push(
         vscode.commands.registerCommand('silis.openSchematic', async (projectName) => {
-            const pName = projectName || activeProject || 'demo_soc';
-            const panel = vscode.window.createWebviewPanel(
-                'silisSchematic',
-                `Schematic: ${pName}`,
-                vscode.ViewColumn.Active,
-                { enableScripts: true, retainContextWhenHidden: true }
-            );
-            const uri = await resolveUrl(`http://127.0.0.1:8765/schematic/digitaljs.html?project=projects/${encodeURIComponent(pName)}`);
-            panel.webview.html = getIframeHtml(uri, 'Schematic: ' + pName);
+            await openSchematicPanel(projectName, vscode.ViewColumn.Beside);
         })
     );
 
-    // 9. 2D Layout Canvas (World 1: FastSiliconPeeker)
+    // 9. 2D Layout Canvas (World 1: FastSiliconPeeker with auto-connect)
     context.subscriptions.push(
         vscode.commands.registerCommand('silis.openLayout', async () => {
             const panel = vscode.window.createWebviewPanel(
@@ -347,12 +472,12 @@ function activate(context) {
                 vscode.ViewColumn.Active,
                 { enableScripts: true, retainContextWhenHidden: true }
             );
-            const uri = await resolveUrl('http://127.0.0.1:6081/vnc.html?autoconnect=true&resize=remote');
+            const uri = await resolveUrl('http://127.0.0.1:6081/vnc_lite.html?autoconnect=true&resize=scale');
             panel.webview.html = getIframeHtml(uri, '2D Layout');
         })
     );
 
-    // 10. Floorplan & Power Studio (World 3: FPS)
+    // 10. Floorplan & Power Studio (World 3: FPS with auto-connect)
     context.subscriptions.push(
         vscode.commands.registerCommand('silis.openFloorplanner', async () => {
             const panel = vscode.window.createWebviewPanel(
@@ -361,12 +486,73 @@ function activate(context) {
                 vscode.ViewColumn.Active,
                 { enableScripts: true, retainContextWhenHidden: true }
             );
-            const uri = await resolveUrl('http://127.0.0.1:6084/vnc.html?autoconnect=true&resize=remote');
+            const uri = await resolveUrl('http://127.0.0.1:6084/vnc_lite.html?autoconnect=true&resize=scale');
             panel.webview.html = getIframeHtml(uri, 'Floorplan Studio');
         })
     );
 
-    // 11. Flow Execution
+    // 11. Run Simulation (Play Button: Runs compile & sim, opens Schematic on right, loads Waveform dock)
+    context.subscriptions.push(
+        vscode.commands.registerCommand('silis.runSimulation', async () => {
+            const pName = activeProject || 'demo_soc';
+            vscode.window.showInformationMessage(`Compiling & running simulation for project "${pName}"...`);
+
+            if (vscode.window.activeTextEditor) {
+                await vscode.window.activeTextEditor.document.save();
+            }
+
+            // 1. Open DigitalJS Schematic on the right (split view)
+            await openSchematicPanel(pName, vscode.ViewColumn.Beside);
+
+            // 2. Focus bottom dock tab with waveforms
+            await loadWaveformInBottomDock(getActiveProjectDir(pName));
+
+            // 3. Run simulation command in terminal
+            let term = vscode.window.terminals.find(t => t.name === 'Silis Simulation');
+            if (!term) {
+                term = vscode.window.createTerminal('Silis Simulation');
+            }
+            term.show();
+            term.sendText(`silis --run-sim --project projects/${pName}`);
+        })
+    );
+
+    // 12. Run Verilator RTL Lint (Debug Button & Ctrl+L)
+    context.subscriptions.push(
+        vscode.commands.registerCommand('silis.runLint', async () => {
+            const pName = activeProject || 'demo_soc';
+            const outputChan = vscode.window.createOutputChannel('Silis RTL Lint');
+            outputChan.show(true);
+            outputChan.appendLine(`[LINT] Running Verilator RTL Lint on project "${pName}" (Ctrl+L)...`);
+
+            try {
+                const res = await callHttpApi(`http://127.0.0.1:8765/api/lint?project=projects/${encodeURIComponent(pName)}`, 'GET');
+                if (res) {
+                    const output = (res.output || res.stderr || res.stdout || '').trim();
+                    if (!output && res.success) {
+                        outputChan.appendLine('[LINT] [OK] RTL Lint Clean: No warnings or errors found.');
+                        vscode.window.showInformationMessage(`Silis Lint: ${pName} is clean.`);
+                    } else {
+                        outputChan.appendLine(output);
+                        outputChan.appendLine(`[LINT] Lint completed with exit code ${res.exit_code}.`);
+                        if (!res.success) {
+                            vscode.window.showWarningMessage(`Silis Lint: Diagnostics reported for ${pName}. Check Silis RTL Lint output channel.`);
+                        }
+                    }
+                }
+            } catch (err) {
+                outputChan.appendLine(`[LINT] API request error: ${err.message}`);
+                let term = vscode.window.terminals.find(t => t.name === 'Silis Lint');
+                if (!term) {
+                    term = vscode.window.createTerminal('Silis Lint');
+                }
+                term.show();
+                term.sendText(`verilator --lint-only -sv -Wall -Wno-fatal -Iprojects/${pName}/rtl projects/${pName}/rtl/*.sv projects/${pName}/rtl/*.v`);
+            }
+        })
+    );
+
+    // 13. Flow Execution
     context.subscriptions.push(
         vscode.commands.registerCommand('silis.runSynthesis', () => {
             const term = vscode.window.createTerminal('Silis Synthesis');
@@ -506,6 +692,22 @@ function getIframeHtml(url, title) {
     <div class="frame-wrap">
         <iframe id="cad-frame" src="${url}"></iframe>
     </div>
+    <script>
+        const vscode = acquireVsCodeApi();
+        window.addEventListener('message', function(event) {
+            // Forward messages from inner iframe out to VS Code extension host
+            if (event.data && (event.data.fromSilisSchem || event.data.fromSilisRohd || event.data.fromSilis)) {
+                vscode.postMessage(event.data);
+            }
+            // Forward messages from VS Code extension host into inner iframe
+            if (event.data && (event.data.type === 'setValues' || event.data.type === 'clearValues' || event.data.type === 'addSignal')) {
+                const f = document.getElementById('cad-frame');
+                if (f && f.contentWindow) {
+                    f.contentWindow.postMessage(event.data, '*');
+                }
+            }
+        });
+    </script>
 </body>
 </html>`;
 }

@@ -36,24 +36,33 @@
 
 <!-- PROJECTS:START -->
 
-## ASIC Projects & Control Center
+## Workbench Guide & Control Center
 
-> [!TIP]
-> **Interactive ASIC Studio Dashboard**: For one-click project creation, schematic probing, and physical design inspection, launch the [Silis ASIC Studio Dashboard](command:silis.openDashboard) (or press `Ctrl+Shift+P` and type `Silis: Open ASIC Studio Dashboard`).
+> [!IMPORTANT]
+> **How to Navigate Silis in VS Code Web / GitHub Codespaces**:
+> 1. **Activity Bar (Left Sidebar)**: Click the **Silis CAD** icon (circuit-board icon on the leftmost bar) to access the interactive Control Center, create new projects with the authentic 6-stage wizard, and open visual CAD surfaces.
+> 2. **Run Simulation (Play Button)**: Click the **Play button** on the top right editor title bar (or run `Silis: Compile & Run Simulation`) to compile design logic, open the DigitalJS schematic side-by-side on the right (`ViewColumn.Beside`), and load the waveform inspector in the bottom panel dock.
+> 3. **Lint RTL (Debug Button / Ctrl+L)**: Click the **Bug button** on the editor title bar or press `Ctrl+L` to run strict Verilator syntax and design rule checks.
+> 4. **Tri-Way Cross-Probing**:
+>    - **Waveform -> Schematic**: Scrubbing the waveform cursor at timestamp `t` live-evaluates and annotates wire logic levels in the schematic.
+>    - **Schematic -> Waveform**: Right-click any wire/gate and select *Show in waveform* to add and highlight the signal in the bottom waveform dock.
+>    - **Schematic -> RTL Editor**: Right-click any component and select *Go to source* / *Go to definition* to navigate directly to the declaration in the left editor.
 
-Manage and inspect chip designs directly from this Codespace workspace. Click any action below to open interactive tools inside dedicated VS Code editor tabs.
+### Registered ASIC Projects
 
-| Project | Process (PDK) | Top Module | Layout (DEF) | Waveforms | Interactive Actions |
+| Project | Process (PDK) | Top Module | Layout (DEF) | Waveforms | Source Files |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **demo_soc** | `sky130` | `chip_top` | Available | Available | [Select](command:silis.openProject?%22demo_soc%22) &middot; [Schematic](command:silis.openSchematic?%22demo_soc%22) &middot; [Waveforms](command:silis.openWaveforms?%22demo_soc%22) &middot; [Layout](command:silis.openLayout?%22demo_soc%22) &middot; [Floorplan](command:silis.openFloorplanner?%22demo_soc%22) |
+| **demo_soc** | `sky130` | `chip_top` | Available | Available | 2 file(s) |
 
-### Quick Actions
+### Key Commands (`Ctrl+Shift+P`)
 
-- [**+ Create New ASIC Project**](command:silis.newProject) -- Launch interactive project setup wizard
-- [**Open Unified CAD Dock**](command:silis.openWorkbench) -- View schematic, waveforms, layout, and floorplan in a tabbed panel
-- [**Run RTL Synthesis (Yosys)**](command:silis.runSynthesis) -- Synthesize active project into gate-level netlist
-- [**Run Tapeout Flow (OpenROAD)**](command:silis.runAll) -- Execute floorplan, CTS, placement, and routing
-- [**Refresh Projects List**](command:silis.refreshReadme) -- Re-scan workspace directories and update this view
+- `Silis: Open Project` -- Select active project, focus directory in Explorer, and open top RTL on left
+- `Silis: Compile & Run Simulation` -- Compile design, display schematic split beside RTL, focus bottom waveform dock
+- `Silis: Lint RTL (Ctrl+L)` -- Run Verilator strict RTL lint checks
+- `Silis: Open 2D Layout Canvas` -- Open FastSiliconPeeker 2D DEF layout canvas
+- `Silis: Open Floorplan & Power Studio` -- Open multi-domain UPF floorplanning canvas
+- `Silis: Run Synthesis (Yosys)` -- Synthesize active project into gate-level netlist
+- `Silis: Run Tapeout Flow (OpenROAD)` -- Execute floorplan, CTS, placement, and routing
 
 <!-- PROJECTS:END -->
 
@@ -65,8 +74,8 @@ In GitHub Codespaces, visualizer surfaces render to dedicated virtual framebuffe
 
 | Subsystem | Port | One-Click Dock Link | Description |
 | :--- | :--- | :--- | :--- |
-| **Silis Floorplan Studio** | `6084` | [Open Floorplan Studio](http://localhost:6084/vnc.html?autoconnect=true&resize=remote) | Always-open interactive floorplanner, halo clearance inspector, and UPF power domain studio. |
-| **FastSiliconPeeker (2D Layout)** | `6081` | [Open 2D Layout Canvas](http://localhost:6081/vnc.html?autoconnect=true&resize=remote) | Auto-docks as soon as `results/temp.def` is synthesized. Sub-pixel hardware-accelerated DEF placement. |
+| **Silis Floorplan Studio** | `6084` | [Open Floorplan Studio](http://localhost:6084/vnc_lite.html?autoconnect=true&resize=scale) | Always-open interactive floorplanner, halo clearance inspector, and UPF power domain studio. |
+| **FastSiliconPeeker (2D Layout)** | `6081` | [Open 2D Layout Canvas](http://localhost:6081/vnc_lite.html?autoconnect=true&resize=scale) | Auto-docks as soon as `results/temp.def` is synthesized. Sub-pixel hardware-accelerated DEF placement. |
 | **Frontend Studio & Waveforms** | `6082` | [Open Waveform Viewer](http://localhost:6082/vnc.html?autoconnect=true&resize=remote) | File explorer, Monaco RTL editor with live hover cards, C++ schematic viewer, and Intel ROHD waveform drawer. |
 
 ---

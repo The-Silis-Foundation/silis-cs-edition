@@ -33,6 +33,7 @@ if CORE_DIR not in sys.path:
 
 class SilisCadHandler(http.server.SimpleHTTPRequestHandler):
     active_project_dir = os.path.join(REPO_ROOT, "projects", "demo_soc")
+    _vcd_cache = {}
 
     def end_headers(self):
         # Allow cross-origin and iframe embedding in VS Code Simple Browser & webviews
@@ -187,6 +188,59 @@ class SilisCadHandler(http.server.SimpleHTTPRequestHandler):
                 self.wfile.write(vcd_content.encode("utf-8"))
             else:
                 self._send_json(404, {"error": "No VCD waveform found"})
+            return
+
+        # 5b. API: Query wire values at timestamp for cross-probing (selective signal evaluation)
+        if path == "/api/waveform/values":
+            target_file = query.get("file", [None])[0]
+            project_dir = query.get("project", [SilisCadHandler.active_project_dir])[0]
+            if not os.path.isabs(project_dir):
+                project_dir = os.path.join(REPO_ROOT, project_dir)
+            try:
+                time_ps = int(query.get("time", [0])[0])
+            except ValueError:
+                time_ps = 0
+            signals_str = query.get("signals", [None])[0]
+            selected_signals = set(s.strip() for s in signals_str.split(",") if s.strip()) if signals_str else None
+
+            vcd_path = self._locate_vcd_path(project_dir, target_file)
+            if not vcd_path:
+                self._send_json(404, {"error": "No VCD found for values"})
+                return
+
+            try:
+                mtime = os.path.getmtime(vcd_path)
+                cached = SilisCadHandler._vcd_cache.get(vcd_path)
+                if not cached or cached["mtime"] != mtime:
+                    from signalpeeker.vcd_tracker import FastVcdTracker
+                    tracker = FastVcdTracker(vcd_path)
+                    SilisCadHandler._vcd_cache[vcd_path] = {"tracker": tracker, "mtime": mtime}
+                else:
+                    tracker = cached["tracker"]
+
+                updates_dict = tracker.get_all_values_at_ps(time_ps)
+                if selected_signals:
+                    filtered = {}
+                    for k, v in updates_dict.items():
+                        leaf = k.split(".")[-1]
+                        if k in selected_signals or leaf in selected_signals:
+                            filtered[k] = v
+                            filtered[leaf] = v
+                    updates_dict = filtered
+
+                updates_list = [{"name": k, "values": [v]} for k, v in updates_dict.items()]
+                self._send_json(200, updates_list)
+            except Exception as e:
+                self._send_json(500, {"error": str(e)})
+            return
+
+        # 5c. API: Run Verilator RTL Lint (Ctrl+L)
+        if path == "/api/lint":
+            project_dir = query.get("project", [SilisCadHandler.active_project_dir])[0]
+            if not os.path.isabs(project_dir):
+                project_dir = os.path.join(REPO_ROOT, project_dir)
+            lint_res = self._run_lint(project_dir)
+            self._send_json(200, lint_res)
             return
 
         # 6. Route static files:
@@ -596,10 +650,9 @@ valid
             self.send_response(500)
             self.end_headers()
 
-    def _find_waveform(self, project_dir, target_file=None):
+    def _locate_vcd_path(self, project_dir, target_file=None):
         if target_file and os.path.isfile(target_file) and os.path.getsize(target_file) > 0:
-            with open(target_file, "r", encoding="utf-8", errors="ignore") as f:
-                return f.read()
+            return target_file
 
         candidates = [
             os.path.join(project_dir, "waveform.vcd"),
@@ -611,9 +664,50 @@ valid
 
         for cand in candidates:
             if os.path.isfile(cand) and os.path.getsize(cand) > 0:
-                with open(cand, "r", encoding="utf-8", errors="ignore") as f:
-                    return f.read()
+                return cand
         return None
+
+    def _find_waveform(self, project_dir, target_file=None):
+        cand = self._locate_vcd_path(project_dir, target_file)
+        if cand:
+            with open(cand, "r", encoding="utf-8", errors="ignore") as f:
+                return f.read()
+        return None
+
+    def _run_lint(self, project_dir):
+        verilator_bin = os.path.join(REPO_ROOT, "third-party", "bin", "verilator")
+        if not (os.path.isfile(verilator_bin) and os.access(verilator_bin, os.X_OK)):
+            verilator_bin = shutil.which("verilator") or "verilator"
+
+        v_files = []
+        for d in ["rtl", "source", "."]:
+            p = os.path.join(project_dir, d)
+            if os.path.isdir(p):
+                for f in os.listdir(p):
+                    if f.endswith((".v", ".sv")) and not f.startswith("tb_"):
+                        v_files.append(os.path.join(p, f))
+
+        if not v_files:
+            return {"exit_code": 1, "stdout": "", "stderr": "No RTL source files found to lint.", "success": False}
+
+        cmd = [verilator_bin, "--lint-only", "-sv", "-Wall", "-Wno-fatal"]
+        for inc in [os.path.join(project_dir, "rtl"), os.path.join(project_dir, "source"), project_dir]:
+            if os.path.isdir(inc):
+                cmd.append(f"-I{inc}")
+        cmd.extend(v_files)
+
+        try:
+            res = subprocess.run(cmd, cwd=project_dir, capture_output=True, text=True, timeout=30)
+            output = res.stderr or res.stdout or ""
+            return {
+                "exit_code": res.returncode,
+                "stdout": res.stdout,
+                "stderr": res.stderr,
+                "output": output,
+                "success": res.returncode == 0
+            }
+        except Exception as e:
+            return {"exit_code": -1, "stdout": "", "stderr": str(e), "output": str(e), "success": False}
 
     def _get_or_generate_netlist(self, project_dir, module_name, target_file=None):
         if target_file and os.path.isfile(target_file) and os.path.getsize(target_file) > 0:

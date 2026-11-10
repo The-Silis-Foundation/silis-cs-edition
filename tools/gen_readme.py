@@ -71,20 +71,27 @@ def build_dashboard_markdown(projects):
     lines = []
     lines.append(START_MARKER)
     lines.append("")
-    lines.append("## ASIC Projects & Control Center")
+    lines.append("## Workbench Guide & Control Center")
     lines.append("")
-    lines.append("> [!TIP]")
-    lines.append("> **Interactive ASIC Studio Dashboard**: For one-click project creation, schematic probing, and physical design inspection, launch the [Silis ASIC Studio Dashboard](command:silis.openDashboard) (or press `Ctrl+Shift+P` and type `Silis: Open ASIC Studio Dashboard`).")
+    lines.append("> [!IMPORTANT]")
+    lines.append("> **How to Navigate Silis in VS Code Web / GitHub Codespaces**:")
+    lines.append("> 1. **Activity Bar (Left Sidebar)**: Click the **Silis CAD** icon (circuit-board icon on the leftmost bar) to access the interactive Control Center, create new projects with the authentic 6-stage wizard, and open visual CAD surfaces.")
+    lines.append("> 2. **Run Simulation (Play Button)**: Click the **Play button** on the top right editor title bar (or run `Silis: Compile & Run Simulation`) to compile design logic, open the DigitalJS schematic side-by-side on the right (`ViewColumn.Beside`), and load the waveform inspector in the bottom panel dock.")
+    lines.append("> 3. **Lint RTL (Debug Button / Ctrl+L)**: Click the **Bug button** on the editor title bar or press `Ctrl+L` to run strict Verilator syntax and design rule checks.")
+    lines.append("> 4. **Tri-Way Cross-Probing**:")
+    lines.append(">    - **Waveform -> Schematic**: Scrubbing the waveform cursor at timestamp `t` live-evaluates and annotates wire logic levels in the schematic.")
+    lines.append(">    - **Schematic -> Waveform**: Right-click any wire/gate and select *Show in waveform* to add and highlight the signal in the bottom waveform dock.")
+    lines.append(">    - **Schematic -> RTL Editor**: Right-click any component and select *Go to source* / *Go to definition* to navigate directly to the declaration in the left editor.")
     lines.append("")
-    lines.append("Manage and inspect chip designs directly from this Codespace workspace. Click any action below to open interactive tools inside dedicated VS Code editor tabs.")
+    lines.append("### Registered ASIC Projects")
     lines.append("")
 
     if not projects:
         lines.append("> [!NOTE]")
-        lines.append("> No ASIC projects detected in `projects/`. Click the button below to initialize your first project scaffold.")
+        lines.append("> No ASIC projects detected in `projects/`. Use the **Silis CAD** sidebar to initialize your first project scaffold.")
         lines.append("")
     else:
-        lines.append("| Project | Process (PDK) | Top Module | Layout (DEF) | Waveforms | Interactive Actions |")
+        lines.append("| Project | Process (PDK) | Top Module | Layout (DEF) | Waveforms | Source Files |")
         lines.append("| :--- | :--- | :--- | :--- | :--- | :--- |")
         for p in projects:
             name = p["name"]
@@ -92,25 +99,19 @@ def build_dashboard_markdown(projects):
             top = p["top_module"]
             layout_status = "Available" if p["has_def"] else "Pending PnR"
             wave_status = "Available" if p["has_vcd"] else "Pending Sim"
-
-            arg_enc = encode_arg(name)
-            open_link = f"[Select](command:silis.openProject?{arg_enc})"
-            schem_link = f"[Schematic](command:silis.openSchematic?{arg_enc})"
-            wave_link = f"[Waveforms](command:silis.openWaveforms?{arg_enc})"
-            layout_link = f"[Layout](command:silis.openLayout?{arg_enc})"
-            fps_link = f"[Floorplan](command:silis.openFloorplanner?{arg_enc})"
-
-            actions = f"{open_link} &middot; {schem_link} &middot; {wave_link} &middot; {layout_link} &middot; {fps_link}"
-            lines.append(f"| **{name}** | `{pdk}` | `{top}` | {layout_status} | {wave_status} | {actions} |")
+            rtl_count = f"{p['rtl_count']} file(s)" if p.get('rtl_count') else "Ready"
+            lines.append(f"| **{name}** | `{pdk}` | `{top}` | {layout_status} | {wave_status} | {rtl_count} |")
         lines.append("")
 
-    lines.append("### Quick Actions")
+    lines.append("### Key Commands (`Ctrl+Shift+P`)")
     lines.append("")
-    lines.append("- [**+ Create New ASIC Project**](command:silis.newProject) -- Launch interactive project setup wizard")
-    lines.append("- [**Open Unified CAD Dock**](command:silis.openWorkbench) -- View schematic, waveforms, layout, and floorplan in a tabbed panel")
-    lines.append("- [**Run RTL Synthesis (Yosys)**](command:silis.runSynthesis) -- Synthesize active project into gate-level netlist")
-    lines.append("- [**Run Tapeout Flow (OpenROAD)**](command:silis.runAll) -- Execute floorplan, CTS, placement, and routing")
-    lines.append("- [**Refresh Projects List**](command:silis.refreshReadme) -- Re-scan workspace directories and update this view")
+    lines.append("- `Silis: Open Project` -- Select active project, focus directory in Explorer, and open top RTL on left")
+    lines.append("- `Silis: Compile & Run Simulation` -- Compile design, display schematic split beside RTL, focus bottom waveform dock")
+    lines.append("- `Silis: Lint RTL (Ctrl+L)` -- Run Verilator strict RTL lint checks")
+    lines.append("- `Silis: Open 2D Layout Canvas` -- Open FastSiliconPeeker 2D DEF layout canvas")
+    lines.append("- `Silis: Open Floorplan & Power Studio` -- Open multi-domain UPF floorplanning canvas")
+    lines.append("- `Silis: Run Synthesis (Yosys)` -- Synthesize active project into gate-level netlist")
+    lines.append("- `Silis: Run Tapeout Flow (OpenROAD)` -- Execute floorplan, CTS, placement, and routing")
     lines.append("")
     lines.append(END_MARKER)
 

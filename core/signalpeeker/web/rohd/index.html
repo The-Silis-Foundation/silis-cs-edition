@@ -9,10 +9,17 @@
     // Note: VSCODE_WEBVIEW must be false so ROHD displays the full Module Tree in the hierarchy pane
     window.VSCODE_WEBVIEW = false;
     window.__rohdMessageQueue = [];
+    window.__rohdActiveSignals = new Set();
     window.rohdEmbed = {
       postMessage: function(msg) {
         // Emit through console prefix so Python QWebEnginePage intercepts it
         console.log('SILIS_ROHD_MSG:' + JSON.stringify(msg));
+        if (msg && msg.type === 'cursorMoved') {
+          msg.signals = Array.from(window.__rohdActiveSignals);
+        }
+        if (window.parent && window.parent !== window) {
+          window.parent.postMessage({ fromSilisRohd: true, data: msg }, '*');
+        }
       }
     };
     window.deliverRohdResponse = function(msg) {
@@ -73,14 +80,25 @@
     })();
 
     window.addEventListener('message', function(e) {
-      if (e.data && typeof window.__rohdMessageCallback === 'function') {
-        window.__rohdMessageCallback(e.data);
+      if (e.data) {
+        if (e.data.type === 'addSignal') {
+          var sig = e.data.signalName || e.data.signal;
+          if (sig) {
+            window.addRohdSignal(sig);
+          }
+        }
+        if (typeof window.__rohdMessageCallback === 'function') {
+          window.__rohdMessageCallback(e.data);
+        }
       }
     });
 
     // Dynamic Signal Addition function
     window.addRohdSignal = function(signalName) {
       if (!signalName) return;
+      if (window.__rohdActiveSignals) {
+        window.__rohdActiveSignals.add(signalName);
+      }
       var payload = JSON.stringify({
         "version": 6,
         "signals": [

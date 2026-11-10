@@ -147,6 +147,18 @@
         "category": "Silis"
       },
       {
+        "command": "silis.runSimulation",
+        "title": "Silis: Compile & Run Simulation",
+        "category": "Silis",
+        "icon": "$(play)"
+      },
+      {
+        "command": "silis.runLint",
+        "title": "Silis: Lint RTL (Ctrl+L)",
+        "category": "Silis",
+        "icon": "$(bug)"
+      },
+      {
         "command": "silis.runSynthesis",
         "title": "Silis: Run Synthesis (Yosys)",
         "category": "Silis"
@@ -157,7 +169,24 @@
         "category": "Silis"
       }
     ],
+    "keybindings": [
+      {
+        "command": "silis.runLint",
+        "key": "ctrl+l",
+        "when": "editorTextFocus"
+      }
+    ],
     "menus": {
+      "editor/title/run": [
+        {
+          "command": "silis.runSimulation",
+          "group": "navigation@1"
+        },
+        {
+          "command": "silis.runLint",
+          "group": "navigation@2"
+        }
+      ],
       "explorer/context": [
         {
           "command": "silis.openWaveformInBottomDock",

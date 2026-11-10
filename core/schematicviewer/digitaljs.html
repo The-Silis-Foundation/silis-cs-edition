@@ -111,7 +111,7 @@
 <div id="paper-container"><div id="paper"></div></div>
 <div id="status"><span id="sv-taskbar"></span><span id="status-text"></span></div>
     <script>
-        // Mock VSCode API for standalone WebEngine
+        // Mock VSCode API for standalone WebEngine / Iframe Webview
         let _silisMsgSeq = 0;
         function acquireVsCodeApi() {
             return {
@@ -123,6 +123,9 @@
                             document.title = "SILIS_SCHEM_MSG:" + serialized + "#" + (_silisMsgSeq++);
                         } catch (e) {
                             console.error("Failed to stringify message for Qt title bridge:", e);
+                        }
+                        if (window.parent && window.parent !== window) {
+                            window.parent.postMessage({ fromSilisSchem: true, data: msg }, '*');
                         }
                         console.log("SILIS_SCHEM_MSG:" + JSON.stringify(msg));
                     }
