@@ -281,8 +281,8 @@ ul { line-height: 2; }
 <ul>
   <li><a href="/schematic/digitaljs.html">Schematic Viewer (DigitalJS & ELK Engine)</a></li>
   <li><a href="/waveforms/index.html">Waveform Viewer (ROHD Web & WASM)</a></li>
-  <li><a href="http://localhost:6081/vnc.html?autoconnect=true&resize=remote">2D Layout Viewer (FastSiliconPeeker on :1)</a></li>
-  <li><a href="http://localhost:6084/vnc.html?autoconnect=true&resize=remote">Floorplan & Power Studio (Silis FPS on :4)</a></li>
+  <li><a href="http://localhost:6081/vnc_lite.html?autoconnect=true&resize=scale">2D Layout Viewer (FastSiliconPeeker on :1)</a></li>
+  <li><a href="http://localhost:6084/vnc_lite.html?autoconnect=true&resize=scale">Floorplan & Power Studio (Silis FPS on :4)</a></li>
 </ul>
 </body>
 </html>""")

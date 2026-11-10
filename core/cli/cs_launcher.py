@@ -192,8 +192,8 @@ def launch_project(project_target: str) -> bool:
         print(f"  • Primary Source: {os.path.relpath(top_file, project_root)}")
     print("  • Schematic Viewer: http://localhost:8765/schematic/digitaljs.html")
     print("  • Waveform Viewer:  http://localhost:8765/waveforms/index.html")
-    print("  • Layout Peeker:    http://localhost:6081/vnc.html?autoconnect=true&resize=remote")
-    print("  • Floorplan Studio: http://localhost:6084/vnc.html?autoconnect=true&resize=remote")
+    print("  • Layout Peeker:    http://localhost:6081/vnc_lite.html?autoconnect=true&resize=scale")
+    print("  • Floorplan Studio: http://localhost:6084/vnc_lite.html?autoconnect=true&resize=scale")
     print("=================================================================")
 
     if code_bin:

@@ -146,21 +146,31 @@ function activate(context) {
             const uri = await resolveUrl(`http://127.0.0.1:8765/waveforms/index.html?project=${encodeURIComponent(projDir)}`);
             webviewView.webview.html = getIframeHtml(uri, 'ROHD Waveform Inspector');
 
+            let _scrubTimer = null;
+            let _pendingScrubTime = null;
+            let _pendingScrubSigs = null;
+
             webviewView.webview.onDidReceiveMessage(async (msg) => {
                 if (msg && msg.fromSilisRohd && msg.data) {
                     const rohdMsg = msg.data;
                     if (rohdMsg.type === 'cursorMoved' && activeSchematicPanel) {
-                        const timePs = rohdMsg.time || 0;
-                        const sigs = Array.isArray(rohdMsg.signals) ? rohdMsg.signals.join(',') : '';
-                        try {
-                            const query = `project=${encodeURIComponent(getActiveProjectDir())}&time=${timePs}${sigs ? '&signals=' + encodeURIComponent(sigs) : ''}`;
-                            const res = await callHttpApi(`http://127.0.0.1:8765/api/waveform/values?${query}`, 'GET');
-                            if (Array.isArray(res) && activeSchematicPanel) {
-                                activeSchematicPanel.webview.postMessage({ type: 'setValues', updates: res });
+                        _pendingScrubTime = rohdMsg.time || 0;
+                        _pendingScrubSigs = Array.isArray(rohdMsg.signals) ? rohdMsg.signals.join(',') : '';
+                        if (_scrubTimer) clearTimeout(_scrubTimer);
+                        _scrubTimer = setTimeout(async () => {
+                            _scrubTimer = null;
+                            const timePs = _pendingScrubTime;
+                            const sigs = _pendingScrubSigs;
+                            try {
+                                const query = `project=${encodeURIComponent(getActiveProjectDir())}&time=${timePs}${sigs ? '&signals=' + encodeURIComponent(sigs) : ''}`;
+                                const res = await callHttpApi(`http://127.0.0.1:8765/api/waveform/values?${query}`, 'GET');
+                                if (Array.isArray(res) && activeSchematicPanel) {
+                                    activeSchematicPanel.webview.postMessage({ type: 'setValues', updates: res });
+                                }
+                            } catch (e) {
+                                console.error('[Silis Cross-Probe] Failed to query waveform values:', e);
                             }
-                        } catch (e) {
-                            console.error('[Silis Cross-Probe] Failed to query waveform values:', e);
-                        }
+                        }, 25);
                     }
                 }
             });
@@ -338,6 +348,11 @@ function activate(context) {
                             if (dashboardPanel) {
                                 dashboardPanel.webview.postMessage({ type: 'refresh' });
                             }
+
+                            // Auto-close wizard dialog (Desktop parity: QDialog.accept closes wizard on completion)
+                            setTimeout(() => {
+                                try { panel.dispose(); } catch (e) {}
+                            }, 600);
                         } else {
                             panel.webview.postMessage({ type: 'error', message: (res && res.error) || 'Failed to initialize project.' });
                         }
@@ -491,6 +506,14 @@ function activate(context) {
         })
     );
 
+    function getFlowTerminal() {
+        let term = vscode.window.terminals.find(t => t.name === 'Silis Flow');
+        if (!term) {
+            term = vscode.window.createTerminal('Silis Flow');
+        }
+        return term;
+    }
+
     // 11. Run Simulation (Play Button: Runs compile & sim, opens Schematic on right, loads Waveform dock)
     context.subscriptions.push(
         vscode.commands.registerCommand('silis.runSimulation', async () => {
@@ -504,16 +527,13 @@ function activate(context) {
             // 1. Open DigitalJS Schematic on the right (split view)
             await openSchematicPanel(pName, vscode.ViewColumn.Beside);
 
-            // 2. Focus bottom dock tab with waveforms
-            await loadWaveformInBottomDock(getActiveProjectDir(pName));
-
-            // 3. Run simulation command in terminal
-            let term = vscode.window.terminals.find(t => t.name === 'Silis Simulation');
-            if (!term) {
-                term = vscode.window.createTerminal('Silis Simulation');
-            }
-            term.show();
+            // 2. Run simulation command in flow terminal (preserveFocus = true)
+            const term = getFlowTerminal();
+            term.show(true);
             term.sendText(`silis --run-sim --project projects/${pName}`);
+
+            // 3. Focus bottom dock tab with waveforms (front-and-center)
+            await loadWaveformInBottomDock(getActiveProjectDir(pName));
         })
     );
 
@@ -542,10 +562,7 @@ function activate(context) {
                 }
             } catch (err) {
                 outputChan.appendLine(`[LINT] API request error: ${err.message}`);
-                let term = vscode.window.terminals.find(t => t.name === 'Silis Lint');
-                if (!term) {
-                    term = vscode.window.createTerminal('Silis Lint');
-                }
+                const term = getFlowTerminal();
                 term.show();
                 term.sendText(`verilator --lint-only -sv -Wall -Wno-fatal -Iprojects/${pName}/rtl projects/${pName}/rtl/*.sv projects/${pName}/rtl/*.v`);
             }
@@ -555,7 +572,7 @@ function activate(context) {
     // 13. Flow Execution
     context.subscriptions.push(
         vscode.commands.registerCommand('silis.runSynthesis', () => {
-            const term = vscode.window.createTerminal('Silis Synthesis');
+            const term = getFlowTerminal();
             term.show();
             term.sendText(`silis --run-synth --project projects/${activeProject}`);
         })
@@ -563,7 +580,7 @@ function activate(context) {
 
     context.subscriptions.push(
         vscode.commands.registerCommand('silis.runAll', () => {
-            const term = vscode.window.createTerminal('Silis Tapeout');
+            const term = getFlowTerminal();
             term.show();
             term.sendText(`silis --run-all --project projects/${activeProject}`);
         })

@@ -76,7 +76,7 @@ In GitHub Codespaces, visualizer surfaces render to dedicated virtual framebuffe
 | :--- | :--- | :--- | :--- |
 | **Silis Floorplan Studio** | `6084` | [Open Floorplan Studio](http://localhost:6084/vnc_lite.html?autoconnect=true&resize=scale) | Always-open interactive floorplanner, halo clearance inspector, and UPF power domain studio. |
 | **FastSiliconPeeker (2D Layout)** | `6081` | [Open 2D Layout Canvas](http://localhost:6081/vnc_lite.html?autoconnect=true&resize=scale) | Auto-docks as soon as `results/temp.def` is synthesized. Sub-pixel hardware-accelerated DEF placement. |
-| **Frontend Studio & Waveforms** | `6082` | [Open Waveform Viewer](http://localhost:6082/vnc.html?autoconnect=true&resize=remote) | File explorer, Monaco RTL editor with live hover cards, C++ schematic viewer, and Intel ROHD waveform drawer. |
+| **Frontend Studio & Waveforms** | `6082` | [Open Waveform Viewer](http://localhost:6082/vnc_lite.html?autoconnect=true&resize=scale) | File explorer, Monaco RTL editor with live hover cards, C++ schematic viewer, and Intel ROHD waveform drawer. |
 
 ---
 
