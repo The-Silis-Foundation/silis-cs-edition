@@ -11,7 +11,7 @@
       "version": "latest"
     }
   },
-  "forwardPorts": [8765, 6081, 6082, 6084],
+  "forwardPorts": [8765, 6081, 6084],
   "portsAttributes": {
     "8765": {
       "label": "Silis Native CAD Web Hub (Schematic & Waveforms)",
@@ -20,11 +20,6 @@
     },
     "6081": {
       "label": "Silis 2D Layout (FastSiliconPeeker)",
-      "onAutoForward": "silent",
-      "visibility": "public"
-    },
-    "6082": {
-      "label": "Silis Frontend Studio & Waveform (SignalPeeker)",
       "onAutoForward": "silent",
       "visibility": "public"
     },

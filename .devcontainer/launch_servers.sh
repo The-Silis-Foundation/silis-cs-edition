@@ -29,27 +29,31 @@ start_display_pipeline() {
 
     echo "[Silis CS] Starting Display :${disp} (VNC:${vnc_port} -> Web:${web_port}) - ${title}"
     
-    # Kill any stale Xvfb on this display (target only the specific display to avoid racing other pipelines)
+    # Kill any stale Xvfb on this display
     pkill -f "Xvfb :${disp}" 2>/dev/null || true
     sudo pkill -f "Xvfb :${disp}" 2>/dev/null || true
     rm -f /tmp/.X${disp}-lock /tmp/.X11-unix/X${disp} 2>/dev/null || true
 
-    Xvfb :${disp} -screen 0 1600x1000x24 -ac +extension GLX +render -noreset &
+    nohup Xvfb :${disp} -screen 0 1600x1000x24 -ac +extension GLX +render -noreset > /dev/null 2>&1 &
+    disown
     sleep 1
 
-    x11vnc -display :${disp} -forever -nopw -shared -rfbport ${vnc_port} -quiet &
+    nohup x11vnc -display :${disp} -forever -nopw -shared -rfbport ${vnc_port} -xdamage -wait 20 -defer 20 -quiet > /dev/null 2>&1 &
+    disown
     sleep 1
 
     # Run websockify bound to 0.0.0.0
-    websockify --web="${NOVNC_DIR}" 0.0.0.0:${web_port} localhost:${vnc_port} &
+    nohup websockify --web="${NOVNC_DIR}" 0.0.0.0:${web_port} localhost:${vnc_port} > /dev/null 2>&1 &
+    disown
 }
 
 # 0. Start Native Web CAD Server (Schematic & Waveforms) on Port 8765
-python3 "${WORKSPACE_DIR}/core/server/cs_server.py" 8765 > /tmp/cs_cad_server.log 2>&1 &
+pkill -f "cs_server.py" 2>/dev/null || true
+nohup python3 "${WORKSPACE_DIR}/core/server/cs_server.py" 8765 > /tmp/cs_cad_server.log 2>&1 &
+disown
 
-# 1. Initialize Framebuffers
+# 1. Initialize Framebuffers (Purged unused Display :2)
 start_display_pipeline 1 5901 6081 "FastSiliconPeeker 2D Layout"
-start_display_pipeline 2 5902 6082 "Frontend Studio & SignalPeeker Waveforms"
 start_display_pipeline 4 5904 6084 "Silis Floorplan & Power Studio (FPS)"
 
 sleep 2
@@ -118,6 +122,7 @@ fi
             if [ ! -f "/tmp/.def_opened" ] || [ "$DEF_FILE" -nt "/tmp/.def_opened" ]; then
                 touch "/tmp/.def_opened"
                 echo "[Silis CS Watcher] Updated layout detected: ${DEF_FILE}"
+                pkill -f "FastSiliconPeeker" 2>/dev/null || true
                 (
                     export DISPLAY=:1
                     export PYTHONPATH="${WORKSPACE_DIR}:${WORKSPACE_DIR}/core:${WORKSPACE_DIR}/third-party/siliconcompiler:$PYTHONPATH"
@@ -139,6 +144,7 @@ sys.exit(app.exec())
         sleep 2
     done
 ) &
+disown
 
 # 5. Generate and refresh workspace README dashboard
 if [ -f "${WORKSPACE_DIR}/tools/gen_readme.py" ]; then
