@@ -2,7 +2,7 @@
 set -e
 
 echo "================================================================="
-echo "SILIS CS EDITION: DIRECT REPO RUNTIME ACTIVATION"
+echo "SILIS CS EDITION: CONTAINER PROVISIONING & SETUP"
 echo "================================================================="
 
 WORKSPACE_DIR="/workspaces/silis-cs-edition"
@@ -10,34 +10,37 @@ if [ ! -d "$WORKSPACE_DIR" ]; then
     WORKSPACE_DIR="$(pwd)"
 fi
 
-# Ensure novnc index.html link
+# 1. Initialize Git Submodules (Silis core)
+echo "Initializing Silis submodules..."
+cd "$WORKSPACE_DIR"
+git submodule update --init silis 2>/dev/null || true
+
+# 2. Ensure novnc index.html link
 if [ -f "/usr/share/novnc/vnc.html" ] && [ ! -f "/usr/share/novnc/index.html" ]; then
-    sudo ln -s /usr/share/novnc/vnc.html /usr/share/novnc/index.html
+    sudo ln -sf /usr/share/novnc/vnc.html /usr/share/novnc/index.html
 fi
 
-# 1. Unpack AppImage committed directly in repo (dist/silis-python-qt-x86_64.AppImage)
+# 3. Unpack Python + Qt6 Standalone Runtime
 OPT_DIR="/opt/silis/runtime"
-REPO_APPIMAGE="${WORKSPACE_DIR}/dist/silis-python-qt-x86_64.AppImage"
-
-# Guard: if the AppImage is a Git LFS pointer, pull the actual binary
-if [ -f "$REPO_APPIMAGE" ] && grep -q "git-lfs.github.com" "$REPO_APPIMAGE" 2>/dev/null; then
-    echo "LFS pointer detected -- pulling AppImage binary..."
-    cd "$WORKSPACE_DIR" && git lfs pull --include="dist/silis-python-qt-x86_64.AppImage"
-fi
+RUNTIME_APPIMAGE="/tmp/silis-python-qt-x86_64.AppImage"
 
 if [ ! -d "$OPT_DIR" ]; then
-    if [ -f "$REPO_APPIMAGE" ]; then
-        echo "Extracting runtime from repo binary: $REPO_APPIMAGE..."
-        sudo mkdir -p /opt/silis
-        chmod +x "$REPO_APPIMAGE"
-        (cd /opt/silis && sudo "$REPO_APPIMAGE" --appimage-extract && sudo mv squashfs-root runtime && sudo chmod -R a+rX /opt/silis)
+    echo "Downloading 270MB Standalone Python+Qt AppImage from release..."
+    sudo mkdir -p /opt/silis
+    if [ -f "${WORKSPACE_DIR}/dist/silis-python-qt-x86_64.AppImage" ] && [ -s "${WORKSPACE_DIR}/dist/silis-python-qt-x86_64.AppImage" ]; then
+        sudo cp "${WORKSPACE_DIR}/dist/silis-python-qt-x86_64.AppImage" "$RUNTIME_APPIMAGE"
     else
-        echo "Error: Repo AppImage $REPO_APPIMAGE not found!"
-        exit 1
+        sudo wget -q \
+            "https://github.com/The-Silis-Foundation/silis-cs-edition/releases/download/v1.0.0-runtime/silis-python-qt-x86_64.AppImage" \
+            -O "$RUNTIME_APPIMAGE"
     fi
+    sudo chmod +x "$RUNTIME_APPIMAGE"
+    echo "Extracting runtime into $OPT_DIR..."
+    (cd /opt/silis && sudo "$RUNTIME_APPIMAGE" --appimage-extract && sudo mv squashfs-root runtime && sudo chmod -R a+rX /opt/silis)
+    sudo rm -f "$RUNTIME_APPIMAGE"
 fi
 
-# 2. Configure system shared libraries and Python symlinks
+# 4. Configure system shared libraries and Python symlinks
 if [ -d "/opt/silis/runtime/opt/python" ]; then
     echo "Activating /opt/silis/runtime..."
     sudo chmod -R a+rX /opt/silis
@@ -55,26 +58,26 @@ if [ -d "/opt/silis/runtime/opt/python" ]; then
     python3 -m pip install Pillow --no-warn-script-location 2>/dev/null || true
 fi
 
-# 3. Install Silis CAD Workbench VS Code Extension locally via symlink
-for EXT_BASE in "/home/vscode/.vscode-server/extensions" "/home/vscode/.vscode-remote/extensions" "${HOME}/.vscode-server/extensions"; do
-    if mkdir -p "$EXT_BASE" 2>/dev/null; then
+# 5. Install Silis CAD Workbench VS Code Extension locally
+for EXT_BASE in "/home/vscode/.vscode-server/extensions" "/home/vscode/.vscode-remote/extensions" "${HOME}/.vscode-server/extensions" "${HOME}/.vscode-remote/extensions"; do
+    if sudo mkdir -p "$EXT_BASE" 2>/dev/null; then
         TARGET="${EXT_BASE}/the-silis-foundation.silis-cad-workbench-1.0.0"
-        rm -rf "$TARGET"
-        ln -sf "${WORKSPACE_DIR}/extension" "$TARGET" 2>/dev/null || true
+        sudo rm -rf "$TARGET"
+        sudo cp -r "${WORKSPACE_DIR}/extension" "$TARGET" 2>/dev/null || true
+        sudo chown -R vscode:vscode "$EXT_BASE" 2>/dev/null || true
     fi
 done
-chown -R vscode:vscode "/home/vscode/.vscode-server" "/home/vscode/.vscode-remote" 2>/dev/null || true
 
-# 4. CLI symlinks in PATH
-sudo ln -sf "${WORKSPACE_DIR}/bin/silis" /usr/local/bin/silis
-sudo ln -sf "${WORKSPACE_DIR}/bin/silis" /usr/bin/silis
+# 6. CLI symlinks in PATH
+sudo ln -sf "${WORKSPACE_DIR}/assets/bin/silis" /usr/local/bin/silis 2>/dev/null || true
+sudo ln -sf "${WORKSPACE_DIR}/assets/bin/silis" /usr/bin/silis 2>/dev/null || true
 
 {
-    echo "export PATH=\"/opt/silis/runtime/opt/python/bin:${WORKSPACE_DIR}/bin:${WORKSPACE_DIR}/third-party/bin:\$PATH\""
-    echo "export PYTHONPATH=\"/opt/silis/runtime/opt/python/lib/python3.12/site-packages:${WORKSPACE_DIR}:${WORKSPACE_DIR}/core:${WORKSPACE_DIR}/third-party/siliconcompiler:\$PYTHONPATH\""
+    echo "export PATH=\"/opt/silis/runtime/opt/python/bin:${WORKSPACE_DIR}/assets/bin:${WORKSPACE_DIR}/silis/third-party/bin:\$PATH\""
+    echo "export PYTHONPATH=\"/opt/silis/runtime/opt/python/lib/python3.12/site-packages:${WORKSPACE_DIR}:${WORKSPACE_DIR}/silis:${WORKSPACE_DIR}/silis/core:${WORKSPACE_DIR}/silis/third-party/siliconcompiler:\$PYTHONPATH\""
     echo "export LD_LIBRARY_PATH=\"/opt/silis/runtime/usr/lib/x86_64-linux-gnu:/opt/silis/runtime/opt/python/lib:\$LD_LIBRARY_PATH\""
     echo 'export LIBGL_ALWAYS_SOFTWARE=1'
     echo 'export QT_QPA_PLATFORM=xcb'
 } | sudo tee /etc/profile.d/silis_env.sh > /dev/null
 
-echo "Silis CS Edition setup completed directly from repository binary in seconds."
+echo "Silis CS Edition setup completed successfully."
