@@ -1,18 +1,15 @@
 FROM mcr.microsoft.com/devcontainers/base:ubuntu-22.04
 
-# Lightweight system tools for noVNC, Xvfb, Mesa OpenGL, and EDA dependencies
+# Minimal host utilities for noVNC, Xvfb, and AppImage retrieval.
+# All Python 3.12, PyQt6, QtWebEngine, Tcl 8.6, Tk 8.6, Mesa OpenGL,
+# and runtime shared libraries are bundled directly in the standalone
+# silis-python-qt-x86_64.AppImage unpacked by setup.sh into /opt/silis/runtime.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     xvfb \
     x11vnc \
     novnc \
     websockify \
     net-tools \
-    libgl1-mesa-dri \
-    libgl1-mesa-glx \
-    libosmesa6-dev \
-    tcl8.6 \
-    tk8.6 \
     wget \
-    zsync \
     curl \
     && rm -rf /var/lib/apt/lists/*
