@@ -1,14 +1,6 @@
 {
   "name": "Silis CS Edition",
   "image": "mcr.microsoft.com/devcontainers/base:ubuntu-22.04",
-  "features": {
-    "ghcr.io/devcontainers/features/sshd:1": {
-      "version": "latest"
-    },
-    "ghcr.io/devcontainers/features/git-lfs:1": {
-      "version": "latest"
-    }
-  },
   "forwardPorts": [8765, 6081, 6084],
   "containerEnv": {
     "PYTHONPATH": "/workspaces/silis-cs-edition/silis:/workspaces/silis-cs-edition/silis/core"
