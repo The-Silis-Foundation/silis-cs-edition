@@ -478,6 +478,18 @@ class SilisCadHandler(http.server.SimpleHTTPRequestHandler):
     <script>
         (function() {
             try {
+                if (window.parent && window.parent !== window) {
+                    window.parent.postMessage({ type: 'silisHubReady' }, '*');
+                }
+            } catch(e) {}
+
+            window.addEventListener('message', function(e) {
+                if (e.data && e.data.type === 'silisRedirect' && e.data.target) {
+                    window.location.replace(e.data.target);
+                }
+            });
+
+            try {
                 if (window.name && window.name.indexOf('silis-target:') === 0) {
                     var target = decodeURIComponent(window.name.substring('silis-target:'.length));
                     if (target && target !== '/' && target !== window.location.href) {

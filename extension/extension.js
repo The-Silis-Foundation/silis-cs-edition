@@ -165,8 +165,26 @@ function activate(context) {
         async resolveWebviewView(webviewView) {
             bottomDockWebview = webviewView;
             webviewView.webview.options = { enableScripts: true, retainContextWhenHidden: true };
-            // D4: Show idle placeholder on startup instead of loading the waveform URL immediately.
-            webviewView.webview.html = getBottomDockIdleHtml();
+
+            // Check if active project already has waveform.vcd; if so, load it immediately
+            const pDir = getActiveProjectDir();
+            let hasVcd = false;
+            try {
+                const wsFolders = vscode.workspace.workspaceFolders;
+                if (wsFolders && wsFolders.length > 0) {
+                    const vcdUri = vscode.Uri.joinPath(wsFolders[0].uri, pDir, 'waveform.vcd');
+                    try {
+                        const st = await vscode.workspace.fs.stat(vcdUri);
+                        hasVcd = (st.size > 0);
+                    } catch (e) {}
+                }
+            } catch (e) {}
+
+            if (hasVcd) {
+                await loadWaveformInBottomDock(pDir);
+            } else {
+                webviewView.webview.html = getBottomDockIdleHtml();
+            }
 
             let _scrubTimer = null;
             let _pendingScrubTime = null;
@@ -847,7 +865,18 @@ function getIframeHtml(url, title) {
     </div>
     <script>
         const vscode = acquireVsCodeApi();
+        const targetUrl = '${url}';
+        let redirected = false;
+
         window.addEventListener('message', function(event) {
+            // Instant redirect when iframe lands on / from codespace port warning
+            if (event.data && event.data.type === 'silisHubReady') {
+                const f = document.getElementById('cad-frame');
+                if (f && !redirected) {
+                    redirected = true;
+                    f.src = targetUrl;
+                }
+            }
             // Forward messages from inner iframe out to VS Code extension host
             if (event.data && (event.data.fromSilisSchem || event.data.fromSilisRohd || event.data.fromSilis)) {
                 vscode.postMessage(event.data);
@@ -860,6 +889,17 @@ function getIframeHtml(url, title) {
                 }
             }
         });
+
+        const frame = document.getElementById('cad-frame');
+        if (frame) {
+            frame.addEventListener('load', function() {
+                try {
+                    if (frame.contentWindow) {
+                        frame.contentWindow.postMessage({ type: 'silisRedirect', target: targetUrl }, '*');
+                    }
+                } catch(e) {}
+            });
+        }
     </script>
 </body>
 </html>`;
