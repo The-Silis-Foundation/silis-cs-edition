@@ -15,6 +15,14 @@ echo "Initializing Silis submodules..."
 cd "$WORKSPACE_DIR"
 git submodule update --init silis 2>/dev/null || true
 
+# 1b. Install Display Daemons for noVNC & Xvfb (defensive)
+echo "Ensuring display daemons are installed..."
+sudo apt-get update -y 2>/dev/null || true
+sudo apt-get install -y --no-install-recommends software-properties-common 2>/dev/null || true
+sudo add-apt-repository -y universe 2>/dev/null || true
+sudo apt-get update -y 2>/dev/null || true
+sudo apt-get install -y --no-install-recommends xvfb x11vnc novnc websockify net-tools 2>/dev/null || true
+
 # 2. Ensure novnc index.html link
 if [ -f "/usr/share/novnc/vnc.html" ] && [ ! -f "/usr/share/novnc/index.html" ]; then
     sudo ln -sf /usr/share/novnc/vnc.html /usr/share/novnc/index.html
