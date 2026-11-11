@@ -1,5 +1,0 @@
-if(EXISTS "/home/eatheswar/silisfoundation/silis/core/synthengine/build/OpenSTA_build/network/test/cpp/TestNetworkB[1]_tests.cmake")
-  include("/home/eatheswar/silisfoundation/silis/core/synthengine/build/OpenSTA_build/network/test/cpp/TestNetworkB[1]_tests.cmake")
-else()
-  add_test(TestNetworkB_NOT_BUILT TestNetworkB_NOT_BUILT)
-endif()

@@ -1,5 +1,0 @@
-if(EXISTS "/home/eatheswar/silisfoundation/silis/core/synthengine/build/OpenSTA_build/search/test/cpp/TestSearchClasses[1]_tests.cmake")
-  include("/home/eatheswar/silisfoundation/silis/core/synthengine/build/OpenSTA_build/search/test/cpp/TestSearchClasses[1]_tests.cmake")
-else()
-  add_test(TestSearchClasses_NOT_BUILT TestSearchClasses_NOT_BUILT)
-endif()

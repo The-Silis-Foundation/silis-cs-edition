@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Silis Floorplan & Power Studio (FPS)</title>
+  <link rel="stylesheet" href="fps.css">
+</head>
+<body>
+  <div id="app-container">
+    <!-- 8-Menu Top Bar -->
+    <header id="top-menu-bar">
+      <div class="menu-item">
+        <span class="menu-title">File</span>
+        <div class="menu-dropdown">
+          <div class="menu-entry" onclick="action('resetFromNetlist')"><span>Reset from Netlist</span><span class="menu-shortcut">Ctrl+N</span></div>
+          <div class="menu-entry" onclick="action('loadSession')"><span>Open Session...</span><span class="menu-shortcut">Ctrl+O</span></div>
+          <div class="menu-entry" onclick="action('saveSession')"><span>Save Session</span><span class="menu-shortcut">Ctrl+S</span></div>
+          <div class="menu-divider"></div>
+          <div class="menu-entry" onclick="action('exportTcl')"><span>Export OpenROAD Floorplan TCL</span><span class="menu-shortcut">Ctrl+E</span></div>
+        </div>
+      </div>
+      <div class="menu-item">
+        <span class="menu-title">Edit</span>
+        <div class="menu-dropdown">
+          <div class="menu-entry" onclick="action('undo')"><span>Undo</span><span class="menu-shortcut">Ctrl+Z</span></div>
+          <div class="menu-entry" onclick="action('redo')"><span>Redo</span><span class="menu-shortcut">Ctrl+Y</span></div>
+          <div class="menu-divider"></div>
+          <div class="menu-entry" onclick="action('selectAll')"><span>Select All</span><span class="menu-shortcut">Ctrl+A</span></div>
+          <div class="menu-entry" onclick="action('deleteSelected')"><span>Delete Selected</span><span class="menu-shortcut">Del</span></div>
+          <div class="menu-entry" onclick="action('clearSelection')"><span>Clear Selection</span><span class="menu-shortcut">Esc</span></div>
+        </div>
+      </div>
+      <div class="menu-item">
+        <span class="menu-title">View</span>
+        <div class="menu-dropdown">
+          <div class="menu-entry" onclick="canvasZoom(1.2)"><span>Zoom In</span><span class="menu-shortcut">+</span></div>
+          <div class="menu-entry" onclick="canvasZoom(0.8)"><span>Zoom Out</span><span class="menu-shortcut">-</span></div>
+          <div class="menu-entry" onclick="canvasZoomFit()"><span>Zoom Fit</span><span class="menu-shortcut">Ctrl+0</span></div>
+          <div class="menu-divider"></div>
+          <div class="menu-entry" onclick="toggleGrid()"><span>Toggle Grid</span><span class="menu-shortcut">G</span></div>
+          <div class="menu-entry" onclick="toggleFlightlines()"><span>Toggle Flightlines</span><span class="menu-shortcut">F</span></div>
+          <div class="menu-entry" onclick="toggleHud()"><span>Live Weight Tuner HUD (Physics Engine)</span></div>
+        </div>
+      </div>
+      <div class="menu-item">
+        <span class="menu-title">Floorplan</span>
+        <div class="menu-dropdown">
+          <div class="menu-entry" onclick="action('openDieDialog')"><span>Initialize Die/Core Boundaries...</span></div>
+          <div class="menu-entry" onclick="action('autoPlaceMacros')"><span>Auto-Place All Macros</span></div>
+          <div class="menu-entry" onclick="action('snapToSites')"><span>Snap All to Site Rows (2.72 µm)</span></div>
+          <div class="menu-entry" onclick="action('legalizeDrc')"><span>DRC Legalize Coordinates (0.005 µm)</span></div>
+        </div>
+      </div>
+      <div class="menu-item">
+        <span class="menu-title">Power</span>
+        <div class="menu-dropdown">
+          <div class="menu-entry" onclick="action('placePowerDomain')"><span>Add Voltage Island / Domain...</span></div>
+          <div class="menu-entry" onclick="action('configurePmu')"><span>Configure PMU Hookup...</span></div>
+          <div class="menu-entry" onclick="action('synthLevelShifters')"><span>Synthesize Level Shifters</span></div>
+          <div class="menu-entry" onclick="action('synthIsolation')"><span>Synthesize Isolation Cells</span></div>
+        </div>
+      </div>
+      <div class="menu-item">
+        <span class="menu-title">I/O & Pads</span>
+        <div class="menu-dropdown">
+          <div class="menu-entry" onclick="action('autoAlignPads')"><span>Auto-Align Pads to Regions</span></div>
+          <div class="menu-entry" onclick="action('autoSpaceEdge')"><span>Auto-Space Active Edge</span><span class="menu-shortcut">A</span></div>
+          <div class="menu-entry" onclick="action('autoDistributePads')"><span>Auto-Distribute All Pads</span></div>
+          <div class="menu-entry" onclick="action('insertSupplyPads')"><span>Insert VDD/VSS Supply Pairs</span></div>
+          <div class="menu-divider"></div>
+          <div class="menu-entry" onclick="action('loadPinOrder')"><span>Load pin_order.cfg...</span></div>
+          <div class="menu-entry" onclick="action('savePinOrder')"><span>Save pin_order.cfg</span></div>
+        </div>
+      </div>
+      <div class="menu-item">
+        <span class="menu-title">PDN</span>
+        <div class="menu-dropdown">
+          <div class="menu-entry" onclick="action('generateCoreRing')"><span>Generate Core Power Ring</span></div>
+          <div class="menu-entry" onclick="action('synthPdnGrid')"><span>Synthesize Multi-Layer PDN Grid</span></div>
+          <div class="menu-entry" onclick="action('checkPsm')"><span>Check Static IR Drop (PSM)</span></div>
+        </div>
+      </div>
+      <div class="menu-item">
+        <span class="menu-title">Diagnostics</span>
+        <div class="menu-dropdown">
+          <div class="menu-entry" onclick="action('runDrcCheck')"><span>Run Pre-Flight DRC Check</span></div>
+          <div class="menu-entry" onclick="action('auditChecksum')"><span>Audit Session Checksum (SHA-256)</span></div>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Splitter (60% Left / 40% Right) -->
+    <div id="main-splitter">
+      <!-- Left Container (60%) -->
+      <section id="canvas-container">
+        <!-- Collapsible Live Weight Tuner HUD -->
+        <div id="live-tuner-hud">
+          <div class="hud-row">
+            <button class="hud-btn" onclick="rerollSeed()">Re-roll Seed</button>
+            <button class="hud-btn" onclick="acceptAndLock()">Accept & Lock</button>
+            <div class="hud-slider-group">
+              <label>R2M:</label>
+              <input type="range" id="hud-r2m-slider" min="0" max="5" step="0.05" value="1.0" oninput="syncR2M(this.value)">
+              <input type="number" id="hud-r2m-num" min="0" max="5" step="0.05" value="1.00" onchange="syncR2M(this.value)">
+            </div>
+            <div class="hud-slider-group">
+              <label>R2R:</label>
+              <input type="range" id="hud-r2r-slider" min="0" max="5" step="0.05" value="1.0" oninput="syncR2R(this.value)">
+              <input type="number" id="hud-r2r-num" min="0" max="5" step="0.05" value="1.00" onchange="syncR2R(this.value)">
+            </div>
+          </div>
+          <div class="hud-row">
+            <div class="hud-slider-group">
+              <label>R2IO:</label>
+              <input type="range" id="hud-r2io-slider" min="0" max="5" step="0.05" value="1.0" oninput="syncR2IO(this.value)">
+              <input type="number" id="hud-r2io-num" min="0" max="5" step="0.05" value="1.00" onchange="syncR2IO(this.value)">
+            </div>
+            <div class="hud-slider-group">
+              <label>Seed:</label>
+              <input type="number" id="hud-seed-num" min="1" max="99999" value="42" onchange="onSeedChanged(this.value)">
+            </div>
+          </div>
+        </div>
+
+        <!-- Cartesian WebGL CAD Canvas -->
+        <div id="canvas-wrapper">
+          <canvas id="fps-canvas"></canvas>
+        </div>
+
+        <!-- Canvas Status Bar -->
+        <footer id="canvas-status-bar">
+          <span id="status-cursor">X: 0.000 µm | Y: 0.000 µm</span>
+          <span id="status-selection">Selected: None</span>
+          <span id="status-zoom">Zoom: 100%</span>
+        </footer>
+      </section>
+
+      <!-- Resizable Splitter Handle -->
+      <div id="splitter-divider"></div>
+
+      <!-- Right Inspector Container (40%) -->
+      <aside id="inspector-container">
+        <!-- 4 Inspector Tabs Navigation -->
+        <nav id="inspector-tabs-nav">
+          <button class="tab-btn active" onclick="switchTab('floorplan')">Floorplan</button>
+          <button class="tab-btn" onclick="switchTab('power_pdn')">Power & PDN</button>
+          <button class="tab-btn" onclick="switchTab('io_pads')">I/O & Pads</button>
+          <button class="tab-btn" onclick="switchTab('tcl')">Execution & Live TCL</button>
+        </nav>
+
+        <!-- Inspector Tab Content -->
+        <div id="inspector-tab-content">
+          <!-- TAB 1: FLOORPLAN -->
+          <div id="tab-floorplan" class="tab-pane active">
+            <!-- Die & Core Boundaries Card -->
+            <div class="card">
+              <div class="card-title">Die & Core Boundaries</div>
+              <button class="btn-secondary" onclick="action('openDieDialog')">Initialize / Recalculate Die Boundaries...</button>
+              <div class="form-row">
+                <label id="lbl-core-util">Core Utilization: 58.4%</label>
+              </div>
+              <div class="form-row">
+                <label>Die W / H (µm):</label>
+                <div class="form-inputs">
+                  <input type="number" id="sp-die-w" value="5000" step="10" onchange="onDieSizeChanged()">
+                  <input type="number" id="sp-die-h" value="5000" step="10" onchange="onDieSizeChanged()">
+                </div>
+              </div>
+              <div class="form-row">
+                <label>Border Margin (µm):</label>
+                <div class="form-inputs">
+                  <input type="number" id="sp-core-border" value="20.0" step="1" onchange="onBorderChanged()">
+                </div>
+              </div>
+              <div class="form-row">
+                <label>Target Core Density (%):</label>
+                <div class="form-inputs">
+                  <input type="number" id="sp-target-density" value="60.0" step="1" onchange="updateUtil()">
+                </div>
+              </div>
+            </div>
+
+            <!-- Selected Macro / Region Card -->
+            <div class="card">
+              <div class="card-title">Selected Macro / Region</div>
+              <div class="form-row">
+                <label>Macro:</label>
+                <span id="lbl-sel-name" style="font-family: monospace; color: var(--accent);">None</span>
+              </div>
+              <div class="form-row">
+                <label>Instance:</label>
+                <div class="form-inputs">
+                  <input type="text" id="txt-inst-name" placeholder="Netlist Instance Name" onchange="onInstNameChanged()">
+                </div>
+              </div>
+              <div class="form-row">
+                <label>Region Type / Dens:</label>
+                <div class="form-inputs">
+                  <button class="btn-secondary" id="btn-convert-type" onclick="toggleRegionType()">Convert Type</button>
+                  <input type="number" id="sp-sel-density" value="0.60" step="0.05" min="0" max="1" onchange="onSelDensityChanged()">
+                </div>
+              </div>
+              <div class="form-row">
+                <label>Placement (3x1):</label>
+                <div class="form-inputs">
+                  <select id="cmb-orientation" onchange="onOrientationChanged()">
+                    <option value="R0">R0</option>
+                    <option value="R90">R90</option>
+                    <option value="R180">R180</option>
+                    <option value="R270">R270</option>
+                    <option value="MX">MX</option>
+                    <option value="MY">MY</option>
+                    <option value="MXR90">MXR90</option>
+                    <option value="MYR90">MYR90</option>
+                  </select>
+                  <input type="number" id="sp-sel-x" placeholder="X" step="0.005" onchange="onMacroCoordChanged()">
+                  <input type="number" id="sp-sel-y" placeholder="Y" step="2.72" onchange="onMacroCoordChanged()">
+                </div>
+              </div>
+              <div class="form-row">
+                <label><input type="checkbox" id="chk-equal-halo" checked onchange="toggleEqualHalo()"> Equal Halo (µm)</label>
+              </div>
+              <div class="form-row">
+                <label>Halos (2x2):</label>
+                <div class="form-inputs" style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px;">
+                  <input type="number" id="sp-halo-t" placeholder="Top" value="10" onchange="onHaloChanged()">
+                  <input type="number" id="sp-halo-b" placeholder="Bottom" value="10" onchange="onHaloChanged()">
+                  <input type="number" id="sp-halo-l" placeholder="Left/All" value="10" onchange="onHaloChanged()">
+                  <input type="number" id="sp-halo-r" placeholder="Right" value="10" onchange="onHaloChanged()">
+                </div>
+              </div>
+              <hr style="border: 0; border-top: 1px solid var(--border); margin: 4px 0;">
+              <div class="form-row">
+                <label><input type="checkbox" id="chk-autoplace" onchange="toggleAutoPlace()"> Auto Place Macros</label>
+              </div>
+              <div class="form-row">
+                <label>Methodology:</label>
+                <div class="form-inputs">
+                  <select id="cmb-autoplace-method" onchange="onAutoPlaceMethodChanged()">
+                    <option value="peripheral">Peripheral (Silis Fast)</option>
+                    <option value="hierarchical">Hierarchical (OpenROAD RTL-MP)</option>
+                    <option value="analytical">Analytical (TritonMacroPlace)</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <!-- Regions & Fences Card -->
+            <div class="card">
+              <div class="card-title">Regions & Fences</div>
+              <div class="form-row">
+                <label>Module:</label>
+                <div class="form-inputs">
+                  <select id="cmb-region-module"></select>
+                </div>
+              </div>
+              <div class="form-row">
+                <label>Density / Halo:</label>
+                <div class="form-inputs">
+                  <input type="number" id="sp-region-density" value="0.60" step="0.05" min="0" max="1">
+                  <input type="number" id="sp-common-halo" value="10.0" step="1">
+                </div>
+              </div>
+              <div class="form-row">
+                <button class="btn-secondary" style="flex:1;" onclick="startDrawRegion(false)">Create Region</button>
+                <button class="btn-secondary" style="flex:1;" onclick="startDrawRegion(true)">Create Fence</button>
+              </div>
+              <div class="form-row">
+                <label><input type="checkbox" id="chk-region-lock"> Lock Selected Region</label>
+                <label><input type="checkbox" id="chk-allow-rotation" checked> Allow rotation</label>
+              </div>
+              <div class="form-row">
+                <label>Clustering Affinity:</label>
+              </div>
+              <div style="display:flex; flex-direction:column; gap:3px; padding-left: 8px;">
+                <label><input type="radio" name="aff" value="hybrid" checked> Hybrid (Recommended)</label>
+                <label><input type="radio" name="aff" value="netlist"> Netlist Interconnect Graph</label>
+                <label><input type="radio" name="aff" value="hierarchy"> Hierarchical Architecture Tree</label>
+              </div>
+              <div class="form-row" style="margin-top:4px;">
+                <button class="btn-primary" style="flex:3;" onclick="action('autoPlaceRegions')">Auto Place Regions</button>
+                <button class="btn-secondary" style="flex:2;" id="btn-fence-mode" onclick="toggleFenceMode()">Fences</button>
+              </div>
+            </div>
+
+            <!-- Placement Blockages Card -->
+            <div class="card">
+              <div class="card-title">Placement Blockages</div>
+              <div class="form-row">
+                <label>Type / Density %:</label>
+                <div class="form-inputs">
+                  <select id="cmb-block-type" onchange="toggleBlockPct()">
+                    <option value="Hard">Hard</option>
+                    <option value="Soft">Soft</option>
+                    <option value="Partial">Partial</option>
+                  </select>
+                  <input type="number" id="sp-block-pct" value="40" min="0" max="100" disabled>
+                </div>
+              </div>
+              <button class="btn-secondary" onclick="startDrawBlockage()">Draw Blockage</button>
+            </div>
+          </div>
+
+          <!-- TAB 2: POWER & PDN -->
+          <div id="tab-power_pdn" class="tab-pane">
+            <!-- PMU & UPF Architecture -->
+            <div class="card">
+              <div class="card-title">PMU & UPF Architecture</div>
+              <div class="form-row">
+                <label>PMU Instance:</label>
+                <div class="form-inputs">
+                  <select id="cmb-pmu-inst">
+                    <option>(Top-Level Port Control / No Sub-PMU)</option>
+                  </select>
+                </div>
+              </div>
+              <div class="form-row">
+                <label>UPF Intent:</label>
+                <span style="font-family: monospace; color: var(--success);">Active UPF: design.upf</span>
+              </div>
+              <table class="eda-table" id="table-pmu-ports">
+                <thead><tr><th>PMU Terminal</th><th>Direction</th><th>Bound Net</th></tr></thead>
+                <tbody><tr><td>pmu_sleep</td><td>input</td><td>p_top_sleep</td></tr></tbody>
+              </table>
+            </div>
+
+            <!-- Voltage Islands & Domains -->
+            <div class="card">
+              <div class="card-title">Voltage Islands & Domains</div>
+              <table class="eda-table" id="table-domain-supplies">
+                <thead><tr><th>Power Domain</th><th>Voltage</th><th>Type</th><th>Supply Net</th></tr></thead>
+                <tbody>
+                  <tr><td>PD_TOP</td><td>1.800 V</td><td>Always-On</td><td>VDD</td></tr>
+                  <tr><td>PD_COMPUTE</td><td>0.950 V</td><td>Power-Gated</td><td>VDD_COMP</td></tr>
+                </tbody>
+              </table>
+              <div class="form-row" style="margin-top:6px;">
+                <button class="btn-secondary" style="flex:1;" onclick="action('placePowerDomain')">Place Island on Canvas</button>
+                <button class="btn-secondary" style="flex:1;" onclick="action('configurePmu')">Configure PMU Hookup...</button>
+              </div>
+            </div>
+
+            <!-- Tapcell Insertion & Rules -->
+            <div class="card">
+              <div class="card-title">Tapcell Insertion & Rules</div>
+              <div class="form-row">
+                <label>Tapcell Distance (µm):</label>
+                <div class="form-inputs"><input type="number" id="sp-tap-dist" value="14.0" step="1"></div>
+              </div>
+              <div class="form-row">
+                <label>Default Well Tap Cell:</label>
+                <div class="form-inputs">
+                  <select id="cmb-default-tap">
+                    <option>sky130_fd_sc_hd__tapvpwrvgnd_1</option>
+                    <option>sky130_fd_sc_hd__tap_1</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <!-- Core Power Ring & Pad Trunk Bridges -->
+            <div class="card">
+              <div class="card-title">Core Power Ring & Pad Trunk Bridges</div>
+              <label><input type="checkbox" id="chk-enable-ring" checked> Enable Peripheral Core Power Ring</label>
+              <div class="form-row">
+                <label>Ring Width / Spacing (µm):</label>
+                <div class="form-inputs">
+                  <input type="number" id="sp-ring-w" value="5.0" step="0.5">
+                  <input type="number" id="sp-ring-s" value="2.0" step="0.5">
+                </div>
+              </div>
+              <div class="form-row">
+                <label>Ring Horiz / Vert Layers:</label>
+                <div class="form-inputs">
+                  <select id="cmb-ring-h"><option>met5</option><option>met4</option><option>met3</option></select>
+                  <select id="cmb-ring-v"><option>met4</option><option>met5</option><option>met3</option></select>
+                </div>
+              </div>
+              <label><input type="checkbox" id="chk-enable-trunks" checked> Enable Low-Impedance Power Pad Trunk Straps</label>
+              <div class="form-row">
+                <label>Trunk Layer / Width (µm):</label>
+                <div class="form-inputs">
+                  <select id="cmb-trunk-layer"><option>met4</option><option>met5</option></select>
+                  <input type="number" id="sp-trunk-w" value="3.2" step="0.2">
+                </div>
+              </div>
+              <label><input type="checkbox" id="chk-targeted-bridges" checked> Targeted Pad Bridges Solely to P_CORE/G_CORE</label>
+              <label><input type="checkbox" id="chk-dual-followpins" checked> Emit Dual-Rail Followpins for Switched Islands</label>
+            </div>
+          </div>
+
+          <!-- TAB 3: I/O & PADS -->
+          <div id="tab-io_pads" class="tab-pane">
+            <!-- Design Target Mode -->
+            <div class="card">
+              <div class="card-title">Design Target Mode</div>
+              <div class="form-row">
+                <label><input type="radio" name="target_mode" value="macro" checked onchange="onModeToggled()"> I/O Ports (Macro Mode)</label>
+                <label><input type="radio" name="target_mode" value="chip" onchange="onModeToggled()"> I/O Pads (Full-Chip)</label>
+              </div>
+              <div id="pad-strategy-group" style="display:none; flex-direction:column; gap:6px; margin-top:6px;">
+                <label><input type="radio" name="pad_strat" value="single" checked> Single-Row Ring (Die Expansion)</label>
+                <label><input type="radio" name="pad_strat" value="staggered"> Dual-Row Staggered (2x Density)</label>
+                <div class="form-row">
+                  <label>Target AR:</label>
+                  <div class="form-inputs">
+                    <select id="cmb-aspect"><option>1.0 (Square)</option><option>1.25</option><option>1.33</option><option>1.50</option></select>
+                  </div>
+                </div>
+                <button class="btn-secondary" onclick="action('optimizeDie')">Optimize Die to Constraints</button>
+                <span style="font-weight:bold; color:var(--success);">Regime: [CORE-LIMITED]</span>
+              </div>
+            </div>
+
+            <!-- Perimeter Edge & Spacing -->
+            <div class="card">
+              <div class="card-title">Perimeter Edge & Spacing</div>
+              <div style="font-weight:bold; color:var(--accent);" id="lbl-active-edge">Active Edge: South (Bottom)</div>
+              <div class="form-row" style="margin: 4px 0;">
+                <button class="btn-secondary" style="flex:1;" onclick="setActiveEdge('top')">N (Top)</button>
+                <button class="btn-secondary" style="flex:1;" onclick="setActiveEdge('bottom')">S (Bottom)</button>
+                <button class="btn-secondary" style="flex:1;" onclick="setActiveEdge('left')">W (Left)</button>
+                <button class="btn-secondary" style="flex:1;" onclick="setActiveEdge('right')">E (Right)</button>
+              </div>
+              <div class="form-row">
+                <button class="btn-primary" style="flex:1;" onclick="action('autoSpaceEdge')">Auto-Space Edge (A)</button>
+                <button class="btn-secondary" style="flex:1;" onclick="action('autoDistributePads')">Auto-Distribute All</button>
+                <button class="btn-secondary" style="flex:1;" onclick="action('autoAlignPads')">Auto-Align to Regions</button>
+              </div>
+            </div>
+
+            <!-- Pin Order CFG & Power Pads -->
+            <div class="card">
+              <div class="card-title">I/O Configuration & Pins</div>
+              <label><input type="checkbox" id="chk-preserve-pin-order" checked> Preserve Strict Pin Sequence from cfg</label>
+              <div class="form-row" style="margin: 4px 0;">
+                <button class="btn-secondary" style="flex:1;" onclick="action('loadPinOrder')">Load pin_order.cfg...</button>
+                <button class="btn-secondary" style="flex:1;" onclick="action('savePinOrder')">Save pin_order.cfg</button>
+              </div>
+              <table class="eda-table" id="table-pads" style="max-height:160px; overflow:auto;">
+                <thead><tr><th>Signal / Pad</th><th>Type</th><th>Edge</th><th>Pos (µm)</th></tr></thead>
+                <tbody id="pads-table-body">
+                  <tr><td>clk</td><td>clock</td><td>bottom</td><td>120.000</td></tr>
+                  <tr><td>rst_n</td><td>input</td><td>bottom</td><td>140.000</td></tr>
+                </tbody>
+              </table>
+              <button class="btn-secondary" style="margin-top:6px;" onclick="action('insertSupplyPads')">Add Dedicated VDD/VSS Pad Pair</button>
+            </div>
+          </div>
+
+          <!-- TAB 4: EXECUTION & LIVE TCL -->
+          <div id="tab-tcl" class="tab-pane">
+            <div class="card">
+              <div class="card-title">Live OpenROAD TCL Preview</div>
+              <textarea id="live-tcl-editor" readonly spellcheck="false"># Silis Floorplan & Power Studio (FPS) - Generated Flow Script
+initialize_floorplan -die_area { 0.000 0.000 5000.000 5000.000 } \
+                     -core_area { 20.000 20.000 4980.000 4980.000 } \
+                     -site unithd
+
+# Power Domains (IEEE 1801 UPF)
+set_domain_area PD_COMPUTE -area { 250.000 250.000 950.000 750.000 }
+
+# Macro Placements
+place_macro -inst u_sram0 -origin { 120.000 80.000 } -orient R0
+place_macro -inst u_sram1 -origin { 120.000 480.000 } -orient R0
+
+# PDN Ring & Straps
+add_pdn_ring -grid grid_top -layers { met5 met4 } -widths { 5.0 5.0 } -spacings { 2.0 2.0 }
+add_pdn_stripe -grid grid_top -layer met4 -width 3.2 -pitch 40.0
+add_pdn_stripe -grid grid_top -layer met5 -width 3.2 -pitch 40.0
+</textarea>
+              <button class="btn-primary" style="margin-top:8px; padding:8px;" onclick="action('commitFlow')">Commit Floorplan & Execute Flow</button>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <script src="fps_canvas.js"></script>
+</body>
+</html>

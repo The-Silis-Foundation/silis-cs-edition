@@ -1,5 +1,0 @@
-if(EXISTS "/home/eatheswar/silisfoundation/silis/core/synthengine/build/OpenSTA_build/liberty/test/cpp/TestLibertyStaCallbacks[1]_tests.cmake")
-  include("/home/eatheswar/silisfoundation/silis/core/synthengine/build/OpenSTA_build/liberty/test/cpp/TestLibertyStaCallbacks[1]_tests.cmake")
-else()
-  add_test(TestLibertyStaCallbacks_NOT_BUILT TestLibertyStaCallbacks_NOT_BUILT)
-endif()

@@ -1,4 +1,6 @@
 const vscode = require('vscode');
+const path = require('path');
+const fs = require('fs');
 
 function activate(context) {
     console.log('[Silis CAD Extension] Activating Silis CS EDA Workbench...');
@@ -607,8 +609,20 @@ function activate(context) {
         })
     );
 
-    // 10. Floorplan & Power Studio (World 3: FPS with auto-connect)
+    // 10. Floorplan & Power Studio (Native Webview CAD Canvas & Physics Engine)
     let activeFloorplanPanel = null;
+
+    function getFpsWebviewHtml(webview, extensionUri, pName) {
+        const fpsDir = vscode.Uri.joinPath(extensionUri, 'web', 'fps');
+        const cssUri = webview.asWebviewUri(vscode.Uri.joinPath(fpsDir, 'fps.css'));
+        const jsUri = webview.asWebviewUri(vscode.Uri.joinPath(fpsDir, 'fps_canvas.js'));
+        const htmlPath = path.join(extensionUri.fsPath, 'web', 'fps', 'index.html');
+        let html = fs.readFileSync(htmlPath, 'utf8');
+        html = html.replace('href="fps.css"', `href="${cssUri}"`);
+        html = html.replace('src="fps_canvas.js"', `src="${jsUri}"`);
+        return html;
+    }
+
     context.subscriptions.push(
         vscode.commands.registerCommand('silis.openFloorplanner', async (projectName) => {
             const pName = projectName || activeProject || 'demo_soc';
@@ -618,12 +632,48 @@ function activate(context) {
             }
             activeFloorplanPanel = vscode.window.createWebviewPanel(
                 'silisFPS',
-                'Floorplan & Power Studio',
+                `Floorplan & Power Studio: ${pName}`,
                 vscode.ViewColumn.Active,
                 { enableScripts: true, retainContextWhenHidden: true }
             );
-            const uri = await resolveUrl(`http://127.0.0.1:8765/floorplanner/index.html?project=${encodeURIComponent(pName)}`);
-            activeFloorplanPanel.webview.html = getIframeHtml(uri, 'Floorplan & Power Studio');
+
+            activeFloorplanPanel.webview.html = getFpsWebviewHtml(activeFloorplanPanel.webview, context.extensionUri, pName);
+
+            activeFloorplanPanel.webview.onDidReceiveMessage(async (msg) => {
+                if (msg && msg.command === 'fpsAction') {
+                    const action = msg.action;
+                    const wsFolders = vscode.workspace.workspaceFolders;
+                    const rootPath = wsFolders ? wsFolders[0].uri.fsPath : '';
+                    const projDir = path.join(rootPath, 'projects', pName);
+
+                    if (action === 'saveSession') {
+                        const sessionPath = path.join(projDir, '.silis_fp_session.json');
+                        fs.writeFileSync(sessionPath, JSON.stringify(msg.state || {}, null, 2));
+                        vscode.window.showInformationMessage(`Floorplan session saved to projects/${pName}/.silis_fp_session.json`);
+                    } else if (action === 'exportTcl' || action === 'commitFlow') {
+                        const tclPath = path.join(projDir, 'run_floorplan.tcl');
+                        if (msg.tcl) {
+                            fs.writeFileSync(tclPath, msg.tcl);
+                        }
+                        if (action === 'commitFlow') {
+                            const term = getFlowTerminal();
+                            term.show();
+                            term.sendText(`python3 tools/flow.py --pnr --project projects/${pName}`);
+                        } else {
+                            vscode.window.showInformationMessage(`OpenROAD Floorplan TCL exported to projects/${pName}/run_floorplan.tcl`);
+                        }
+                    } else if (action === 'autoPlaceMacros') {
+                        const term = getFlowTerminal();
+                        term.show();
+                        term.sendText(`python3 tools/flow.py --floorplan --project projects/${pName}`);
+                    } else if (action === 'runDrcCheck') {
+                        const term = getFlowTerminal();
+                        term.show();
+                        term.sendText(`python3 tools/flow.py --lint --project projects/${pName}`);
+                    }
+                }
+            }, null, context.subscriptions);
+
             activeFloorplanPanel.onDidDispose(() => { activeFloorplanPanel = null; }, null, context.subscriptions);
         })
     );

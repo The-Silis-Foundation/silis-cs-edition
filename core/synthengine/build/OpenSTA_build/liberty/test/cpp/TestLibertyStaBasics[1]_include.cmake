@@ -1,5 +1,0 @@
-if(EXISTS "/home/eatheswar/silisfoundation/silis/core/synthengine/build/OpenSTA_build/liberty/test/cpp/TestLibertyStaBasics[1]_tests.cmake")
-  include("/home/eatheswar/silisfoundation/silis/core/synthengine/build/OpenSTA_build/liberty/test/cpp/TestLibertyStaBasics[1]_tests.cmake")
-else()
-  add_test(TestLibertyStaBasics_NOT_BUILT TestLibertyStaBasics_NOT_BUILT)
-endif()

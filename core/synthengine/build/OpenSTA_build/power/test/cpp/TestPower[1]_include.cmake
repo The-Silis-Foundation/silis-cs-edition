@@ -1,5 +1,0 @@
-if(EXISTS "/home/eatheswar/silisfoundation/silis/core/synthengine/build/OpenSTA_build/power/test/cpp/TestPower[1]_tests.cmake")
-  include("/home/eatheswar/silisfoundation/silis/core/synthengine/build/OpenSTA_build/power/test/cpp/TestPower[1]_tests.cmake")
-else()
-  add_test(TestPower_NOT_BUILT TestPower_NOT_BUILT)
-endif()

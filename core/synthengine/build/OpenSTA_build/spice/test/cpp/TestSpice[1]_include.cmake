@@ -1,5 +1,0 @@
-if(EXISTS "/home/eatheswar/silisfoundation/silis/core/synthengine/build/OpenSTA_build/spice/test/cpp/TestSpice[1]_tests.cmake")
-  include("/home/eatheswar/silisfoundation/silis/core/synthengine/build/OpenSTA_build/spice/test/cpp/TestSpice[1]_tests.cmake")
-else()
-  add_test(TestSpice_NOT_BUILT TestSpice_NOT_BUILT)
-endif()

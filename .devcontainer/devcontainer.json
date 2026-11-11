@@ -12,6 +12,9 @@
     }
   },
   "forwardPorts": [8765, 6081, 6084],
+  "containerEnv": {
+    "PYTHONPATH": "/workspaces/silis-cs-edition/silis:/workspaces/silis-cs-edition/silis/core"
+  },
   "portsAttributes": {
     "8765": {
       "label": "Silis Native CAD Web Hub (Schematic & Waveforms)",

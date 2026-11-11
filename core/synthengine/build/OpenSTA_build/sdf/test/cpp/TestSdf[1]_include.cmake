@@ -1,5 +1,0 @@
-if(EXISTS "/home/eatheswar/silisfoundation/silis/core/synthengine/build/OpenSTA_build/sdf/test/cpp/TestSdf[1]_tests.cmake")
-  include("/home/eatheswar/silisfoundation/silis/core/synthengine/build/OpenSTA_build/sdf/test/cpp/TestSdf[1]_tests.cmake")
-else()
-  add_test(TestSdf_NOT_BUILT TestSdf_NOT_BUILT)
-endif()
