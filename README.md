@@ -52,6 +52,7 @@
 
 | Project | Process (PDK) | Top Module | Layout (DEF) | Waveforms | Source Files |
 | :--- | :--- | :--- | :--- | :--- | :--- |
+| **FA** | `sky130_fd_sc_hd` | `FA` | Pending PnR | Pending Sim | 1 file(s) |
 | **demo_soc** | `sky130` | `chip_top` | Available | Available | 2 file(s) |
 
 ### Key Commands (`Ctrl+Shift+P`)

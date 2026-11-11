@@ -147,6 +147,11 @@
         "category": "Silis"
       },
       {
+        "command": "silis.openOpenRoadGui",
+        "title": "Silis: OpenROAD Native GUI (Physical Layout)",
+        "category": "Silis"
+      },
+      {
         "command": "silis.runSimulation",
         "title": "Silis: Compile & Run Simulation",
         "category": "Silis",

@@ -81,6 +81,20 @@ class DEFParser:
             if os.path.isdir(bundled_pdk):
                 search_dirs.append(bundled_pdk)
 
+            # System, user, and workspace PDK and LEF search paths
+            for pdk_cand in [
+                os.path.expanduser("~/.silis/pdks"),
+                os.path.expanduser("~/.silis/pdks/sky130"),
+                os.path.join(repo_root, "..", "silis", "third-party", "pdks"),
+                os.path.join(repo_root, "..", "reference_flows", "OpenROAD-flow-scripts", "flow", "platforms"),
+                os.path.join(repo_root, "..", "pdk_asap7"),
+                os.path.join(repo_root, "..", "projects"),
+                os.path.join(repo_root, "..", "testfpssoc"),
+                "/opt/silis/third-party/pdks"
+            ]:
+                if os.path.isdir(pdk_cand) and pdk_cand not in search_dirs:
+                    search_dirs.append(pdk_cand)
+
             if getattr(self.ide, 'active_pdk', None):
                 lib_path = self.ide.active_pdk.get('lib', '')
                 if "libs.ref" in lib_path:
@@ -94,7 +108,7 @@ class DEFParser:
                 if not os.path.exists(d): continue
                 for root, _, files in os.walk(d):
                     rel = os.path.relpath(root, d)
-                    if rel.count(os.sep) > 3:
+                    if rel.count(os.sep) > 6:
                         continue
                     for file in files:
                         if file.endswith(".lef"):

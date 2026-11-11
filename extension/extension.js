@@ -6,7 +6,13 @@ function activate(context) {
     let activeProject = context.workspaceState.get('silis.activeProject', 'demo_soc');
 
     function getActiveProjectDir(pName) {
-        const name = pName || activeProject || 'demo_soc';
+        let name = pName || activeProject || 'demo_soc';
+        if (typeof name === 'object' && name.project) {
+            name = name.project;
+        }
+        if (typeof name === 'string' && name.startsWith('projects/')) {
+            name = name.replace(/^projects\//, '');
+        }
         return `projects/${name}`;
     }
 
@@ -40,6 +46,15 @@ function activate(context) {
                     case 'openFloorplanner':
                         vscode.commands.executeCommand('silis.openFloorplanner', activeProject);
                         break;
+                    case 'openOpenRoadGui':
+                        vscode.commands.executeCommand('silis.openOpenRoadGui', activeProject);
+                        break;
+                    case 'getProjects':
+                        try {
+                            const projs = await callHttpApi('http://127.0.0.1:8765/api/projects', 'GET');
+                            webviewView.webview.postMessage({ type: 'projectsLoaded', projects: projs });
+                        } catch(e) {}
+                        break;
                     case 'runSynthesis':
                         vscode.commands.executeCommand('silis.runSynthesis');
                         break;
@@ -57,9 +72,16 @@ function activate(context) {
     // 1b. Bottom Panel Dock Provider (Waveforms docked tabbed next to Terminal)
     let bottomDockWebview = null;
     let activeSchematicPanel = null;
+    let activeLayoutPanel = null;
 
     async function openSchematicPanel(projectName, viewColumn = vscode.ViewColumn.Beside) {
-        const pName = projectName || activeProject || 'demo_soc';
+        let pName = projectName || activeProject || 'demo_soc';
+        if (typeof pName === 'object' && pName.project) {
+            pName = pName.project;
+        }
+        if (typeof pName === 'string' && pName.startsWith('projects/')) {
+            pName = pName.replace(/^projects\//, '');
+        }
         if (activeSchematicPanel) {
             activeSchematicPanel.reveal(viewColumn);
             return activeSchematicPanel;
@@ -73,7 +95,8 @@ function activate(context) {
         );
         activeSchematicPanel = panel;
 
-        const uri = await resolveUrl(`http://127.0.0.1:8765/schematic/digitaljs.html?project=projects/${encodeURIComponent(pName)}`);
+        const projDir = getActiveProjectDir(pName);
+        const uri = await resolveUrl(`http://127.0.0.1:8765/schematic/digitaljs.html?project=${encodeURIComponent(projDir)}`);
         panel.webview.html = getIframeHtml(uri, 'Schematic: ' + pName);
 
         panel.webview.onDidReceiveMessage(async (msg) => {
@@ -135,16 +158,15 @@ function activate(context) {
         if (bottomDockWebview) {
             bottomDockWebview.webview.html = getIframeHtml(uri, 'ROHD Waveform Inspector');
         }
-        await vscode.commands.executeCommand('silis-bottom-dock.focus');
+        // D5: Do NOT auto-focus the dock here — focus is only triggered by explicit user action.
     }
 
     const bottomDockProvider = {
         async resolveWebviewView(webviewView) {
             bottomDockWebview = webviewView;
             webviewView.webview.options = { enableScripts: true, retainContextWhenHidden: true };
-            const projDir = getActiveProjectDir();
-            const uri = await resolveUrl(`http://127.0.0.1:8765/waveforms/index.html?project=${encodeURIComponent(projDir)}`);
-            webviewView.webview.html = getIframeHtml(uri, 'ROHD Waveform Inspector');
+            // D4: Show idle placeholder on startup instead of loading the waveform URL immediately.
+            webviewView.webview.html = getBottomDockIdleHtml();
 
             let _scrubTimer = null;
             let _pendingScrubTime = null;
@@ -212,12 +234,9 @@ function activate(context) {
     const defEditorProvider = {
         async resolveCustomTextEditor(document, webviewPanel) {
             webviewPanel.webview.options = { enableScripts: true, retainContextWhenHidden: true };
-            // Notify server to load this specific DEF file into Peeker
-            try {
-                await callHttpApi('http://127.0.0.1:8765/api/peeker/load_def', 'POST', { def_path: document.fileName });
-            } catch (e) {}
-            const uri = await resolveUrl('http://127.0.0.1:6081/vnc_lite.html?autoconnect=true&resize=scale');
-            webviewPanel.webview.html = getIframeHtml(uri, 'Silis 2D Layout: ' + document.fileName);
+            const defPath = document.fileName;
+            const uri = await resolveUrl(`http://127.0.0.1:8765/peeker/index.html?def=${encodeURIComponent(defPath)}`);
+            webviewPanel.webview.html = getIframeHtml(uri, 'Silis 2D Layout: ' + require('path').basename(defPath));
         }
     };
     context.subscriptions.push(
@@ -285,6 +304,15 @@ function activate(context) {
                     case 'openFloorplanner':
                         vscode.commands.executeCommand('silis.openFloorplanner', msg.project || activeProject);
                         break;
+                    case 'openOpenRoadGui':
+                        vscode.commands.executeCommand('silis.openOpenRoadGui', msg.project || activeProject);
+                        break;
+                    case 'getProjects':
+                        try {
+                            const projs = await callHttpApi('http://127.0.0.1:8765/api/projects', 'GET');
+                            dashboardPanel.webview.postMessage({ type: 'projectsLoaded', projects: projs });
+                        } catch(e) {}
+                        break;
                     case 'runSynthesis':
                         vscode.commands.executeCommand('silis.runSynthesis');
                         break;
@@ -323,6 +351,25 @@ function activate(context) {
             panel.webview.html = getProjectWizardHtml(workspaceFiles);
 
             panel.webview.onDidReceiveMessage(async (message) => {
+                if (message.command === 'browseFiles') {
+                    const opts = {
+                        canSelectFiles: message.canSelectFiles !== false,
+                        canSelectFolders: !!message.canSelectFolders,
+                        canSelectMany: !!message.canSelectMany,
+                        openLabel: message.title || 'Select',
+                        filters: message.filters || undefined
+                    };
+                    const uris = await vscode.window.showOpenDialog(opts);
+                    if (uris && uris.length > 0) {
+                        panel.webview.postMessage({
+                            type: 'filesSelected',
+                            target: message.target,
+                            files: uris.map(u => u.fsPath)
+                        });
+                    }
+                    return;
+                }
+
                 if (message.command === 'createProject') {
                     const payload = message.data;
                     try {
@@ -394,53 +441,86 @@ function activate(context) {
                     await callHttpApi('http://127.0.0.1:8765/api/active_project', 'POST', { name: activeProject });
                 } catch (e) {}
 
-                // Reveal project in file explorer
+                // Fetch registered project metadata from server for accurate path & top RTL
+                let matchedProject = null;
+                try {
+                    const projects = await callHttpApi('http://127.0.0.1:8765/api/projects', 'GET');
+                    if (Array.isArray(projects)) {
+                        matchedProject = projects.find(p => p.name === activeProject || p.path === activeProject);
+                    }
+                } catch (e) {}
+
                 const wsFolders = vscode.workspace.workspaceFolders;
-                if (wsFolders && wsFolders.length > 0) {
-                    const projUri = vscode.Uri.joinPath(wsFolders[0].uri, 'projects', activeProject);
+                const pathMod = require('path');
+                const fsMod = require('fs');
+
+                let projFsPath = null;
+                if (matchedProject && matchedProject.path && fsMod.existsSync(matchedProject.path)) {
+                    projFsPath = matchedProject.path;
+                } else if (wsFolders && wsFolders.length > 0) {
+                    projFsPath = pathMod.join(wsFolders[0].uri.fsPath, 'projects', activeProject);
+                    if (!fsMod.existsSync(projFsPath)) {
+                        projFsPath = pathMod.join(wsFolders[0].uri.fsPath, activeProject);
+                    }
+                }
+
+                if (projFsPath && fsMod.existsSync(projFsPath)) {
+                    const projUri = vscode.Uri.file(projFsPath);
                     try {
                         await vscode.commands.executeCommand('revealInExplorer', projUri);
                     } catch (e) {}
 
                     // Open top RTL file in ViewColumn.One
                     let topFileUri = null;
-                    try {
-                        const cfgUri = vscode.Uri.joinPath(projUri, 'silis.silisproj');
-                        const cfgBytes = await vscode.workspace.fs.readFile(cfgUri);
-                        const cfg = JSON.parse(Buffer.from(cfgBytes).toString('utf8'));
-                        if (cfg.rtl_files && cfg.rtl_files.length > 0) {
-                            topFileUri = vscode.Uri.joinPath(projUri, cfg.rtl_files[0]);
-                        } else if (cfg.top_module) {
-                            for (const cand of [
-                                `rtl/${cfg.top_module}.sv`,
-                                `rtl/${cfg.top_module}.v`,
-                                `${cfg.top_module}.sv`,
-                                `${cfg.top_module}.v`
-                            ]) {
-                                const candUri = vscode.Uri.joinPath(projUri, cand);
-                                try {
-                                    await vscode.workspace.fs.stat(candUri);
-                                    topFileUri = candUri;
-                                    break;
-                                } catch (e) {}
+
+                    // 1. Check explicit rtl_files from project metadata
+                    if (matchedProject && matchedProject.rtl_files && matchedProject.rtl_files.length > 0) {
+                        for (const rf of matchedProject.rtl_files) {
+                            const candPath = pathMod.isAbsolute(rf) ? rf : pathMod.join(projFsPath, rf);
+                            if (fsMod.existsSync(candPath) && !fsMod.statSync(candPath).isDirectory()) {
+                                topFileUri = vscode.Uri.file(candPath);
+                                break;
                             }
                         }
-                    } catch (e) {}
+                    }
 
+                    // 2. Check top_module candidates in standard dirs
                     if (!topFileUri) {
-                        try {
-                            const vFiles = await vscode.workspace.findFiles(`projects/${activeProject}/**/*.{v,sv}`);
-                            if (vFiles.length > 0) {
-                                topFileUri = vFiles.find(f => !f.fsPath.includes('tb_')) || vFiles[0];
+                        const topMod = (matchedProject && matchedProject.top_module) ? matchedProject.top_module : activeProject;
+                        for (const sub of ['rtl', 'source', 'src', '.']) {
+                            for (const ext of ['.v', '.sv']) {
+                                const candPath = pathMod.join(projFsPath, sub, topMod + ext);
+                                if (fsMod.existsSync(candPath) && !fsMod.statSync(candPath).isDirectory()) {
+                                    topFileUri = vscode.Uri.file(candPath);
+                                    break;
+                                }
                             }
-                        } catch (e) {}
+                            if (topFileUri) break;
+                        }
+                    }
+
+                    // 3. Scan project directory for any non-testbench HDL file
+                    if (!topFileUri) {
+                        for (const sub of ['rtl', 'source', 'src', '.']) {
+                            const subDir = pathMod.join(projFsPath, sub);
+                            if (fsMod.existsSync(subDir) && fsMod.statSync(subDir).isDirectory()) {
+                                const files = fsMod.readdirSync(subDir);
+                                const hdl = files.find(f => (f.endsWith('.v') || f.endsWith('.sv')) && !f.startsWith('tb_') && !f.includes('_tb'));
+                                if (hdl) {
+                                    topFileUri = vscode.Uri.file(pathMod.join(subDir, hdl));
+                                    break;
+                                }
+                            }
+                        }
                     }
 
                     if (topFileUri) {
                         try {
                             const doc = await vscode.workspace.openTextDocument(topFileUri);
                             await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.One, preview: false });
-                        } catch (e) {}
+                        } catch (e) {
+                            console.error('[Silis] Failed to open top RTL document:', e);
+                        }
                     }
                 }
 
@@ -480,29 +560,52 @@ function activate(context) {
 
     // 9. 2D Layout Canvas (World 1: FastSiliconPeeker with auto-connect)
     context.subscriptions.push(
-        vscode.commands.registerCommand('silis.openLayout', async () => {
-            const panel = vscode.window.createWebviewPanel(
+        vscode.commands.registerCommand('silis.openLayout', async (projectName) => {
+            const pName = projectName || activeProject || 'demo_soc';
+            if (activeLayoutPanel) {
+                activeLayoutPanel.reveal(vscode.ViewColumn.Active);
+                return;
+            }
+            activeLayoutPanel = vscode.window.createWebviewPanel(
                 'silisLayout',
                 '2D Layout (FastSiliconPeeker)',
                 vscode.ViewColumn.Active,
                 { enableScripts: true, retainContextWhenHidden: true }
             );
-            const uri = await resolveUrl('http://127.0.0.1:6081/vnc_lite.html?autoconnect=true&resize=scale');
-            panel.webview.html = getIframeHtml(uri, '2D Layout');
+            const uri = await resolveUrl(`http://127.0.0.1:8765/peeker/index.html?project=${encodeURIComponent(pName)}`);
+            activeLayoutPanel.webview.html = getIframeHtml(uri, '2D Layout: FastSiliconPeeker');
+            activeLayoutPanel.onDidDispose(() => { activeLayoutPanel = null; }, null, context.subscriptions);
         })
     );
 
     // 10. Floorplan & Power Studio (World 3: FPS with auto-connect)
+    let activeFloorplanPanel = null;
     context.subscriptions.push(
-        vscode.commands.registerCommand('silis.openFloorplanner', async () => {
-            const panel = vscode.window.createWebviewPanel(
+        vscode.commands.registerCommand('silis.openFloorplanner', async (projectName) => {
+            const pName = projectName || activeProject || 'demo_soc';
+            if (activeFloorplanPanel) {
+                activeFloorplanPanel.reveal(vscode.ViewColumn.Active);
+                return;
+            }
+            activeFloorplanPanel = vscode.window.createWebviewPanel(
                 'silisFPS',
                 'Floorplan & Power Studio',
                 vscode.ViewColumn.Active,
                 { enableScripts: true, retainContextWhenHidden: true }
             );
-            const uri = await resolveUrl('http://127.0.0.1:6084/vnc_lite.html?autoconnect=true&resize=scale');
-            panel.webview.html = getIframeHtml(uri, 'Floorplan Studio');
+            const uri = await resolveUrl(`http://127.0.0.1:8765/floorplanner/index.html?project=${encodeURIComponent(pName)}`);
+            activeFloorplanPanel.webview.html = getIframeHtml(uri, 'Floorplan & Power Studio');
+            activeFloorplanPanel.onDidDispose(() => { activeFloorplanPanel = null; }, null, context.subscriptions);
+        })
+    );
+
+    // 10b. OpenROAD Native GUI (Physical Layout Inspection)
+    context.subscriptions.push(
+        vscode.commands.registerCommand('silis.openOpenRoadGui', async (projectName) => {
+            const pName = projectName || activeProject || 'demo_soc';
+            const term = getFlowTerminal();
+            term.show();
+            term.sendText(`python3 tools/flow.py --view-openroad --project projects/${pName}`);
         })
     );
 
@@ -518,22 +621,23 @@ function activate(context) {
     context.subscriptions.push(
         vscode.commands.registerCommand('silis.runSimulation', async () => {
             const pName = activeProject || 'demo_soc';
-            vscode.window.showInformationMessage(`Compiling & running simulation for project "${pName}"...`);
+            vscode.window.showInformationMessage(`Running simulation for project "${pName}"...`);
 
             if (vscode.window.activeTextEditor) {
                 await vscode.window.activeTextEditor.document.save();
             }
 
-            // 1. Open DigitalJS Schematic on the right (split view)
+            // 1. Show terminal and execute headless simulation
+            const term = getFlowTerminal();
+            term.show();
+            term.sendText(`python3 tools/flow.py --sim --project projects/${pName}`);
+
+            // 2. Open schematic beside RTL
             await openSchematicPanel(pName, vscode.ViewColumn.Beside);
 
-            // 2. Run simulation command in flow terminal (preserveFocus = true)
-            const term = getFlowTerminal();
-            term.show(true);
-            term.sendText(`silis --run-sim --project projects/${pName}`);
-
-            // 3. Focus bottom dock tab with waveforms (front-and-center)
+            // 3. Load waveform and focus waveviewer now that Run has been clicked
             await loadWaveformInBottomDock(getActiveProjectDir(pName));
+            vscode.commands.executeCommand('silis-bottom-dock.focus');
         })
     );
 
@@ -574,7 +678,7 @@ function activate(context) {
         vscode.commands.registerCommand('silis.runSynthesis', () => {
             const term = getFlowTerminal();
             term.show();
-            term.sendText(`silis --run-synth --project projects/${activeProject}`);
+            term.sendText(`python3 tools/flow.py --synth --project projects/${activeProject}`);
         })
     );
 
@@ -582,7 +686,7 @@ function activate(context) {
         vscode.commands.registerCommand('silis.runAll', () => {
             const term = getFlowTerminal();
             term.show();
-            term.sendText(`silis --run-all --project projects/${activeProject}`);
+            term.sendText(`python3 tools/flow.py --tapeout --project projects/${activeProject}`);
         })
     );
 
@@ -657,6 +761,27 @@ async function resolveUrl(localUrl) {
     }
 }
 
+function getBottomDockIdleHtml() {
+    return `<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <style>
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background: var(--vscode-editor-background); color: var(--vscode-descriptionForeground); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 13px; }
+        .box { text-align: center; max-width: 440px; padding: 24px; }
+        p { margin: 0 0 8px 0; }
+        .hint { font-size: 11px; opacity: 0.8; }
+    </style>
+</head>
+<body>
+    <div class="box">
+        <p><strong>ROHD Waveform Inspector Idle</strong></p>
+        <p class="hint">Click <strong>Run Simulation (Play)</strong> to compile RTL and stream interactive VCD waveforms into this dock.</p>
+    </div>
+</body>
+</html>`;
+}
+
 function getIframeHtml(url, title) {
     const safeTitle = (title || 'Silis CAD Engine').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     return `<!DOCTYPE html>
@@ -665,26 +790,26 @@ function getIframeHtml(url, title) {
     <meta charset="utf-8">
     <meta http-equiv="Content-Security-Policy" content="default-src * 'unsafe-inline' 'unsafe-eval' data: blob: ws: wss:; frame-src *; child-src *;">
     <style>
-        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #181825; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: var(--vscode-editor-background); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
         #silis-bar {
             height: 28px;
-            background: #11111b;
-            border-bottom: 1px solid #313244;
+            background: var(--vscode-editor-background);
+            border-bottom: 1px solid var(--vscode-editorWidget-border);
             display: flex;
             align-items: center;
             justify-content: space-between;
             padding: 0 10px;
-            color: #cdd6f4;
+            color: var(--vscode-foreground);
             font-size: 11px;
             box-sizing: border-box;
             user-select: none;
         }
-        .bar-title { font-weight: 600; color: #89b4fa; }
+        .bar-title { font-weight: 600; color: var(--vscode-textLink-foreground); }
         .bar-links { display: flex; align-items: center; gap: 8px; }
         .bar-btn {
-            background: #313244;
-            color: #cdd6f4;
-            border: 1px solid #45475a;
+            background: var(--vscode-editorWidget-border);
+            color: var(--vscode-foreground);
+            border: 1px solid var(--vscode-editorWidget-border);
             border-radius: 3px;
             padding: 2px 8px;
             font-size: 10px;
@@ -693,9 +818,9 @@ function getIframeHtml(url, title) {
             display: inline-flex;
             align-items: center;
         }
-        .bar-btn:hover { background: #45475a; color: #ffffff; }
+        .bar-btn:hover { background: var(--vscode-list-hoverBackground); color: var(--vscode-foreground); }
         .frame-wrap { width: 100%; height: calc(100% - 28px); position: relative; }
-        iframe { width: 100%; height: 100%; border: none; background: #181825; }
+        iframe { width: 100%; height: 100%; border: none; background: var(--vscode-editor-background); }
     </style>
 </head>
 <body>
@@ -740,46 +865,27 @@ function getDashboardHtml(apiBaseUrl, currentActive) {
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: var(--vscode-foreground); background: var(--vscode-editor-background); padding: 28px 36px; max-width: 900px; margin: 0 auto; line-height: 1.5; }
         h1 { font-size: 20px; font-weight: 700; margin: 0 0 6px 0; }
-        .sub { font-size: 13px; color: #a6adc8; margin-bottom: 20px; }
-        .banner { background: #181825; border: 1px solid #313244; border-radius: 6px; padding: 12px 16px; margin-bottom: 24px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-        .tool-badge { font-size: 11px; padding: 3px 8px; border-radius: 3px; background: #313244; color: #cdd6f4; font-family: monospace; }
-        .tool-badge.ok { background: #1e3a2f; color: #a6e3a1; border: 1px solid #40a070; }
-        .card { background: var(--vscode-editorWidget-background, #1e1e2e); border: 1px solid var(--vscode-editorWidget-border, #313244); border-radius: 6px; padding: 16px; margin-bottom: 24px; }
-        .card-title { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--vscode-sideBarTitle-foreground, #a6adc8); margin-bottom: 12px; }
-        .active-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+        .sub { font-size: 13px; color: var(--vscode-descriptionForeground); margin-bottom: 20px; }
         .active-info { font-size: 15px; font-weight: 600; }
-        .active-pdk { font-size: 12px; color: #89b4fa; font-family: monospace; margin-left: 8px; }
+        .active-pdk { font-size: 12px; color: var(--vscode-textLink-foreground); font-family: monospace; margin-left: 8px; }
         .btn-group { display: flex; gap: 8px; flex-wrap: wrap; }
         button { padding: 6px 14px; background: var(--vscode-button-secondaryBackground, #313244); color: var(--vscode-button-secondaryForeground, #cdd6f4); border: 1px solid var(--vscode-button-border, #45475a); border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 500; font-family: inherit; }
         button:hover { background: var(--vscode-button-secondaryHoverBackground, #45475a); }
         button.primary { background: var(--vscode-button-background, #89b4fa); color: var(--vscode-button-foreground, #181825); font-weight: 600; border: none; }
         button.primary:hover { opacity: 0.9; }
         table { width: 100%; border-collapse: collapse; font-size: 12px; }
-        th { text-align: left; padding: 8px 10px; color: #a6adc8; border-bottom: 1px solid #313244; font-weight: 600; }
-        td { padding: 10px; border-bottom: 1px solid #313244; }
+        th { text-align: left; padding: 8px 10px; color: var(--vscode-descriptionForeground); border-bottom: 1px solid var(--vscode-editorWidget-border); font-weight: 600; }
+        td { padding: 10px; border-bottom: 1px solid var(--vscode-editorWidget-border); }
         tr:hover td { background: var(--vscode-list-hoverBackground); }
         .tag { font-size: 10px; padding: 2px 6px; border-radius: 3px; font-family: monospace; }
-        .tag.ready { background: #1e3a2f; color: #a6e3a1; }
-        .tag.none { background: #313244; color: #a6adc8; }
+        .tag.ready { background: var(--vscode-charts-green, #1e3a2f); color: var(--vscode-charts-green, #57a564); }
+        .tag.none { background: var(--vscode-editorWidget-border); color: var(--vscode-descriptionForeground); }
         .flow-bar { display: flex; gap: 10px; margin-top: 10px; }
     </style>
 </head>
 <body>
     <h1>SILIS ASIC Studio</h1>
     <div class="sub">Native Physical Design & Multi-Domain Power Studio for VS Code Web</div>
-
-    <div class="banner">
-        <div>
-            <strong>Toolchain Health</strong>
-            <div style="font-size: 11px; color: #a6adc8;">Stand-alone ASIC engines loaded in container</div>
-        </div>
-        <div style="display:flex; gap:6px; flex-wrap:wrap;">
-            <span class="tool-badge ok" id="b-python">Python 3.12 (OK)</span>
-            <span class="tool-badge ok" id="b-yosys">Yosys (OK)</span>
-            <span class="tool-badge ok" id="b-openroad">OpenROAD (OK)</span>
-            <span class="tool-badge ok" id="b-pdk">Sky130B (Loaded)</span>
-        </div>
-    </div>
 
     <div class="card">
         <div class="card-title">Active Silicon Design</div>
@@ -793,6 +899,7 @@ function getDashboardHtml(apiBaseUrl, currentActive) {
                 <button onclick="msg('openWaveforms')">Waveforms (ROHD)</button>
                 <button onclick="msg('openFloorplanner')">Floorplan Studio (FPS)</button>
                 <button onclick="msg('openLayout')">2D Layout (Peeker)</button>
+                <button onclick="msg('openOpenRoadGui')">OpenROAD GUI</button>
             </div>
         </div>
         <div class="flow-bar">
@@ -817,7 +924,7 @@ function getDashboardHtml(apiBaseUrl, currentActive) {
                 </tr>
             </thead>
             <tbody id="proj-tbody">
-                <tr><td colspan="5" style="color:#a6adc8;">Loading designs...</td></tr>
+                <tr><td colspan="5" style="color:var(--vscode-descriptionForeground);">Loading designs...</td></tr>
             </tbody>
         </table>
     </div>
@@ -830,42 +937,51 @@ function getDashboardHtml(apiBaseUrl, currentActive) {
             vscode.postMessage({ command: cmd, ...data });
         }
 
+        function renderDashboardProjects(projs) {
+            const tbody = document.getElementById('proj-tbody');
+            if (!Array.isArray(projs) || projs.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" style="color:var(--vscode-descriptionForeground);">No designs found. Create your first project above.</td></tr>';
+                return;
+            }
+            tbody.innerHTML = projs.map(p => {
+                const isAct = p.is_active;
+                const defTag = p.has_def ? '<span class="tag ready">Available</span>' : '<span class="tag none">Pending PnR</span>';
+                return '<tr>' +
+                    '<td><strong>' + p.name + '</strong> ' + (isAct ? '<span class="tag ready" style="margin-left:4px;">ACTIVE</span>' : '') + '</td>' +
+                    '<td><code>' + p.pdk + '</code></td>' +
+                    '<td><code>' + p.top_module + '</code></td>' +
+                    '<td>' + defTag + '</td>' +
+                    '<td>' +
+                        '<button onclick="msg(\\'openProject\\', {project:\\'' + p.name + '\\'})">Select</button> ' +
+                        '<button onclick="msg(\\'openSchematic\\', {project:\\'' + p.name + '\\'})">Schem</button> ' +
+                        '<button onclick="msg(\\'openWaveforms\\', {project:\\'' + p.name + '\\'})">Waves</button> ' +
+                        '<button onclick="msg(\\'openFloorplanner\\', {project:\\'' + p.name + '\\'})">FPS</button> ' +
+                        '<button onclick="msg(\\'openOpenRoadGui\\', {project:\\'' + p.name + '\\'})">OpenROAD</button>' +
+                    '</td>' +
+                '</tr>';
+            }).join('');
+
+            const act = projs.find(p => p.is_active);
+            if (act) {
+                document.getElementById('active-name').textContent = act.name;
+                document.getElementById('active-pdk').textContent = 'PDK: ' + act.pdk;
+            }
+        }
+
         async function refresh() {
+            msg('getProjects');
             try {
                 const resp = await fetch(API_BASE + '/api/projects');
                 const projs = await resp.json();
-                const tbody = document.getElementById('proj-tbody');
-                if (!Array.isArray(projs) || projs.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="5" style="color:#a6adc8;">No designs found. Create your first project above.</td></tr>';
-                    return;
-                }
-                tbody.innerHTML = projs.map(p => {
-                    const isAct = p.is_active;
-                    const defTag = p.has_def ? '<span class="tag ready">Available</span>' : '<span class="tag none">Pending PnR</span>';
-                    return \`<tr>
-                        <td><strong>\${p.name}</strong> \${isAct ? '<span class="tag ready" style="margin-left:4px;">ACTIVE</span>' : ''}</td>
-                        <td><code>\${p.pdk}</code></td>
-                        <td><code>\${p.top_module}</code></td>
-                        <td>\${defTag}</td>
-                        <td>
-                            <button onclick="msg('openProject', {project:'\${p.name}'})">Select</button>
-                            <button onclick="msg('openSchematic', {project:'\${p.name}'})">Schem</button>
-                            <button onclick="msg('openWaveforms', {project:'\${p.name}'})">Waves</button>
-                            <button onclick="msg('openFloorplanner', {project:'\${p.name}'})">FPS</button>
-                        </td>
-                    </tr>\`;
-                }).join('');
-
-                const act = projs.find(p => p.is_active);
-                if (act) {
-                    document.getElementById('active-name').textContent = act.name;
-                    document.getElementById('active-pdk').textContent = 'PDK: ' + act.pdk;
-                }
+                renderDashboardProjects(projs);
             } catch(e) {}
         }
 
         window.addEventListener('message', e => {
-            if (e.data && e.data.type === 'refresh') refresh();
+            if (e.data && (e.data.type === 'refresh' || e.data.type === 'projectsLoaded')) {
+                if (e.data.projects) renderDashboardProjects(e.data.projects);
+                else refresh();
+            }
         });
 
         refresh();
@@ -879,38 +995,41 @@ function getDashboardHtml(apiBaseUrl, currentActive) {
 // Authentic 6-Stage Silis Project Creation Wizard HTML
 // -----------------------------------------------------------------------------
 function getProjectWizardHtml(workspaceFiles) {
-    const wsFilesJson = JSON.stringify(workspaceFiles || []);
     return `<!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: var(--vscode-foreground); background: var(--vscode-editor-background); padding: 28px; max-width: 680px; margin: 0 auto; line-height: 1.5; }
-        .stepper { display: flex; gap: 8px; margin-bottom: 24px; border-bottom: 1px solid #313244; padding-bottom: 12px; }
-        .step-num { width: 22px; height: 22px; border-radius: 50%; background: #313244; color: #a6adc8; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: bold; margin-right: 6px; }
-        .step-item { font-size: 12px; color: #a6adc8; display: flex; align-items: center; }
-        .step-item.active { color: #89b4fa; font-weight: 600; }
-        .step-item.active .step-num { background: #89b4fa; color: #181825; }
+        .stepper { display: flex; gap: 8px; margin-bottom: 24px; border-bottom: 1px solid var(--vscode-editorWidget-border); padding-bottom: 12px; }
+        .step-num { width: 22px; height: 22px; border-radius: 50%; background: var(--vscode-editorWidget-border); color: var(--vscode-descriptionForeground); display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: bold; margin-right: 6px; }
+        .step-item { font-size: 12px; color: var(--vscode-descriptionForeground); display: flex; align-items: center; }
+        .step-item.active { color: var(--vscode-textLink-foreground); font-weight: 600; }
+        .step-item.active .step-num { background: var(--vscode-textLink-foreground); color: var(--vscode-editor-background); }
         .step-content { display: none; }
         .step-content.active { display: block; }
         h2 { font-size: 16px; margin: 0 0 4px 0; }
-        .step-desc { font-size: 12px; color: #a6adc8; margin-bottom: 20px; }
+        .step-desc { font-size: 12px; color: var(--vscode-descriptionForeground); margin-bottom: 20px; }
         label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 6px; }
         input, select { width: 100%; box-sizing: border-box; padding: 8px 10px; margin-bottom: 16px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border, #45475a); border-radius: 4px; font-size: 13px; font-family: inherit; }
         input:focus, select:focus { outline: none; border-color: var(--vscode-focusBorder); }
-        .hint { font-size: 11px; color: #a6adc8; margin-top: -12px; margin-bottom: 16px; }
+        .hint { font-size: 11px; color: var(--vscode-descriptionForeground); margin-top: -12px; margin-bottom: 16px; }
         .card-box { background: var(--vscode-editorWidget-background, #1e1e2e); border: 1px solid var(--vscode-editorWidget-border, #313244); border-radius: 6px; padding: 14px; margin-bottom: 16px; }
-        .nav-footer { display: flex; justify-content: space-between; margin-top: 24px; border-top: 1px solid #313244; padding-top: 16px; }
-        button { padding: 8px 18px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 600; border: 1px solid #45475a; background: #313244; color: #cdd6f4; }
-        button:hover { background: #45475a; }
-        button.primary { background: #89b4fa; color: #181825; border: none; }
+        .nav-footer { display: flex; justify-content: space-between; margin-top: 24px; border-top: 1px solid var(--vscode-editorWidget-border); padding-top: 16px; }
+        button { padding: 8px 16px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 600; border: 1px solid var(--vscode-editorWidget-border); background: var(--vscode-button-secondaryBackground, var(--vscode-editorWidget-border)); color: var(--vscode-button-secondaryForeground, var(--vscode-foreground)); }
+        button:hover { background: var(--vscode-button-secondaryHoverBackground, var(--vscode-list-hoverBackground)); }
+        button.primary { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; }
         button.primary:hover { opacity: 0.9; }
-        .radio-option { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 12px; cursor: pointer; }
-        .radio-option input { width: auto; margin-top: 3px; }
-        .radio-label { font-size: 13px; font-weight: 600; }
-        .radio-sub { font-size: 11px; color: #a6adc8; }
+        .btn-row { display: flex; gap: 8px; margin-bottom: 12px; }
+        .file-list { background: var(--vscode-input-background); border: 1px solid var(--vscode-editorWidget-border); border-radius: 4px; min-height: 80px; max-height: 150px; overflow-y: auto; padding: 6px; margin-bottom: 12px; font-family: monospace; font-size: 12px; }
+        .file-entry { display: flex; justify-content: space-between; align-items: center; padding: 4px 6px; border-bottom: 1px solid var(--vscode-editorWidget-border); }
+        .file-entry:last-child { border-bottom: none; }
+        .del-btn { color: #f38ba8; cursor: pointer; font-weight: bold; margin-left: 8px; }
+        .browse-row { display: flex; gap: 8px; margin-bottom: 16px; }
+        .browse-row input { margin-bottom: 0; }
+        .browse-row button { white-space: nowrap; }
         #status-msg { margin-top: 16px; padding: 12px; border-radius: 4px; font-size: 12px; display: none; }
-        #status-msg.success { background: #1e3a2f; color: #a6e3a1; border: 1px solid #40a070; }
+        #status-msg.success { background: var(--vscode-charts-green, #1e3a2f); color: var(--vscode-charts-green, #57a564); border: 1px solid var(--vscode-charts-green, #40a070); }
         #status-msg.error { background: #3a1e1e; color: #f38ba8; border: 1px solid #a04040; }
     </style>
 </head>
@@ -918,108 +1037,86 @@ function getProjectWizardHtml(workspaceFiles) {
     <div class="stepper">
         <div class="step-item active" id="st-1"><span class="step-num">1</span>Project</div>
         <div class="step-item" id="st-2"><span class="step-num">2</span>RTL Sources</div>
-        <div class="step-item" id="st-3"><span class="step-num">3</span>Timing (SDC)</div>
-        <div class="step-item" id="st-4"><span class="step-num">4</span>Power & IO</div>
-        <div class="step-item" id="st-5"><span class="step-num">5</span>PDK & Top</div>
+        <div class="step-item" id="st-3"><span class="step-num">3</span>Constraints</div>
+        <div class="step-item" id="st-4"><span class="step-num">4</span>Power &amp; IO</div>
+        <div class="step-item" id="st-5"><span class="step-num">5</span>Silicon Target</div>
     </div>
 
     <!-- Step 1: Project Details (Page 1) -->
     <div class="step-content active" id="sp-1">
         <h2>Project Details</h2>
-        <div class="step-desc">Specify the project identifier and target workspace directory.</div>
+        <div class="step-desc">Specify the project name and location in the workspace.</div>
 
         <label for="p-name">Project Name</label>
-        <input id="p-name" type="text" placeholder="e.g. riscv_core, systolic_array" maxlength="64" autofocus>
+        <input id="p-name" type="text" placeholder="e.g. riscv_core, full_adder" maxlength="64" autofocus>
         <div class="hint">Alphanumeric characters and underscores only. Must start with a letter.</div>
 
         <label for="p-loc">Target Directory</label>
         <input id="p-loc" type="text" readonly value="projects/<project_name>">
-        <div class="hint">Projects are isolated within the workspace <code>projects/</code> directory.</div>
     </div>
 
-    <!-- Step 2: RTL Sources (Page 2) -->
+    <!-- Step 2: RTL Sources (Page 2 - 100% Silis Desktop Parity) -->
     <div class="step-content" id="sp-2">
-        <h2>RTL Sources</h2>
-        <div class="step-desc">Select how hardware logic will be supplied for this project.</div>
+        <h2>Add Sources</h2>
+        <div class="step-desc">Select RTL files (.v, .sv, .vhd) from your system to add to the project.</div>
+
+        <div class="btn-row">
+            <button onclick="browseFiles('rtl', false)">+ Add RTL Files...</button>
+            <button onclick="browseFiles('rtl', true)">+ Add Folder...</button>
+            <button onclick="createNewFile('rtl')">+ Create New File...</button>
+        </div>
+
+        <label>Selected RTL Sources:</label>
+        <div class="file-list" id="rtl-list"><div style="color:var(--vscode-descriptionForeground); padding:8px;">No files selected. Click 'Add RTL Files' to select from your system or 'Create New File'.</div></div>
 
         <div class="card-box">
-            <div class="radio-option">
-                <input type="radio" name="rtl-mode" id="rm-counter" value="counter" checked>
-                <div>
-                    <div class="radio-label">Generate Synchronous Datapath Template</div>
-                    <div class="radio-sub">Clocked 8-bit pipeline with synchronous reset, ready for synthesis and simulation.</div>
-                </div>
-            </div>
-            <div class="radio-option">
-                <input type="radio" name="rtl-mode" id="rm-alu" value="alu">
-                <div>
-                    <div class="radio-label">Generate Combinational ALU Template</div>
-                    <div class="radio-sub">Arithmetic/Logic decoder module with opcode decoding.</div>
-                </div>
-            </div>
-            <div class="radio-option">
-                <input type="radio" name="rtl-mode" id="rm-empty" value="empty">
-                <div>
-                    <div class="radio-label">Generate Empty Module Shell</div>
-                    <div class="radio-sub">Skeleton port declaration only.</div>
-                </div>
-            </div>
-            <div class="radio-option" id="opt-import" style="display:none;">
-                <input type="radio" name="rtl-mode" id="rm-import" value="import">
-                <div>
-                    <div class="radio-label">Import Existing Workspace HDL File(s)</div>
-                    <div class="radio-sub" id="import-desc">Select existing files to copy into project <code>rtl/</code>.</div>
-                </div>
-            </div>
-        </div>
-        <div id="file-picker-box" style="display:none;" class="card-box">
-            <label>Select Workspace Files to Copy:</label>
-            <div id="file-list-checks"></div>
+            <label style="font-weight:normal; display:flex; align-items:center; gap:8px; margin:0; cursor:pointer;">
+                <input type="checkbox" id="copy-sources" checked style="width:auto; margin:0;">
+                <span>Copy sources into project directory</span>
+            </label>
         </div>
     </div>
 
-    <!-- Step 3: Constraints (Page 3) -->
+    <!-- Step 3: Constraints (Page 3 - 100% Silis Desktop Parity) -->
     <div class="step-content" id="sp-3">
-        <h2>Timing Constraints (SDC)</h2>
-        <div class="step-desc">Configure clock periods and timing boundaries for synthesis and PnR.</div>
+        <h2>Add Constraints</h2>
+        <div class="step-desc">Add SDC timing constraints for synthesis and physical design.</div>
 
-        <label for="c-period">Clock Period (ns)</label>
+        <div class="btn-row">
+            <button onclick="browseFiles('sdc', false)">+ Add SDC File...</button>
+            <button onclick="createNewFile('sdc')">+ Create New File...</button>
+        </div>
+
+        <label>Selected SDC Files:</label>
+        <div class="file-list" id="sdc-list"><div style="color:var(--vscode-descriptionForeground); padding:8px;">No SDC files selected. Default 100MHz (10.0ns) clock will be auto-generated.</div></div>
+
+        <label for="c-period">Clock Period (ns) for Auto SDC</label>
         <input id="c-period" type="number" value="10.0" min="0.5" max="1000.0" step="0.5">
-        <div class="hint">Period in nanoseconds (10.0 ns = 100 MHz target frequency).</div>
-
-        <div class="card-box">
-            <label style="font-weight:normal; display:flex; align-items:center; gap:8px; cursor:pointer;">
-                <input type="checkbox" id="c-autosdc" checked style="width:auto; margin:0;">
-                <span>Auto-generate baseline SDC in <code>constr/default.sdc</code> with 20% IO budgeting</span>
-            </label>
-        </div>
     </div>
 
-    <!-- Step 4: Additional Design Intent (Page 4b) -->
+    <!-- Step 4: Additional Design Intent (Page 4b - 100% Silis Desktop Parity) -->
     <div class="step-content" id="sp-4">
-        <h2>Power Intent & IO Pin Ordering</h2>
-        <div class="step-desc">Configure IEEE 1801 UPF multi-voltage intent and physical pad configurations.</div>
+        <h2>Additional Design Intent</h2>
+        <div class="step-desc">Configure power gating (UPF/CPF) and physical I/O pin ordering.</div>
 
-        <div class="card-box">
-            <label style="font-weight:normal; display:flex; align-items:center; gap:8px; margin-bottom:8px;">
-                <input type="checkbox" id="p-upf" checked style="width:auto; margin:0;">
-                <span>Generate baseline IEEE 1801 UPF 3.0 power intent (<code>power/design.upf</code>)</span>
-            </label>
-            <div class="radio-sub" style="margin-left:24px;">Defines primary power domain <code>PD_TOP</code>, VDD/VSS supply nets, and power state tables.</div>
+        <label>Power Intent (IEEE 1801 UPF / CPF)</label>
+        <div class="browse-row">
+            <input type="text" id="p-upf" placeholder="Optional: Browse existing .upf or .cpf file...">
+            <button onclick="browseSingle('upf')">Browse...</button>
         </div>
+        <div class="hint">If omitted, baseline default template (PD_TOP) is generated automatically.</div>
 
-        <div class="card-box">
-            <label style="font-weight:normal; display:flex; align-items:center; gap:8px; margin-bottom:8px;">
-                <input type="checkbox" id="p-io" checked style="width:auto; margin:0;">
-                <span>Generate baseline I/O pin placement configuration (<code>io/pin_order.cfg</code>)</span>
-            </label>
-            <div class="radio-sub" style="margin-left:24px;">Defines perimeter edge ordering ([NORTH], [SOUTH], [EAST], [WEST]) for OpenROAD.</div>
+        <label>I/O Pin &amp; Pad Ordering (.cfg / .io)</label>
+        <div class="browse-row">
+            <input type="text" id="p-io" placeholder="Optional: Browse existing pin_order.cfg or .io file...">
+            <button onclick="browseSingle('io')">Browse...</button>
         </div>
+        <div class="hint">If omitted, baseline perimeter edge ordering is generated automatically.</div>
     </div>
 
-    <!-- Step 5: Silicon Target & Summary (Page 5 & 6) -->
+    <!-- Step 5: Silicon Target (Page 5 - 100% Silis Desktop Parity) -->
     <div class="step-content" id="sp-5">
-        <h2>Silicon Target & Top Module</h2>
+        <h2>Silicon Target &amp; Top Module</h2>
         <div class="step-desc">Select target semiconductor process kit and verify top-level entity.</div>
 
         <label for="p-pdk">Process Design Kit (PDK)</label>
@@ -1030,15 +1127,8 @@ function getProjectWizardHtml(workspaceFiles) {
         </select>
 
         <label for="p-top">Top Module Name</label>
-        <input id="p-top" type="text" placeholder="e.g. chip_top">
+        <input id="p-top" type="text" placeholder="e.g. full_adder">
         <div class="hint">Top-level Verilog module identifier. Defaults to project name.</div>
-
-        <div class="card-box" style="background:#181825; border-color:#89b4fa;">
-            <strong style="color:#89b4fa;">Silis Physical Design Notice</strong>
-            <div style="font-size:11px; color:#cdd6f4; margin-top:4px;">
-                Physical floorplan metrics (die dimensions, core margins, power grid straps, and macro placement) are configured interactively in <strong>Silis Floorplan Studio (FPS)</strong> on Port 6084 after RTL intake.
-            </div>
-        </div>
     </div>
 
     <div id="status-msg"></div>
@@ -1052,27 +1142,8 @@ function getProjectWizardHtml(workspaceFiles) {
 
     <script>
         const vscode = acquireVsCodeApi();
-        const wsFiles = ${wsFilesJson};
         let currentStep = 1;
-
-        // Init workspace files in step 2 if any exist
-        if (wsFiles && wsFiles.length > 0) {
-            document.getElementById('opt-import').style.display = 'flex';
-            document.getElementById('import-desc').textContent = wsFiles.length + ' HDL file(s) available in workspace.';
-            const checkContainer = document.getElementById('file-list-checks');
-            checkContainer.innerHTML = wsFiles.map(f => \`
-                <label style="font-weight:normal; display:flex; align-items:center; gap:6px; margin-bottom:4px; font-size:12px;">
-                    <input type="checkbox" name="copy-file" value="\${f}" style="width:auto; margin:0;">
-                    <span>\${f}</span>
-                </label>
-            \`).join('');
-        }
-
-        document.querySelectorAll('input[name="rtl-mode"]').forEach(r => {
-            r.addEventListener('change', () => {
-                document.getElementById('file-picker-box').style.display = (r.value === 'import') ? 'block' : 'none';
-            });
-        });
+        const selectedFiles = { rtl: [], sdc: [] };
 
         document.getElementById('p-name').addEventListener('input', e => {
             const val = e.target.value.trim();
@@ -1084,6 +1155,61 @@ function getProjectWizardHtml(workspaceFiles) {
         document.getElementById('p-top').addEventListener('input', () => {
             document.getElementById('p-top').dataset.touched = '1';
         });
+
+        function browseFiles(target, isFolder) {
+            vscode.postMessage({
+                command: 'browseFiles',
+                target: target,
+                canSelectFiles: !isFolder,
+                canSelectFolders: isFolder,
+                canSelectMany: true,
+                title: isFolder ? 'Select Directory' : 'Select Source Files',
+                filters: target === 'rtl' ? { 'HDL Files': ['v', 'sv', 'vhd', 'vhdl'], 'All Files': ['*'] } : { 'SDC Files': ['sdc'], 'All Files': ['*'] }
+            });
+        }
+
+        function browseSingle(target) {
+            vscode.postMessage({
+                command: 'browseFiles',
+                target: target,
+                canSelectFiles: true,
+                canSelectFolders: false,
+                canSelectMany: false,
+                title: 'Select File',
+                filters: target === 'upf' ? { 'Power Intent': ['upf', 'cpf'], 'All Files': ['*'] } : { 'Pin Config': ['cfg', 'io', 'tcl'], 'All Files': ['*'] }
+            });
+        }
+
+        function createNewFile(target) {
+            const ext = target === 'rtl' ? '.v' : '.sdc';
+            const name = prompt('Enter filename (e.g. ' + (target === 'rtl' ? 'module.v' : 'timing.sdc') + '):');
+            if (name && name.trim()) {
+                let fname = name.trim();
+                if (!fname.endsWith(ext) && !fname.endsWith('.sv')) fname += ext;
+                selectedFiles[target].push('[NEW] ' + fname);
+                renderFileList(target);
+            }
+        }
+
+        function removeFile(target, idx) {
+            selectedFiles[target].splice(idx, 1);
+            renderFileList(target);
+        }
+
+        function renderFileList(target) {
+            const container = document.getElementById(target + '-list');
+            const list = selectedFiles[target];
+            if (list.length === 0) {
+                container.innerHTML = '<div style="color:var(--vscode-descriptionForeground); padding:8px;">No files selected.</div>';
+                return;
+            }
+            container.innerHTML = list.map((f, i) =>
+                '<div class="file-entry">' +
+                    '<span>' + f + '</span>' +
+                    '<span class="del-btn" onclick="removeFile(\\'' + target + '\\', ' + i + ')">&times;</span>' +
+                '</div>'
+            ).join('');
+        }
 
         function showStep(s) {
             currentStep = s;
@@ -1116,12 +1242,8 @@ function getProjectWizardHtml(workspaceFiles) {
             const top = document.getElementById('p-top').value.trim() || name;
             const pdk = document.getElementById('p-pdk').value;
             const period = parseFloat(document.getElementById('c-period').value) || 10.0;
-            const starterType = document.querySelector('input[name="rtl-mode"]:checked').value;
-
-            const copyFiles = [];
-            if (starterType === 'import') {
-                document.querySelectorAll('input[name="copy-file"]:checked').forEach(c => copyFiles.push(c.value));
-            }
+            const upf = document.getElementById('p-upf').value.trim();
+            const io = document.getElementById('p-io').value.trim();
 
             document.getElementById('status-msg').className = 'success';
             document.getElementById('status-msg').style.display = 'block';
@@ -1134,20 +1256,34 @@ function getProjectWizardHtml(workspaceFiles) {
                     top_module: top,
                     pdk: pdk,
                     clock_period: period,
-                    starter_type: starterType,
-                    copy_files: copyFiles
+                    rtl_files: selectedFiles.rtl,
+                    sdc_files: selectedFiles.sdc,
+                    upf_file: upf,
+                    io_file: io
                 }
             });
         }
 
         window.addEventListener('message', e => {
             const msg = e.data;
-            const el = document.getElementById('status-msg');
-            if (msg.type === 'created') {
+            if (msg.type === 'filesSelected') {
+                if (msg.target === 'upf') {
+                    if (msg.files.length > 0) document.getElementById('p-upf').value = msg.files[0];
+                } else if (msg.target === 'io') {
+                    if (msg.files.length > 0) document.getElementById('p-io').value = msg.files[0];
+                } else if (selectedFiles[msg.target]) {
+                    msg.files.forEach(f => {
+                        if (!selectedFiles[msg.target].includes(f)) selectedFiles[msg.target].push(f);
+                    });
+                    renderFileList(msg.target);
+                }
+            } else if (msg.type === 'created') {
+                const el = document.getElementById('status-msg');
                 el.className = 'success';
                 el.style.display = 'block';
                 el.innerHTML = '<strong>Project Created Successfully</strong><br>Project <code>' + msg.name + '</code> is now active. RTL source opened in editor.';
             } else if (msg.type === 'error') {
+                const el = document.getElementById('status-msg');
                 el.className = 'error';
                 el.style.display = 'block';
                 el.textContent = 'Error: ' + msg.message;
@@ -1157,10 +1293,6 @@ function getProjectWizardHtml(workspaceFiles) {
 </body>
 </html>`;
 }
-
-// -----------------------------------------------------------------------------
-// Sidebar HTML (Silis CAD Activity Bar)
-// -----------------------------------------------------------------------------
 function getSidebarHtml(apiBaseUrl, currentActive) {
     return `<!DOCTYPE html>
 <html>
@@ -1174,13 +1306,13 @@ function getSidebarHtml(apiBaseUrl, currentActive) {
         button.primary { background: var(--vscode-button-background, #89b4fa); color: var(--vscode-button-foreground, #181825); font-weight: 600; border: none; }
         button.primary:hover { opacity: 0.9; }
         .card { background: var(--vscode-editorWidget-background, #1e1e2e); border: 1px solid var(--vscode-editorWidget-border, #313244); border-radius: 6px; padding: 10px; margin-bottom: 12px; }
-        .meta { font-size: 11px; color: #a6adc8; }
+        .meta { font-size: 11px; color: var(--vscode-descriptionForeground); }
         .project-item { padding: 6px 8px; margin-bottom: 4px; border-left: 2px solid var(--vscode-button-border, #45475a); border-radius: 2px; cursor: pointer; background: var(--vscode-editor-background); }
         .project-item:hover { border-left-color: var(--vscode-button-background, #89b4fa); background: var(--vscode-list-hoverBackground); }
-        .project-item.active { border-left-color: #a6e3a1; background: var(--vscode-list-activeSelectionBackground, #313244); }
+        .project-item.active { border-left-color: var(--vscode-charts-green, #57a564); background: var(--vscode-list-activeSelectionBackground, #313244); }
         .project-name { font-weight: 600; font-size: 12px; }
-        .project-meta { font-size: 10px; color: #a6adc8; }
-        #active-label { color: #a6e3a1; font-weight: 600; }
+        .project-meta { font-size: 10px; color: var(--vscode-descriptionForeground); }
+        #active-label { color: var(--vscode-charts-green, #57a564); font-weight: 600; }
     </style>
 </head>
 <body>
@@ -1198,8 +1330,9 @@ function getSidebarHtml(apiBaseUrl, currentActive) {
     <h3>Active Design CAD Viewers</h3>
     <button onclick="vscode.postMessage({command:'openSchematic'})">Schematic (DigitalJS)</button>
     <button onclick="vscode.postMessage({command:'openWaveforms'})">Waveforms (Bottom Panel)</button>
-    <button onclick="vscode.postMessage({command:'openLayout'})">2D Layout (Peeker)</button>
     <button onclick="vscode.postMessage({command:'openFloorplanner'})">Floorplan Studio (FPS)</button>
+    <button onclick="vscode.postMessage({command:'openLayout'})">2D Layout (Peeker)</button>
+    <button onclick="vscode.postMessage({command:'openOpenRoadGui'})">OpenROAD Native GUI</button>
 
     <h3>Flow Execution</h3>
     <button onclick="vscode.postMessage({command:'runSynthesis'})">Run Synthesis (Yosys)</button>
@@ -1209,27 +1342,40 @@ function getSidebarHtml(apiBaseUrl, currentActive) {
         const vscode = acquireVsCodeApi();
         const API_BASE = ${JSON.stringify(apiBaseUrl || 'http://127.0.0.1:8765')};
 
+        function renderSidebarProjects(projects) {
+            const container = document.getElementById('project-list');
+            if (!container) return;
+            if (!Array.isArray(projects) || projects.length === 0) {
+                container.innerHTML = '<div class="meta">No projects found.</div>';
+                return;
+            }
+            container.innerHTML = projects.map(p => {
+                const isActive = p.is_active ? 'active' : '';
+                return '<div class="project-item ' + isActive + '" onclick="selectProject(\\'' + p.name + '\\')">' +
+                    '<div class="project-name">' + p.name + '</div>' +
+                    '<div class="project-meta">' + p.pdk + ' &middot; ' + p.top_module + '</div>' +
+                '</div>';
+            }).join('');
+
+            const activeObj = projects.find(p => p.is_active);
+            if (activeObj) {
+                document.getElementById('active-label').textContent = activeObj.name;
+            }
+        }
+
+        window.addEventListener('message', event => {
+            const msg = event.data;
+            if (msg && msg.type === 'projectsLoaded' && Array.isArray(msg.projects)) {
+                renderSidebarProjects(msg.projects);
+            }
+        });
+
         async function loadProjects() {
+            vscode.postMessage({ command: 'getProjects' });
             try {
                 const resp = await fetch(API_BASE + '/api/projects');
                 const projects = await resp.json();
-                const container = document.getElementById('project-list');
-                if (!Array.isArray(projects) || projects.length === 0) {
-                    container.innerHTML = '<div class="meta">No projects found.</div>';
-                    return;
-                }
-                container.innerHTML = projects.map(p => {
-                    const isActive = p.is_active ? 'active' : '';
-                    return \`<div class="project-item \${isActive}" onclick="selectProject('\${p.name}')">
-                        <div class="project-name">\${p.name}</div>
-                        <div class="project-meta">\${p.pdk} &middot; \${p.top_module}</div>
-                    </div>\`;
-                }).join('');
-
-                const activeObj = projects.find(p => p.is_active);
-                if (activeObj) {
-                    document.getElementById('active-label').textContent = activeObj.name;
-                }
+                renderSidebarProjects(projects);
             } catch(e) {}
         }
 

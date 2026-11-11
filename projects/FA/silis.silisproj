@@ -1,0 +1,16 @@
+{
+    "project_name": "FA",
+    "top_module": "FA",
+    "pdk": "sky130_fd_sc_hd",
+    "macros": [],
+    "auto_sdc": true,
+    "rtl_files": [
+        "rtl/FA.sv"
+    ],
+    "sdc_files": [
+        "constr/default.sdc"
+    ],
+    "tb_files": [
+        "tb/tb_FA.v"
+    ]
+}

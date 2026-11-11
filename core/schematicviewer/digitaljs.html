@@ -418,11 +418,31 @@
         (function() {
             const urlParams = new URLSearchParams(window.location.search);
             const targetFile = urlParams.get('file') || '';
-            const moduleName = urlParams.get('module') || 'chip_top';
+            const moduleName = urlParams.get('module') || '';
             const projectDir = urlParams.get('project') || '';
-            const apiUrl = targetFile
-                ? ('/api/netlist?file=' + encodeURIComponent(targetFile))
-                : ('/api/netlist?module=' + encodeURIComponent(moduleName) + (projectDir ? '&project=' + encodeURIComponent(projectDir) : ''));
+            let apiUrl = '';
+            if (targetFile) {
+                apiUrl = '/api/netlist?file=' + encodeURIComponent(targetFile);
+            } else {
+                apiUrl = '/api/netlist?' + (projectDir ? 'project=' + encodeURIComponent(projectDir) : '');
+                if (moduleName) {
+                    apiUrl += (projectDir ? '&' : '') + 'module=' + encodeURIComponent(moduleName);
+                }
+            }
+
+            function applyNetlist(data, retries) {
+                if (typeof loadSchematic === 'function' && window.processYosys) {
+                    try {
+                        const jsonStr = JSON.stringify(data);
+                        const b64 = window.btoa(unescape(encodeURIComponent(jsonStr)));
+                        loadSchematic(b64);
+                    } catch(e) {
+                        console.error('[Schematic CS Web] Error applying netlist:', e);
+                    }
+                } else if ((retries || 0) < 15) {
+                    setTimeout(function() { applyNetlist(data, (retries || 0) + 1); }, 100);
+                }
+            }
 
             fetch(apiUrl)
                 .then(function(res) {
@@ -430,13 +450,12 @@
                     throw new Error('HTTP ' + res.status);
                 })
                 .then(function(data) {
-                    if (window.loadSchematicDirect) {
-                        window.loadSchematicDirect(data);
-                    } else if (typeof loadSchematic === 'function') {
-                        const jsonStr = JSON.stringify(data);
-                        const b64 = window.btoa(unescape(encodeURIComponent(jsonStr)));
-                        loadSchematic(b64);
+                    if (data && data.error) {
+                        const st = document.getElementById('status-text');
+                        if (st) st.textContent = 'Netlist pending. Run Simulation or Synthesis first.';
+                        return;
                     }
+                    applyNetlist(data, 0);
                 })
                 .catch(function(err) {
                     console.log('[Schematic CS Web] Auto-fetch netlist note:', err.message);
