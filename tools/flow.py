@@ -126,6 +126,7 @@ endmodule
     env = os.environ.copy()
     if os.path.isdir(VERILATOR_ROOT):
         env["VERILATOR_ROOT"] = VERILATOR_ROOT
+    env["OBJCACHE"] = ""
 
     obj_dir = os.path.join(project_dir, "build", "obj_dir")
     os.makedirs(obj_dir, exist_ok=True)
