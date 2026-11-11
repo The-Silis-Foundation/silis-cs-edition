@@ -1,5 +1,5 @@
 {
-    "project_name": "chip_top",
+    "project_name": "demo_soc",
     "top_module": "chip_top",
     "pdk": "sky130",
     "macros": ["simple_alu"],

@@ -29,11 +29,38 @@ if not os.path.isfile(OPENROAD_BIN):
 def get_project_dir(proj_arg):
     if not proj_arg:
         return os.path.join(REPO_ROOT, "projects", "demo_soc")
-    if os.path.isabs(proj_arg):
+    if os.path.isabs(proj_arg) and os.path.isdir(proj_arg):
         return proj_arg
-    if proj_arg.startswith("projects/"):
-        return os.path.join(REPO_ROOT, proj_arg)
-    return os.path.join(REPO_ROOT, "projects", proj_arg)
+
+    clean = proj_arg.replace("projects/", "").strip("/")
+    cands = [
+        os.path.join(REPO_ROOT, "projects", clean),
+        os.path.join(REPO_ROOT, proj_arg),
+        os.path.join(REPO_ROOT, clean),
+    ]
+    for c in cands:
+        if os.path.isdir(c):
+            return c
+
+    # Fuzzy search projects/ by project_name or top_module in .silisproj
+    proj_dir = os.path.join(REPO_ROOT, "projects")
+    if os.path.isdir(proj_dir):
+        for item in os.listdir(proj_dir):
+            p = os.path.join(proj_dir, item)
+            if not os.path.isdir(p):
+                continue
+            for sp_name in ["silis.silisproj", f"{item}.silisproj"]:
+                sp = os.path.join(p, sp_name)
+                if os.path.isfile(sp):
+                    try:
+                        with open(sp) as f:
+                            meta = json.load(f)
+                            if meta.get("project_name") == clean or meta.get("top_module") == clean:
+                                return p
+                    except Exception:
+                        pass
+
+    return os.path.join(REPO_ROOT, "projects", clean)
 
 
 def run_sim(project_dir):

@@ -351,6 +351,17 @@ function activate(context) {
             panel.webview.html = getProjectWizardHtml(workspaceFiles);
 
             panel.webview.onDidReceiveMessage(async (message) => {
+                if (message.command === 'fetchMacros') {
+                    try {
+                        const pdk = message.pdk || 'sky130';
+                        const macros = await callHttpApi(`http://127.0.0.1:8765/api/macros?pdk=${encodeURIComponent(pdk)}`, 'GET');
+                        panel.webview.postMessage({ type: 'macrosLoaded', macros: macros || [] });
+                    } catch (e) {
+                        panel.webview.postMessage({ type: 'macrosLoaded', macros: [] });
+                    }
+                    return;
+                }
+
                 if (message.command === 'browseFiles') {
                     const opts = {
                         canSelectFiles: message.canSelectFiles !== false,
@@ -827,12 +838,12 @@ function getIframeHtml(url, title) {
     <div id="silis-bar">
         <div class="bar-title">${safeTitle}</div>
         <div class="bar-links">
-            <button class="bar-btn" onclick="const f=document.getElementById('cad-frame'); if(f) f.src=f.src;">Reload</button>
+            <button class="bar-btn" onclick="const f=document.getElementById('cad-frame'); if(f) f.src='${url}';">Reload</button>
             <a class="bar-btn" href="${url}" target="_blank" rel="noopener noreferrer">Open in New Window</a>
         </div>
     </div>
     <div class="frame-wrap">
-        <iframe id="cad-frame" src="${url}"></iframe>
+        <iframe id="cad-frame" name="silis-target:${encodeURIComponent(url)}" src="${url}"></iframe>
     </div>
     <script>
         const vscode = acquireVsCodeApi();
@@ -1031,6 +1042,24 @@ function getProjectWizardHtml(workspaceFiles) {
         #status-msg { margin-top: 16px; padding: 12px; border-radius: 4px; font-size: 12px; display: none; }
         #status-msg.success { background: var(--vscode-charts-green, #1e3a2f); color: var(--vscode-charts-green, #57a564); border: 1px solid var(--vscode-charts-green, #40a070); }
         #status-msg.error { background: #3a1e1e; color: #f38ba8; border: 1px solid #a04040; }
+        .catalog-container { display: flex; gap: 10px; margin-top: 8px; margin-bottom: 12px; height: 260px; border: 1px solid var(--vscode-editorWidget-border); border-radius: 6px; overflow: hidden; background: var(--vscode-editorWidget-background); }
+        .catalog-list { width: 40%; border-right: 1px solid var(--vscode-editorWidget-border); overflow-y: auto; padding: 6px; }
+        .catalog-item { padding: 6px 8px; border-radius: 4px; cursor: pointer; font-size: 11px; margin-bottom: 4px; border: 1px solid transparent; }
+        .catalog-item:hover { background: var(--vscode-list-hoverBackground); }
+        .catalog-item.selected { background: var(--vscode-list-activeSelectionBackground); color: var(--vscode-list-activeSelectionForeground); border-color: var(--vscode-focusBorder); }
+        .item-name { font-weight: 600; font-family: monospace; font-size: 11px; word-break: break-all; }
+        .item-meta { font-size: 10px; opacity: 0.8; margin-top: 2px; }
+        .catalog-preview { width: 60%; display: flex; flex-direction: column; padding: 10px; overflow-y: auto; font-size: 11px; }
+        .preview-header { font-weight: 600; font-size: 12px; margin-bottom: 4px; color: var(--vscode-textLink-foreground); }
+        .preview-dims { font-size: 10px; opacity: 0.8; margin-bottom: 8px; font-family: monospace; }
+        .preview-pins { font-size: 10px; line-height: 1.4; margin-bottom: 8px; background: var(--vscode-input-background); padding: 6px 8px; border-radius: 4px; border: 1px solid var(--vscode-editorWidget-border); max-height: 70px; overflow-y: auto; }
+        .stub-box { flex: 1; min-height: 80px; max-height: 110px; font-family: monospace; font-size: 10px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-editorWidget-border); border-radius: 4px; padding: 6px; white-space: pre; overflow: auto; user-select: text; }
+        .cart-summary { margin-top: 10px; padding: 10px 12px; background: var(--vscode-input-background); border: 1px solid var(--vscode-editorWidget-border); border-radius: 6px; margin-bottom: 12px; }
+        .cart-header { font-size: 12px; font-weight: 600; display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+        .badge { background: var(--vscode-badge-background, #313244); color: var(--vscode-badge-foreground, #cdd6f4); font-size: 10px; padding: 2px 6px; border-radius: 10px; }
+        .cart-items { display: flex; flex-wrap: wrap; gap: 6px; }
+        .cart-pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; background: var(--vscode-editorWidget-background); border: 1px solid var(--vscode-editorWidget-border); border-radius: 4px; font-size: 11px; font-family: monospace; }
+        .cart-del { cursor: pointer; color: #f38ba8; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -1117,10 +1146,10 @@ function getProjectWizardHtml(workspaceFiles) {
     <!-- Step 5: Silicon Target (Page 5 - 100% Silis Desktop Parity) -->
     <div class="step-content" id="sp-5">
         <h2>Silicon Target &amp; Top Module</h2>
-        <div class="step-desc">Select target semiconductor process kit and verify top-level entity.</div>
+        <div class="step-desc">Select target semiconductor process kit, top module, and add macros from the IP Catalog.</div>
 
         <label for="p-pdk">Process Design Kit (PDK)</label>
-        <select id="p-pdk">
+        <select id="p-pdk" onchange="fetchMacrosForPdk()">
             <option value="sky130_fd_sc_hd">SkyWater 130nm High-Density (sky130_fd_sc_hd) - Standard</option>
             <option value="sky130B">SkyWater 130nm Production (sky130B)</option>
             <option value="gf180mcu">GlobalFoundries 180nm MCU (gf180mcu)</option>
@@ -1129,6 +1158,31 @@ function getProjectWizardHtml(workspaceFiles) {
         <label for="p-top">Top Module Name</label>
         <input id="p-top" type="text" placeholder="e.g. full_adder">
         <div class="hint">Top-level Verilog module identifier. Defaults to project name.</div>
+
+        <!-- Macro IP Catalog (Shopping Cart) -->
+        <label>Macro IP Catalog (Shopping Cart)</label>
+        <div class="hint">Select macros (SRAMs, ALUs, Accelerators) to include in your chip floorplan.</div>
+
+        <input type="text" id="macro-search" placeholder="Search macros (e.g. sram, alu, crypto)..." oninput="filterMacroList()">
+
+        <div class="catalog-container">
+            <div class="catalog-list" id="macro-list-view">
+                <div style="padding:10px; font-size:11px; opacity:0.7;">Loading macro catalog...</div>
+            </div>
+            <div class="catalog-preview" id="macro-preview-view">
+                <div style="padding:20px; text-align:center; opacity:0.7; font-size:12px;">Select a macro from the catalog to preview pinout and black-box stub.</div>
+            </div>
+        </div>
+
+        <div class="cart-summary">
+            <div class="cart-header">
+                <span>Shopping Cart Checkout</span>
+                <span class="badge" id="cart-badge">0 item(s)</span>
+            </div>
+            <div class="cart-items" id="cart-items-view">
+                <span style="font-size:11px; opacity:0.7;">Cart is empty. Select macros above and click "Add to Shopping Cart" or proceed without macros.</span>
+            </div>
+        </div>
     </div>
 
     <div id="status-msg"></div>
@@ -1144,6 +1198,10 @@ function getProjectWizardHtml(workspaceFiles) {
         const vscode = acquireVsCodeApi();
         let currentStep = 1;
         const selectedFiles = { rtl: [], sdc: [] };
+        let allMacros = [];
+        let filteredMacros = [];
+        let selectedMacro = null;
+        const cartMacros = [];
 
         document.getElementById('p-name').addEventListener('input', e => {
             const val = e.target.value.trim();
@@ -1155,6 +1213,124 @@ function getProjectWizardHtml(workspaceFiles) {
         document.getElementById('p-top').addEventListener('input', () => {
             document.getElementById('p-top').dataset.touched = '1';
         });
+
+        function fetchMacrosForPdk() {
+            const pdk = document.getElementById('p-pdk').value;
+            vscode.postMessage({ command: 'fetchMacros', pdk: pdk });
+        }
+
+        function filterMacroList() {
+            const q = (document.getElementById('macro-search').value || '').toLowerCase().trim();
+            filteredMacros = allMacros.filter(m => !q || m.name.toLowerCase().includes(q) || (m.category && m.category.toLowerCase().includes(q)));
+            renderMacroListView();
+        }
+
+        function renderMacroListView() {
+            const container = document.getElementById('macro-list-view');
+            if (filteredMacros.length === 0) {
+                container.innerHTML = '<div style="padding:10px; font-size:11px; opacity:0.7;">No matching macros found.</div>';
+                return;
+            }
+            container.innerHTML = filteredMacros.map((m, idx) => {
+                const isSel = selectedMacro && selectedMacro.name === m.name;
+                return '<div class="catalog-item' + (isSel ? ' selected' : '') + '" onclick="selectMacroByIndex(' + idx + ')">' +
+                    '<div class="item-name">' + m.name + '</div>' +
+                    '<div class="item-meta">' + (m.category || 'Macro') + ' | ' + m.width + 'x' + m.height + 'µm</div>' +
+                '</div>';
+            }).join('');
+        }
+
+        function selectMacroByIndex(idx) {
+            selectedMacro = filteredMacros[idx];
+            renderMacroListView();
+            renderMacroPreviewView();
+        }
+
+        function renderMacroPreviewView() {
+            const pv = document.getElementById('macro-preview-view');
+            if (!selectedMacro) {
+                pv.innerHTML = '<div style="padding:20px; text-align:center; opacity:0.7; font-size:12px;">Select a macro from the catalog to preview pinout and black-box stub.</div>';
+                return;
+            }
+            const m = selectedMacro;
+            const pins = m.pins || {};
+            const inCount = (pins.input || []).length;
+            const outCount = (pins.output || []).length;
+            const pwrCount = (pins.power || []).length + (pins.ground || []).length;
+
+            const inPinsStr = (pins.input || []).slice(0, 8).join(', ') + (inCount > 8 ? ' ... (+' + (inCount - 8) + ' more)' : '');
+            const outPinsStr = (pins.output || []).slice(0, 8).join(', ') + (outCount > 8 ? ' ... (+' + (outCount - 8) + ' more)' : '');
+
+            const inCart = cartMacros.some(c => c.name === m.name);
+
+            pv.innerHTML =
+                '<div class="preview-header">' + m.name + ' (' + (m.category || 'Macro') + ')</div>' +
+                '<div class="preview-dims">Physical Footprint: ' + m.width + 'µm × ' + m.height + 'µm</div>' +
+                '<div class="preview-pins">' +
+                    '<div><strong>Inputs (' + inCount + '):</strong> ' + (inPinsStr || 'None') + '</div>' +
+                    '<div><strong>Outputs (' + outCount + '):</strong> ' + (outPinsStr || 'None') + '</div>' +
+                    '<div><strong>Power/Ground:</strong> ' + ((pins.power || []).concat(pins.ground || [])).join(', ') + '</div>' +
+                '</div>' +
+                '<label style="font-size:10px; margin-bottom:4px;">Verilog Black-Box Stub Preview:</label>' +
+                '<div class="stub-box">' + (m.stub || '// No stub available') + '</div>' +
+                '<div style="display:flex; justify-content:space-between; align-items:center; margin-top:8px;">' +
+                    '<label style="margin:0; font-size:11px; display:inline-flex; align-items:center; gap:6px; cursor:pointer;">' +
+                        '<input type="checkbox" id="cb-auto-stub" checked style="width:auto; margin:0;">' +
+                        '<span>Auto-Generate Verilog Stub on Checkout</span>' +
+                    '</label>' +
+                    (inCart
+                        ? '<button onclick="removeFromCartByName(\\'' + m.name + '\\')">Remove from Cart</button>'
+                        : '<button class="primary" onclick="addSelectedToCart()">+ Add to Shopping Cart</button>') +
+                '</div>';
+        }
+
+        function addSelectedToCart() {
+            if (!selectedMacro) return;
+            if (cartMacros.some(c => c.name === selectedMacro.name)) return;
+            const autoStub = document.getElementById('cb-auto-stub') ? document.getElementById('cb-auto-stub').checked : true;
+            cartMacros.push({
+                name: selectedMacro.name,
+                category: selectedMacro.category,
+                width: selectedMacro.width,
+                height: selectedMacro.height,
+                lef_path: selectedMacro.lef_path,
+                stub: selectedMacro.stub,
+                auto_stub: autoStub
+            });
+            renderCartView();
+            renderMacroPreviewView();
+        }
+
+        function removeFromCartByName(name) {
+            const idx = cartMacros.findIndex(c => c.name === name);
+            if (idx !== -1) {
+                cartMacros.splice(idx, 1);
+                renderCartView();
+                renderMacroPreviewView();
+            }
+        }
+
+        function removeCartItem(idx) {
+            cartMacros.splice(idx, 1);
+            renderCartView();
+            renderMacroPreviewView();
+        }
+
+        function renderCartView() {
+            const count = cartMacros.length;
+            document.getElementById('cart-badge').textContent = count + ' item(s)';
+            const container = document.getElementById('cart-items-view');
+            if (count === 0) {
+                container.innerHTML = '<span style="font-size:11px; opacity:0.7;">Cart is empty. Select macros above and click "Add to Shopping Cart" or proceed without macros.</span>';
+                return;
+            }
+            container.innerHTML = cartMacros.map((m, i) =>
+                '<div class="cart-pill">' +
+                    '<span>' + m.name + ' (' + m.width + 'x' + m.height + 'µm)</span>' +
+                    '<span class="cart-del" onclick="removeCartItem(' + i + ')">&times;</span>' +
+                '</div>'
+            ).join('');
+        }
 
         function browseFiles(target, isFolder) {
             vscode.postMessage({
@@ -1220,6 +1396,9 @@ function getProjectWizardHtml(workspaceFiles) {
             document.getElementById('btn-prev').style.display = s > 1 ? 'inline-block' : 'none';
             document.getElementById('btn-next').style.display = s < 5 ? 'inline-block' : 'none';
             document.getElementById('btn-finish').style.display = s === 5 ? 'inline-block' : 'none';
+            if (s === 5 && allMacros.length === 0) {
+                fetchMacrosForPdk();
+            }
         }
 
         function nextStep() {
@@ -1259,14 +1438,21 @@ function getProjectWizardHtml(workspaceFiles) {
                     rtl_files: selectedFiles.rtl,
                     sdc_files: selectedFiles.sdc,
                     upf_file: upf,
-                    io_file: io
+                    io_file: io,
+                    macros: cartMacros
                 }
             });
         }
 
         window.addEventListener('message', e => {
             const msg = e.data;
-            if (msg.type === 'filesSelected') {
+            if (msg.type === 'macrosLoaded') {
+                allMacros = msg.macros || [];
+                filterMacroList();
+                if (allMacros.length > 0 && !selectedMacro) {
+                    selectMacroByIndex(0);
+                }
+            } else if (msg.type === 'filesSelected') {
                 if (msg.target === 'upf') {
                     if (msg.files.length > 0) document.getElementById('p-upf').value = msg.files[0];
                 } else if (msg.target === 'io') {
@@ -1289,6 +1475,7 @@ function getProjectWizardHtml(workspaceFiles) {
                 el.textContent = 'Error: ' + msg.message;
             }
         });
+        fetchMacrosForPdk();
     </script>
 </body>
 </html>`;
