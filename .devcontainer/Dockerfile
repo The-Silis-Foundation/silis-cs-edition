@@ -4,7 +4,9 @@ FROM mcr.microsoft.com/devcontainers/base:ubuntu-22.04
 # All Python 3.12, PyQt6, QtWebEngine, Tcl 8.6, Tk 8.6, Mesa OpenGL,
 # and runtime shared libraries are bundled directly in the standalone
 # silis-python-qt-x86_64.AppImage unpacked by setup.sh into /opt/silis/runtime.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y --no-install-recommends software-properties-common \
+    && add-apt-repository -y universe \
+    && apt-get update && apt-get install -y --no-install-recommends \
     xvfb \
     x11vnc \
     novnc \
