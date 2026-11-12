@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Silis Native 2D Layout Peeker</title>
+  <link rel="stylesheet" href="peeker.css">
+</head>
+<body>
+  <div id="app-container">
+    <!-- Top Toolbar -->
+    <header id="top-toolbar">
+      <div class="toolbar-group">
+        <span class="toolbar-title">Silis Peeker</span>
+        <button class="tool-btn" onclick="canvasZoomIn()">Zoom In</button>
+        <button class="tool-btn" onclick="canvasZoomOut()">Zoom Out</button>
+        <button class="tool-btn" onclick="canvasZoomFit()">Fit View</button>
+        <button class="tool-btn" id="btn-toggle-layers" onclick="toggleLayers()">Toggle Grid/Layers</button>
+      </div>
+      <div class="toolbar-group search-group">
+        <label for="txt-search">Search:</label>
+        <input type="text" id="txt-search" placeholder="Filter instance name..." oninput="onSearchInput(this.value)">
+      </div>
+      <div class="toolbar-group info-group">
+        <span id="hud-comp-count">Components: 0</span>
+      </div>
+    </header>
+
+    <!-- Main Workspace -->
+    <div id="workspace">
+      <!-- Canvas Section -->
+      <section id="canvas-section">
+        <div id="canvas-wrapper">
+          <canvas id="peeker-canvas"></canvas>
+        </div>
+        <footer id="status-bar">
+          <span id="status-cursor">X: 0.000 um | Y: 0.000 um</span>
+          <span id="status-selection">Selected: None</span>
+          <span id="status-zoom">Zoom: 100%</span>
+        </footer>
+      </section>
+
+      <!-- Inspector Sidebar -->
+      <aside id="inspector-sidebar">
+        <div class="inspector-header">Component Inspector</div>
+        <div class="inspector-content" id="inspector-content">
+          <div class="prop-row">
+            <span class="prop-label">Instance:</span>
+            <span class="prop-val" id="val-inst">None</span>
+          </div>
+          <div class="prop-row">
+            <span class="prop-label">Master:</span>
+            <span class="prop-val" id="val-master">-</span>
+          </div>
+          <div class="prop-row">
+            <span class="prop-label">Origin X:</span>
+            <span class="prop-val" id="val-x">-</span>
+          </div>
+          <div class="prop-row">
+            <span class="prop-label">Origin Y:</span>
+            <span class="prop-val" id="val-y">-</span>
+          </div>
+          <div class="prop-row">
+            <span class="prop-label">Width:</span>
+            <span class="prop-val" id="val-w">-</span>
+          </div>
+          <div class="prop-row">
+            <span class="prop-label">Height:</span>
+            <span class="prop-val" id="val-h">-</span>
+          </div>
+          <div class="prop-row">
+            <span class="prop-label">Orientation:</span>
+            <span class="prop-val" id="val-orient">-</span>
+          </div>
+          <div class="inspector-subheader">Pin Terminals</div>
+          <div id="pins-list-container">
+            <div class="no-pins">No component selected</div>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <script src="peeker_canvas.js"></script>
+</body>
+</html>

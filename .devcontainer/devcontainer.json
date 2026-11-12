@@ -1,21 +1,11 @@
 {
   "name": "Silis CS Edition",
   "image": "mcr.microsoft.com/devcontainers/universal:2",
-  "forwardPorts": [8765, 6081, 6084],
+  "forwardPorts": [8765],
   "portsAttributes": {
     "8765": {
       "label": "Silis Native CAD Web Hub (Schematic, Waveforms & Web FPS)",
       "onAutoForward": "openBrowserOnce",
-      "visibility": "public"
-    },
-    "6081": {
-      "label": "Silis 2D Layout (FastSiliconPeeker)",
-      "onAutoForward": "silent",
-      "visibility": "public"
-    },
-    "6084": {
-      "label": "Silis Floorplan & Power Studio (FPS)",
-      "onAutoForward": "silent",
       "visibility": "public"
     }
   },
