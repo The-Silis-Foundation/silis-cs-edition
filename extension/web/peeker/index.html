@@ -14,8 +14,22 @@
         <button class="tool-btn" onclick="canvasZoomIn()">Zoom In</button>
         <button class="tool-btn" onclick="canvasZoomOut()">Zoom Out</button>
         <button class="tool-btn" onclick="canvasZoomFit()">Fit View</button>
-        <button class="tool-btn" id="btn-toggle-layers" onclick="toggleLayers()">Toggle Grid/Layers</button>
+        <button class="tool-btn" id="btn-toggle-layers" onclick="toggleLayers()">Toggle Grid</button>
+        <button class="tool-btn" id="btn-toggle-flightlines" onclick="toggleFlightlines()">Flightlines</button>
+        <button class="tool-btn" id="btn-toggle-ruler" onclick="toggleRuler()">Ruler</button>
+        <button class="tool-btn" onclick="clearRuler()">Clear</button>
       </div>
+
+      <!-- Iteration 80: Multi-Layer Metal Filter Panel -->
+      <div class="toolbar-group layer-group" style="font-size: 11px; display: flex; gap: 4px; align-items: center;">
+        <span style="color: var(--text-muted);">Layers:</span>
+        <label><input type="checkbox" checked onchange="toggleMetalLayer('met1', this.checked)"> M1</label>
+        <label><input type="checkbox" checked onchange="toggleMetalLayer('met2', this.checked)"> M2</label>
+        <label><input type="checkbox" checked onchange="toggleMetalLayer('met3', this.checked)"> M3</label>
+        <label><input type="checkbox" checked onchange="toggleMetalLayer('met4', this.checked)"> M4</label>
+        <label><input type="checkbox" checked onchange="toggleMetalLayer('met5', this.checked)"> M5</label>
+      </div>
+
       <div class="toolbar-group search-group">
         <label for="txt-search">Search:</label>
         <input type="text" id="txt-search" placeholder="Filter instance name..." oninput="onSearchInput(this.value)">

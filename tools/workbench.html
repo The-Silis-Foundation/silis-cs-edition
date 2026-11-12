@@ -337,19 +337,35 @@
         }, 25);
       }
 
-      // 2. Wire/Net selected in Schematic -> Add to Waveforms
-      if (msg.type === 'wireSelected' || msg.type === 'netSelected') {
-        const netName = msg.net || msg.name;
-        if (netName && waveFrame && waveFrame.contentWindow) {
-          waveFrame.contentWindow.postMessage({ type: 'addSignal', signal: netName }, '*');
+      // 2. Wire/Net selected in Schematic / Waveform -> Cross-probe to all viewers (Iteration 96)
+      if (msg.type === 'wireSelected' || msg.type === 'netSelected' || msg.type === 'signalSelected') {
+        const netName = msg.net || msg.name || msg.signal;
+        if (netName) {
+          if (waveFrame && waveFrame.contentWindow) {
+            waveFrame.contentWindow.postMessage({ type: 'addSignal', signal: netName }, '*');
+          }
+          if (schemFrame && schemFrame.contentWindow && msg.type !== 'wireSelected') {
+            schemFrame.contentWindow.postMessage({ type: 'highlightNet', name: netName }, '*');
+          }
+          if (peekerFrame && peekerFrame.contentWindow) {
+            peekerFrame.contentWindow.postMessage({ type: 'selectNet', net: netName }, '*');
+          }
         }
       }
 
-      // 3. Macro / Component selected in FPS / Peeker
+      // 3. Macro / Component selected in FPS / Peeker / Schematic
       if (msg.type === 'macroSelected' || msg.type === 'componentSelected') {
         const instName = msg.instance || msg.name || (msg.data && (msg.data.instance || msg.data.name));
-        if (instName && peekerFrame && peekerFrame.contentWindow) {
-          peekerFrame.contentWindow.postMessage({ type: 'highlightComponent', name: instName }, '*');
+        if (instName) {
+          if (peekerFrame && peekerFrame.contentWindow) {
+            peekerFrame.contentWindow.postMessage({ type: 'highlightComponent', name: instName }, '*');
+          }
+          if (fpsFrame && fpsFrame.contentWindow && msg.type !== 'macroSelected') {
+            fpsFrame.contentWindow.postMessage({ type: 'selectMacro', name: instName }, '*');
+          }
+          if (schemFrame && schemFrame.contentWindow) {
+            schemFrame.contentWindow.postMessage({ type: 'highlightCell', name: instName }, '*');
+          }
         }
       }
     });

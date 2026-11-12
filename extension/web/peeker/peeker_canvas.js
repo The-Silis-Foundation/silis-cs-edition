@@ -154,6 +154,39 @@ function toggleLayers() {
   requestAnimationFrame(render);
 }
 
+// Iteration 80: Multi-Layer Metal Toggles
+function toggleMetalLayer(layer, visible) {
+  state.visibleLayers[layer] = visible;
+  requestAnimationFrame(render);
+}
+
+// Iteration 83: Ruler Toggle & Clear
+function toggleRuler() {
+  state.showRuler = !state.showRuler;
+  const btn = document.getElementById('btn-toggle-ruler');
+  if (btn) btn.style.borderColor = state.showRuler ? 'var(--accent)' : 'var(--border)';
+  const selEl = document.getElementById('status-selection');
+  if (selEl) selEl.innerText = state.showRuler ? 'Ruler Tool Active: Click and drag to measure (or Shift+Drag)' : 'Ruler Deactivated';
+  requestAnimationFrame(render);
+}
+
+function clearRuler() {
+  state.rulerStart = null;
+  state.rulerCurrent = null;
+  state.isMeasuring = false;
+  state.showRuler = false;
+  const selEl = document.getElementById('status-selection');
+  if (selEl) selEl.innerText = 'Ruler Cleared';
+  requestAnimationFrame(render);
+}
+
+function toggleFlightlines() {
+  state.showFlightlines = !state.showFlightlines;
+  const btn = document.getElementById('btn-toggle-flightlines');
+  if (btn) btn.style.borderColor = state.showFlightlines ? 'var(--accent)' : 'var(--border)';
+  requestAnimationFrame(render);
+}
+
 function onSearchInput(query) {
   state.searchQuery = query.trim().toLowerCase();
   if (state.searchQuery) {
@@ -205,6 +238,29 @@ function onMouseMove(e) {
   const worldPos = screenToWorld(mouseX, mouseY);
 
   document.getElementById('status-cursor').innerText = `X: ${worldPos.x.toFixed(3)} µm | Y: ${worldPos.y.toFixed(3)} µm`;
+
+  // Iteration 79: Macro Pin Terminal Hover Inspection
+  let hoveredPin = null;
+  for (const m of state.macros) {
+    if (m.pins && state.zoom > 0.15) {
+      for (const p of m.pins) {
+        const px = Number(p.x) || 0;
+        const py = Number(p.y) || 0;
+        const pp = worldToScreen(m.x + px, m.y + py);
+        const pDist = Math.hypot(mouseX - pp.x, mouseY - pp.y);
+        if (pDist < 8) {
+          hoveredPin = { pin: p, macro: m };
+          break;
+        }
+      }
+    }
+    if (hoveredPin) break;
+  }
+  if (hoveredPin) {
+    canvas.title = `Terminal: ${hoveredPin.pin.name || 'pin'} | Cell: ${hoveredPin.macro.inst} | Dir: ${hoveredPin.pin.dir || 'input'}`;
+  } else {
+    canvas.title = '';
+  }
 
   if (state.isMeasuring) {
     state.rulerCurrent = worldPos;
@@ -453,10 +509,15 @@ function render() {
     ctx.fillStyle = isSel ? 'rgba(137, 180, 250, 0.35)' : (isMatched ? 'rgba(249, 226, 175, 0.30)' : 'rgba(45, 45, 68, 0.85)');
     ctx.fillRect(p.x, p.y - mh, mw, mh);
 
-    // Macro Border
-    ctx.strokeStyle = isSel ? '#89b4fa' : (isMatched ? '#f9e2af' : '#45475a');
-    ctx.lineWidth = isSel ? 2 : 1;
+    // Macro Border (Iteration 82: Cyan Glow Selection Highlight)
+    ctx.strokeStyle = isSel ? '#00FFFF' : (isMatched ? '#f9e2af' : '#45475a');
+    ctx.lineWidth = isSel ? 2.5 : 1;
     ctx.strokeRect(p.x, p.y - mh, mw, mh);
+    if (isSel) {
+      ctx.strokeStyle = 'rgba(0, 255, 255, 0.35)';
+      ctx.lineWidth = 1.0;
+      ctx.strokeRect(p.x - 3, p.y - mh - 3, mw + 6, mh + 6);
+    }
 
     // Macro Label
     if (state.zoom > 0.08) {

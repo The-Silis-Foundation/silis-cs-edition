@@ -156,6 +156,31 @@ def test_cs_server_endpoints():
             rep_res = json.loads(resp.read().decode())
             record_result("HTTP POST /api/floorplan/quality_report", resp.status == 200 and "report" in rep_res)
 
+        # 9. GET /api/timing/constraints (Iteration 86)
+        req = urllib.request.Request(f"{base_url}/api/timing/constraints?project=projects/demo_soc")
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            t_data = json.loads(resp.read().decode())
+            record_result("HTTP GET /api/timing/constraints", resp.status == 200 and "clocks" in t_data)
+
+        # 10. GET /api/power/level_shifter_check (Iteration 87)
+        req = urllib.request.Request(f"{base_url}/api/power/level_shifter_check?project=projects/demo_soc")
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            upf_data = json.loads(resp.read().decode())
+            record_result("HTTP GET /api/power/level_shifter_check", resp.status == 200 and "status" in upf_data)
+
+        # 11. GET /api/layout/thumbnail (Iteration 88)
+        req = urllib.request.Request(f"{base_url}/api/layout/thumbnail?project=projects/demo_soc")
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            svg_data = resp.read().decode()
+            record_result("HTTP GET /api/layout/thumbnail", resp.status == 200 and "<svg" in svg_data)
+
+        # 12. POST /api/floorplan/export_def (Iteration 89)
+        def_post = json.dumps({"project": "demo_soc", "session": {"die": {"w": 2500, "h": 2500}, "core": {"border": 20}, "macros": [{"inst": "u_ram", "master": "sram", "x": 100, "y": 100, "w": 300, "h": 200, "status": "FIXED"}], "pads": [{"name": "clk", "edge": "bottom", "pos": 500, "dir": "input"}]}}).encode("utf-8")
+        req = urllib.request.Request(f"{base_url}/api/floorplan/export_def", data=def_post, headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            def_res = json.loads(resp.read().decode())
+            record_result("HTTP POST /api/floorplan/export_def", resp.status == 200 and def_res.get("status") == "ok")
+
     except Exception as e:
         record_result("cs_server.py HTTP endpoint tests", False, str(e))
     finally:
@@ -185,7 +210,7 @@ def test_bin_launcher():
 
 
 def test_def_parser():
-    """Verify DEF parser handles multi-point DIEAREA and multi-line PINS."""
+    """Verify DEF parser handles multi-point DIEAREA, components status, and specialnets."""
     try:
         sys.path.insert(0, os.path.join(REPO_ROOT, "tools"))
         from cs_server import parse_def_file
@@ -194,6 +219,12 @@ def test_def_parser():
             f.write("""VERSION 5.8 ;
 UNITS DISTANCE MICRONS 1000 ;
 DIEAREA ( 0 0 ) ( 0 2000000 ) ( 3000000 2000000 ) ( 3000000 0 ) ;
+COMPONENTS 1 ;
+  - u_mem sram + FIXED ( 100000 200000 ) N ;
+END COMPONENTS
+SPECIALNETS 1 ;
+  - VDD ( PIN VDD ) + ROUTED met4 1600 ( 100000 200000 ) ( 100000 800000 ) ;
+END SPECIALNETS
 PINS 1 ;
   - clk + NET clk + DIRECTION INPUT
     + PORT
@@ -205,10 +236,39 @@ END DESIGN
         if os.path.isfile(dummy_def):
             os.remove(dummy_def)
         die_ok = bool(res and res["die"]["w"] == 3000.0 and res["die"]["h"] == 2000.0)
+        comp_ok = bool(res and len(res["components"]) == 1 and res["components"][0]["status"] == "FIXED")
+        snet_ok = bool(res and len(res.get("specialnets", [])) == 1 and res["specialnets"][0]["name"] == "VDD")
         pins_ok = bool(res and len(res["pins"]) == 1 and res["pins"][0]["x"] == 500.0)
-        record_result("DEF parser multi-point DIEAREA & multi-line PINS", die_ok and pins_ok)
+        record_result("DEF parser multi-point DIEAREA & status & specialnets", die_ok and comp_ok and snet_ok and pins_ok)
     except Exception as e:
-        record_result("DEF parser multi-point DIEAREA & multi-line PINS", False, str(e))
+        record_result("DEF parser multi-point DIEAREA & status & specialnets", False, str(e))
+
+
+def test_fps_parity_features():
+    """Verify Web FPS canvas implements all desktop FPA algorithms and features."""
+    fps_js = os.path.join(REPO_ROOT, "extension", "web", "fps", "fps_canvas.js")
+    if not os.path.isfile(fps_js):
+        record_result("Web FPS parity algorithms", False, "fps_canvas.js missing")
+        return
+    with open(fps_js, "r", encoding="utf-8") as f:
+        src = f.read()
+
+    required_symbols = [
+        "computePeripheralMacroPlacement",
+        "applyAutoplaceMethod",
+        "computeMinimumDieForPads",
+        "expandDieForPadRing",
+        "orderPreservingSpaceEdge",
+        "syncUpfPowerPads",
+        "routePadTrunkBridges",
+        "configureDualFollowpins",
+        "triggerAutosave",
+        "revertToSavedSession",
+        "exportSvg",
+        "detectCollisions"
+    ]
+    missing = [sym for sym in required_symbols if sym not in src]
+    record_result("Web FPS parity algorithms (autoplace, pad ring, autosave, svg)", len(missing) == 0, f"Missing: {missing}" if missing else "")
 
 
 def main():
@@ -223,11 +283,16 @@ def main():
     test_flow_cli()
     test_bin_launcher()
     test_def_parser()
+    test_fps_parity_features()
     test_cs_server_endpoints()
 
     print("=================================================================")
     print(f"RESULTS: {PASSED} passed, {FAILED} failed")
     print("=================================================================")
+
+    if FAILED > 0:
+        sys.exit(1)
+    sys.exit(0)
 
     if FAILED > 0:
         sys.exit(1)
