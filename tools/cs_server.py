@@ -152,6 +152,8 @@ def parse_def_file(def_path):
                     "master": cell_type,
                     "x": x,
                     "y": y,
+                    "w": 120.0 if ("sram" in cell_type.lower() or "mem" in cell_type.lower()) else 40.0,
+                    "h": 100.0 if ("sram" in cell_type.lower() or "mem" in cell_type.lower()) else 30.0,
                     "orient": orient,
                 })
 
@@ -553,7 +555,7 @@ class SilisCadHandler(http.server.SimpleHTTPRequestHandler):
 
         # 5e. API: Parse DEF Layout
         if path == "/api/def/parse":
-            def_path = query.get("file", [None])[0]
+            def_path = query.get("file", [None])[0] or query.get("def", [None])[0]
             proj_name = query.get("project", [None])[0]
             if not def_path:
                 p_dir = resolve_project_dir(proj_name)

@@ -266,9 +266,29 @@ function activate(context) {
     // 3c. Custom Editor Provider for GDSII
     const gdsEditorProvider = {
         async resolveCustomTextEditor(document, webviewPanel) {
-            webviewPanel.webview.options = { enableScripts: true, retainContextWhenHidden: true };
-            const uri = await resolveUrl('http://127.0.0.1:6081/vnc_lite.html?autoconnect=true&resize=scale');
-            webviewPanel.webview.html = getIframeHtml(uri, 'Silis GDSII Viewer: ' + document.fileName);
+            webviewPanel.webview.options = { enableScripts: true };
+            const baseName = require('path').basename(document.fileName);
+            webviewPanel.webview.html = `<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--vscode-editor-background); color: var(--vscode-foreground); display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+        .card { max-width: 520px; text-align: center; padding: 32px; border: 1px solid var(--vscode-widget-border, #333); border-radius: 8px; }
+        h2 { font-size: 16px; margin-bottom: 12px; color: var(--vscode-textLink-foreground); }
+        p { font-size: 13px; line-height: 1.6; color: var(--vscode-descriptionForeground); }
+        code { background: var(--vscode-textCodeBlock-background); padding: 2px 6px; border-radius: 4px; font-family: monospace; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2>GDSII Binary Layout: ${baseName}</h2>
+        <p>In cloud Codespaces, interactive 2D layout inspection is rendered natively for DEF physical designs via <strong>Silis 2D Layout Peeker</strong>.</p>
+        <p>To inspect binary GDSII geometry, run KLayout or OpenROAD from the terminal:</p>
+        <p><code>klayout ${baseName}</code> or <code>python3 tools/flow.py --view-openroad</code></p>
+    </div>
+</body>
+</html>`;
         }
     };
     context.subscriptions.push(

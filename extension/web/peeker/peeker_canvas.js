@@ -71,6 +71,7 @@ async function parseUrlAndLoadData() {
         const data = await response.json();
         if (data.die) state.die = data.die;
         if (data.core) state.core = data.core;
+        if (data.components) state.macros = data.components;
         if (data.macros) state.macros = data.macros;
         if (data.pins) state.pins = data.pins;
       }

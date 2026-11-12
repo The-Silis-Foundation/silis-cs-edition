@@ -36,12 +36,14 @@ CODESPACE_USER="$(id -un 1000 2>/dev/null || echo codespace)"
 CODESPACE_HOME="$(getent passwd "$CODESPACE_USER" 2>/dev/null | cut -d: -f6 || echo "/home/$CODESPACE_USER")"
 if [ -d "$CODESPACE_HOME" ]; then
     sudo chown -R 1000:1000 "$CODESPACE_HOME" 2>/dev/null || true
-    # Copy extension to non-root user's .vscode-remote/extensions with 1000:1000 ownership
-    EXT_DIR="${CODESPACE_HOME}/.vscode-remote/extensions/the-silis-foundation.silis-cad-workbench-1.0.0"
-    mkdir -p "$(dirname "$EXT_DIR")"
-    rm -rf "$EXT_DIR"
-    cp -r "${WORKSPACE_DIR}/extension" "$EXT_DIR" 2>/dev/null || true
-    chown -R 1000:1000 "$EXT_DIR" 2>/dev/null || true
+    # Copy extension to non-root user extension directories with 1000:1000 ownership
+    for EDIR in "${CODESPACE_HOME}/.vscode-remote/extensions" "${CODESPACE_HOME}/.vscode-server/extensions"; do
+        mkdir -p "$EDIR" 2>/dev/null || true
+        TARGET="${EDIR}/the-silis-foundation.silis-cad-workbench-1.0.0"
+        rm -rf "$TARGET"
+        cp -r "${WORKSPACE_DIR}/extension" "$TARGET" 2>/dev/null || true
+        chown -R 1000:1000 "$TARGET" 2>/dev/null || true
+    done
 fi
 
 echo "Silis CS Edition setup completed successfully."
