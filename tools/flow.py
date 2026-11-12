@@ -316,14 +316,35 @@ def run_synth(project_dir, json_only=False):
 
 def run_tapeout(project_dir):
     print(f"[Silis Flow] === Running Full Tapeout Flow (OpenROAD) ===")
-    run_synth(project_dir, json_only=False)
-    # Check if OpenROAD script exists
-    fp_tcl = os.path.join(REPO_ROOT, "silis", "core", "backendflow", "floorplanner", "silis_fp.tcl")
-    if not os.path.isfile(fp_tcl):
-        fp_tcl = os.path.join(REPO_ROOT, "core", "backendflow", "floorplanner", "silis_fp.tcl")
-    if os.path.isfile(fp_tcl):
-        print(f"[Silis Flow] Synthesizing floorplan via OpenROAD...")
-        subprocess.run([OPENROAD_BIN, "-exit", fp_tcl], cwd=project_dir)
+    synth_ret = run_synth(project_dir, json_only=False)
+    if synth_ret != 0:
+        print(f"[Silis Flow] [WARN] Synthesis step returned non-zero ({synth_ret}), proceeding to PnR check.")
+
+    # Locate OpenROAD floorplan script (prioritize project-level exported scripts)
+    tcl_candidates = [
+        os.path.join(project_dir, "run_floorplan.tcl"),
+        os.path.join(project_dir, "floorplan.tcl"),
+        os.path.join(project_dir, "openroad.tcl"),
+        os.path.join(REPO_ROOT, "silis", "core", "backendflow", "floorplanner", "silis_fp.tcl"),
+        os.path.join(REPO_ROOT, "core", "backendflow", "floorplanner", "silis_fp.tcl"),
+    ]
+    fp_tcl = None
+    for cand in tcl_candidates:
+        if os.path.isfile(cand) and os.path.getsize(cand) > 0:
+            fp_tcl = cand
+            break
+
+    if fp_tcl and _is_tool_available(OPENROAD_BIN):
+        print(f"[Silis Flow] Synthesizing floorplan via OpenROAD using {fp_tcl}...")
+        res = subprocess.run([OPENROAD_BIN, "-exit", fp_tcl], cwd=project_dir, env=_get_flow_env())
+        if res.returncode != 0:
+            print(f"[Silis Flow] [ERR] OpenROAD floorplan execution failed with returncode {res.returncode}")
+            return res.returncode
+    elif not _is_tool_available(OPENROAD_BIN):
+        print(f"[Silis Flow] [WARN] OpenROAD binary '{OPENROAD_BIN}' not found. PnR execution skipped.")
+    else:
+        print(f"[Silis Flow] [WARN] No floorplan TCL script found for {os.path.basename(project_dir)}")
+
     print(f"[Silis Flow] Tapeout flow pass complete.")
     return 0
 
@@ -375,10 +396,15 @@ def run_lint(project_dir):
 
 def run_floorplan(project_dir):
     print(f"[Silis Flow] === Synthesizing Floorplan via OpenROAD for {os.path.basename(project_dir)} ===")
+    if not _is_tool_available(OPENROAD_BIN):
+        print(f"[Silis Flow] [ERR] OpenROAD executable '{OPENROAD_BIN}' not found in runtime or system PATH.")
+        return 1
+
     tcl_candidates = [
         os.path.join(project_dir, "run_floorplan.tcl"),
         os.path.join(project_dir, "floorplan.tcl"),
         os.path.join(REPO_ROOT, "silis", "core", "backendflow", "floorplanner", "silis_fp.tcl"),
+        os.path.join(REPO_ROOT, "core", "backendflow", "floorplanner", "silis_fp.tcl"),
     ]
     tcl_file = None
     for cand in tcl_candidates:
@@ -391,7 +417,7 @@ def run_floorplan(project_dir):
         return 1
 
     print(f"[Silis Flow] Executing OpenROAD with {tcl_file}...")
-    res = subprocess.run([OPENROAD_BIN, "-exit", tcl_file], cwd=project_dir)
+    res = subprocess.run([OPENROAD_BIN, "-exit", tcl_file], cwd=project_dir, env=_get_flow_env())
     return res.returncode
 
 
@@ -503,9 +529,10 @@ def main():
     parser.add_argument("--lint", dest="lint", action="store_true", help="Run Verilator RTL lint")
     parser.add_argument("--view-openroad", "--openroad-gui", dest="view_openroad", action="store_true", help="Launch native OpenROAD GUI with project DEF/LEF")
     parser.add_argument("--project", type=str, default="", help="Project path or name")
+    parser.add_argument("project_pos", nargs="?", default="", help="Positional project path or name")
 
     args = parser.parse_args()
-    proj_dir = get_project_dir(args.project)
+    proj_dir = get_project_dir(args.project or args.project_pos)
 
     if args.sim:
         sys.exit(run_sim(proj_dir))

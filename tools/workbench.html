@@ -193,6 +193,13 @@
           <option value="demo_soc">demo_soc</option>
           <option value="FA">FA</option>
         </select>
+
+        <!-- Iteration 46: Gate-Level vs RTL Netlist Mode Toggle -->
+        <select id="cmb-netlist-mode" class="project-select" onchange="onNetlistModeChange(this.value)" title="Netlist Representation Mode">
+          <option value="rtl">RTL (Elaborated)</option>
+          <option value="gls">Gate-Level (Synthesized)</option>
+        </select>
+
         <button class="action-btn" onclick="triggerFlow('synth')">Run Synthesis</button>
         <button class="action-btn" onclick="triggerFlow('pnr')">Run PnR</button>
       </div>
@@ -210,6 +217,14 @@
         <div class="status-dot"></div>
         <span id="footer-server-status">EDA Engine Server Online: 127.0.0.1:8765</span>
       </div>
+
+      <!-- Iteration 47: Interactive VCD Timeline Scrub Synchronization -->
+      <div class="status-item">
+        <span>Timeline Scrub:</span>
+        <input type="range" id="timeline-scrub" min="0" max="100000" value="0" step="50" oninput="onScrubInput(this.value)" style="width: 130px; height: 12px; cursor: pointer;">
+        <span id="scrub-time-label">0 ps</span>
+      </div>
+
       <div class="status-item">
         <span id="footer-active-tool">Active Tool: Schematic Viewer</span>
       </div>
@@ -249,6 +264,23 @@
       document.getElementById('footer-active-tool').innerText = `Active Tool: ${toolNames[toolId] || toolId}`;
     }
 
+    let currentNetlistMode = 'rtl';
+    function onNetlistModeChange(mode) {
+      currentNetlistMode = mode;
+      const schemFrame = document.getElementById('frame-schematic');
+      if (schemFrame) {
+        schemFrame.src = `/schematic.html?project=${encodeURIComponent(currentProject)}&mode=${encodeURIComponent(mode)}`;
+      }
+    }
+
+    function onScrubInput(val) {
+      const timePs = Number(val);
+      const label = document.getElementById('scrub-time-label');
+      if (label) label.innerText = `${timePs} ps`;
+
+      window.postMessage({ type: 'cursorMoved', time: timePs }, '*');
+    }
+
     function onProjectChange(proj) {
       currentProject = proj;
       document.getElementById('frame-schematic').src = `/schematic.html?project=${encodeURIComponent(proj)}`;
@@ -271,6 +303,56 @@
         statusEl.innerText = `Flow request dispatched.`;
       }
     }
+
+    // Cross-probing bridge between workbench tool iframes
+    let _wbScrubTimer = null;
+    window.addEventListener('message', async (e) => {
+      const msg = e.data;
+      if (!msg) return;
+
+      const schemFrame = document.getElementById('frame-schematic');
+      const waveFrame = document.getElementById('frame-waveforms');
+      const peekerFrame = document.getElementById('frame-peeker');
+      const fpsFrame = document.getElementById('frame-fps');
+
+      // 1. Waveform timeline scrub -> annotate Schematic wire values
+      if (msg.type === 'cursorMoved' || (msg.fromSilisRohd && msg.data && msg.data.type === 'cursorMoved')) {
+        const timePs = msg.time || (msg.data && msg.data.time) || 0;
+        const sigs = msg.signals || (msg.data && msg.data.signals) || [];
+        const sigStr = Array.isArray(sigs) ? sigs.join(',') : '';
+
+        if (_wbScrubTimer) clearTimeout(_wbScrubTimer);
+        _wbScrubTimer = setTimeout(async () => {
+          _wbScrubTimer = null;
+          try {
+            const query = `project=${encodeURIComponent(currentProject)}&time=${timePs}${sigStr ? '&signals=' + encodeURIComponent(sigStr) : ''}`;
+            const resp = await fetch(`/api/waveform/values?${query}`);
+            if (resp.ok) {
+              const vals = await resp.json();
+              if (Array.isArray(vals) && schemFrame && schemFrame.contentWindow) {
+                schemFrame.contentWindow.postMessage({ type: 'setValues', updates: vals }, '*');
+              }
+            }
+          } catch (err) {}
+        }, 25);
+      }
+
+      // 2. Wire/Net selected in Schematic -> Add to Waveforms
+      if (msg.type === 'wireSelected' || msg.type === 'netSelected') {
+        const netName = msg.net || msg.name;
+        if (netName && waveFrame && waveFrame.contentWindow) {
+          waveFrame.contentWindow.postMessage({ type: 'addSignal', signal: netName }, '*');
+        }
+      }
+
+      // 3. Macro / Component selected in FPS / Peeker
+      if (msg.type === 'macroSelected' || msg.type === 'componentSelected') {
+        const instName = msg.instance || msg.name || (msg.data && (msg.data.instance || msg.data.name));
+        if (instName && peekerFrame && peekerFrame.contentWindow) {
+          peekerFrame.contentWindow.postMessage({ type: 'highlightComponent', name: instName }, '*');
+        }
+      }
+    });
 
     // Initialize projects list from API if available
     (async function initProjects() {

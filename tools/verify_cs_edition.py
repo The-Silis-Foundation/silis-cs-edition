@@ -138,6 +138,24 @@ def test_cs_server_endpoints():
             data = json.loads(resp.read().decode())
             record_result("HTTP GET /api/def/parse", resp.status == 200 and "die" in data)
 
+        # 6. /api/schematic
+        req = urllib.request.Request(f"{base_url}/api/schematic?project=projects/demo_soc")
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            record_result("HTTP GET /api/schematic", resp.status == 200)
+
+        # 7. /api/power/switch_matrix
+        req = urllib.request.Request(f"{base_url}/api/power/switch_matrix?width_um=400&height_um=400&peak_current_ma=50")
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            psw_data = json.loads(resp.read().decode())
+            record_result("HTTP GET /api/power/switch_matrix", resp.status == 200 and psw_data.get("status") == "PASS")
+
+        # 8. POST /api/floorplan/quality_report
+        post_data = json.dumps({"project": "demo_soc", "session": {"die": {"w": 2000, "h": 2000}, "core": {"border": 20}, "macros": []}}).encode("utf-8")
+        req = urllib.request.Request(f"{base_url}/api/floorplan/quality_report", data=post_data, headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            rep_res = json.loads(resp.read().decode())
+            record_result("HTTP POST /api/floorplan/quality_report", resp.status == 200 and "report" in rep_res)
+
     except Exception as e:
         record_result("cs_server.py HTTP endpoint tests", False, str(e))
     finally:

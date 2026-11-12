@@ -12,21 +12,27 @@ const state = {
   panX: 80,
   panY: 80,
   showGrid: true,
+  showFlightlines: false,
+  showRuler: false,
+  rulerStart: null,
+  rulerCurrent: null,
+  isMeasuring: false,
+  visibleLayers: { met1: true, met2: true, met3: true, met4: true, met5: true },
   selectedMacro: null,
   searchQuery: '',
   isPanning: false,
   panStart: { x: 0, y: 0 },
   macros: [
-    { inst: 'u_sram0', master: 'sky130_sram_2kbyte_1rw1r_32x512_8', x: 120, y: 81.6, w: 420, h: 280, orient: 'R0', pins: [{ name: 'clk0', x: 0, y: 50 }, { name: 'din0', x: 0, y: 120 }, { name: 'dout0', x: 420, y: 120 }] },
-    { inst: 'u_sram1', master: 'sky130_sram_2kbyte_1rw1r_32x512_8', x: 120, y: 489.6, w: 420, h: 280, orient: 'R0', pins: [{ name: 'clk1', x: 0, y: 50 }, { name: 'din1', x: 0, y: 120 }, { name: 'dout1', x: 420, y: 120 }] },
-    { inst: 'u_alu_core', master: 'simple_alu', x: 1200, y: 326.4, w: 220, h: 160, orient: 'R0', pins: [{ name: 'clk', x: 0, y: 30 }, { name: 'res_out', x: 220, y: 80 }] },
-    { inst: 'u_ctrl_unit', master: 'control_logic', x: 2000, y: 1200, w: 300, h: 200, orient: 'R90', pins: [{ name: 'clk', x: 0, y: 100 }, { name: 'en', x: 150, y: 200 }] }
+    { inst: 'u_sram0', master: 'sky130_sram_2kbyte_1rw1r_32x512_8', x: 120, y: 81.6, w: 420, h: 280, orient: 'R0', pins: [{ name: 'clk0', x: 0, y: 50, dir: 'input' }, { name: 'din0', x: 0, y: 120, dir: 'input' }, { name: 'dout0', x: 420, y: 120, dir: 'output' }] },
+    { inst: 'u_sram1', master: 'sky130_sram_2kbyte_1rw1r_32x512_8', x: 120, y: 489.6, w: 420, h: 280, orient: 'R0', pins: [{ name: 'clk1', x: 0, y: 50, dir: 'input' }, { name: 'din1', x: 0, y: 120, dir: 'input' }, { name: 'dout1', x: 420, y: 120, dir: 'output' }] },
+    { inst: 'u_alu_core', master: 'simple_alu', x: 1200, y: 326.4, w: 220, h: 160, orient: 'R0', pins: [{ name: 'clk', x: 0, y: 30, dir: 'input' }, { name: 'res_out', x: 220, y: 80, dir: 'output' }] },
+    { inst: 'u_ctrl_unit', master: 'control_logic', x: 2000, y: 1200, w: 300, h: 200, orient: 'R90', pins: [{ name: 'clk', x: 0, y: 100, dir: 'input' }, { name: 'en', x: 150, y: 200, dir: 'input' }] }
   ],
   pins: [
-    { name: 'clk', edge: 'bottom', x: 120.0, y: 0.0, layer: 'met3' },
-    { name: 'rst_n', edge: 'bottom', x: 160.0, y: 0.0, layer: 'met3' },
-    { name: 'io_tx', edge: 'right', x: 5000.0, y: 2500.0, layer: 'met3' },
-    { name: 'io_rx', edge: 'left', x: 0.0, y: 2500.0, layer: 'met3' }
+    { name: 'clk', edge: 'bottom', x: 120.0, y: 0.0, layer: 'met3', dir: 'input' },
+    { name: 'rst_n', edge: 'bottom', x: 160.0, y: 0.0, layer: 'met3', dir: 'input' },
+    { name: 'io_tx', edge: 'right', x: 5000.0, y: 2500.0, layer: 'met3', dir: 'output' },
+    { name: 'io_rx', edge: 'left', x: 0.0, y: 2500.0, layer: 'met3', dir: 'input' }
   ]
 };
 
@@ -150,17 +156,44 @@ function toggleLayers() {
 
 function onSearchInput(query) {
   state.searchQuery = query.trim().toLowerCase();
+  if (state.searchQuery) {
+    const matched = state.macros.find(m => m.inst && m.inst.toLowerCase().includes(state.searchQuery));
+    if (matched) {
+      state.selectedMacro = matched;
+      updateInspector(matched);
+      const rect = wrapper.getBoundingClientRect();
+      const mw = (matched.w || 40) * state.zoom;
+      const mh = (matched.h || 30) * state.zoom;
+      state.panX = rect.width / 2 - (matched.x * state.zoom + mw / 2);
+      state.panY = rect.height / 2 - (matched.y * state.zoom + mh / 2);
+    }
+  }
   requestAnimationFrame(render);
 }
 
-// Mouse Event Handlers for Panning & Selection
+// Mouse Event Handlers for Panning, Selection & Ruler Measurement
 let isMouseDown = false;
 let mouseStart = { x: 0, y: 0 };
 
 function onMouseDown(e) {
   isMouseDown = true;
   mouseStart = { x: e.clientX, y: e.clientY };
-  if (e.button === 1 || e.shiftKey) {
+
+  const rect = canvas.getBoundingClientRect();
+  const mouseX = e.clientX - rect.left;
+  const mouseY = e.clientY - rect.top;
+  const worldPos = screenToWorld(mouseX, mouseY);
+
+  // Iteration 38: Shift+Click or Ruler Active initiates measurement
+  if (e.shiftKey || state.showRuler) {
+    state.isMeasuring = true;
+    state.rulerStart = worldPos;
+    state.rulerCurrent = worldPos;
+    requestAnimationFrame(render);
+    return;
+  }
+
+  if (e.button === 1) {
     state.isPanning = true;
   }
 }
@@ -172,6 +205,17 @@ function onMouseMove(e) {
   const worldPos = screenToWorld(mouseX, mouseY);
 
   document.getElementById('status-cursor').innerText = `X: ${worldPos.x.toFixed(3)} µm | Y: ${worldPos.y.toFixed(3)} µm`;
+
+  if (state.isMeasuring) {
+    state.rulerCurrent = worldPos;
+    const dx = Math.abs(worldPos.x - state.rulerStart.x);
+    const dy = Math.abs(worldPos.y - state.rulerStart.y);
+    const len = Math.sqrt(dx * dx + dy * dy);
+    const selEl = document.getElementById('status-selection');
+    if (selEl) selEl.innerText = `Ruler: L: ${len.toFixed(3)} µm (dx: ${dx.toFixed(3)} µm, dy: ${dy.toFixed(3)} µm)`;
+    requestAnimationFrame(render);
+    return;
+  }
 
   if (isMouseDown) {
     const dx = e.clientX - mouseStart.x;
@@ -188,6 +232,14 @@ function onMouseMove(e) {
 
 function onMouseUp(e) {
   if (!isMouseDown) return;
+
+  if (state.isMeasuring) {
+    state.isMeasuring = false;
+    isMouseDown = false;
+    requestAnimationFrame(render);
+    return;
+  }
+
   const dx = Math.abs(e.clientX - mouseStart.x);
   const dy = Math.abs(e.clientY - mouseStart.y);
 
@@ -296,11 +348,41 @@ window.addEventListener('keydown', (e) => {
   } else if (e.key === '-' || e.key === '_') {
     e.preventDefault();
     canvasZoomOut();
+  } else if (e.key === 'r' || e.key === 'R') {
+    // Iteration 38: Toggle Ruler mode
+    e.preventDefault();
+    state.showRuler = !state.showRuler;
+    const selEl = document.getElementById('status-selection');
+    if (selEl) selEl.innerText = state.showRuler ? 'Ruler Tool Active: Click and drag to measure (or Shift+Drag)' : 'Ruler Deactivated';
+    requestAnimationFrame(render);
+  } else if (e.key === 'l' || e.key === 'L') {
+    // Iteration 39: Toggle Net Flightlines
+    e.preventDefault();
+    state.showFlightlines = !state.showFlightlines;
+    requestAnimationFrame(render);
   } else if (e.key === 'Escape') {
     e.preventDefault();
     state.selectedMacro = null;
+    state.rulerStart = null;
+    state.rulerCurrent = null;
+    state.isMeasuring = false;
     updateInspector(null);
     requestAnimationFrame(render);
+  }
+});
+
+// Cross-probing postMessage bridge from Workbench
+window.addEventListener('message', (e) => {
+  const msg = e.data;
+  if (!msg) return;
+  if (msg.type === 'highlightComponent') {
+    const compName = (msg.name || '').toLowerCase();
+    const target = state.macros.find(m => m.inst && m.inst.toLowerCase() === compName);
+    if (target) {
+      state.selectedMacro = target;
+      updateInspector(target);
+      requestAnimationFrame(render);
+    }
   }
 });
 
@@ -386,22 +468,40 @@ function render() {
       ctx.fillText(m.master || '', p.x + 6, p.y - mh + 28);
     }
 
-    // Pin Terminals
+    // Pin Terminals with Direction Indicators (Iteration 40)
     if (m.pins && state.zoom > 0.15) {
-      ctx.fillStyle = '#fab387';
       for (const pin of m.pins) {
+        if (pin.layer && state.visibleLayers[pin.layer] === false) continue;
         const px = Number(pin.x) || 0;
         const py = Number(pin.y) || 0;
         const pp = worldToScreen(mx + px, my + py);
+
+        ctx.fillStyle = (pin.dir === 'output') ? '#f38ba8' : '#fab387';
         ctx.fillRect(pp.x - 2, pp.y - 2, 4, 4);
+
+        // Arrow Indicator
+        if (state.zoom > 0.35) {
+          ctx.strokeStyle = ctx.fillStyle;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          if (pin.dir === 'input') {
+            ctx.moveTo(pp.x - 5, pp.y);
+            ctx.lineTo(pp.x - 1, pp.y);
+          } else {
+            ctx.moveTo(pp.x + 1, pp.y);
+            ctx.lineTo(pp.x + 5, pp.y);
+          }
+          ctx.stroke();
+        }
       }
     }
   }
 
-  // 5. I/O Pins / Pads
+  // 5. I/O Pins / Pads (Iteration 42: Layer filtering)
   for (const pin of state.pins) {
+    if (pin.layer && state.visibleLayers[pin.layer] === false) continue;
     const pp = worldToScreen(pin.x, pin.y);
-    ctx.fillStyle = '#a6e3a1';
+    ctx.fillStyle = pin.dir === 'output' ? '#f38ba8' : '#a6e3a1';
     ctx.beginPath();
     ctx.arc(pp.x, pp.y, 4, 0, Math.PI * 2);
     ctx.fill();
@@ -410,10 +510,74 @@ function render() {
     ctx.stroke();
 
     if (state.zoom > 0.1) {
-      ctx.fillStyle = '#a6e3a1';
+      ctx.fillStyle = ctx.fillStyle;
       ctx.font = '10px ui-monospace, monospace';
       ctx.fillText(pin.name, pp.x + 6, pp.y + 3);
     }
+  }
+
+  // 6. Net Flightlines (Iteration 39)
+  if (state.showFlightlines && state.macros.length > 0) {
+    ctx.strokeStyle = 'rgba(250, 179, 135, 0.45)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    for (const pin of state.pins) {
+      // Find matching macro terminal or macro center
+      const m = state.macros.find(macro => macro.pins && macro.pins.some(p => p.name === pin.name));
+      if (m) {
+        const p1 = worldToScreen(pin.x, pin.y);
+        const p2 = worldToScreen(m.x + (m.w || 40) / 2, m.y + (m.h || 30) / 2);
+        ctx.beginPath();
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+        ctx.stroke();
+      }
+    }
+    ctx.setLineDash([]);
+  }
+
+  // 7. Interactive Ruler / Measurement Overlay (Iteration 38: Desktop FastLayoutViewer Parity)
+  if (state.rulerStart && state.rulerCurrent) {
+    const s1 = worldToScreen(state.rulerStart.x, state.rulerStart.y);
+    const s2 = worldToScreen(state.rulerCurrent.x, state.rulerCurrent.y);
+
+    // Yellow dashed measurement line
+    ctx.strokeStyle = '#f9e2af';
+    ctx.lineWidth = 2.0;
+    ctx.setLineDash([6, 4]);
+    ctx.beginPath();
+    ctx.moveTo(s1.x, s1.y);
+    ctx.lineTo(s2.x, s2.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Cross ticks at endpoints
+    const tick = 5;
+    ctx.beginPath();
+    ctx.moveTo(s1.x - tick, s1.y - tick); ctx.lineTo(s1.x + tick, s1.y + tick);
+    ctx.moveTo(s1.x - tick, s1.y + tick); ctx.lineTo(s1.x + tick, s1.y - tick);
+    ctx.moveTo(s2.x - tick, s2.y - tick); ctx.lineTo(s2.x + tick, s2.y + tick);
+    ctx.moveTo(s2.x - tick, s2.y + tick); ctx.lineTo(s2.x + tick, s2.y - tick);
+    ctx.stroke();
+
+    // Distance metrics badge
+    const dx = Math.abs(state.rulerCurrent.x - state.rulerStart.x);
+    const dy = Math.abs(state.rulerCurrent.y - state.rulerStart.y);
+    const len = Math.sqrt(dx * dx + dy * dy);
+    const midX = (s1.x + s2.x) / 2;
+    const midY = (s1.y + s2.y) / 2;
+
+    const badgeText = `L: ${len.toFixed(2)} µm (dx: ${dx.toFixed(2)}, dy: ${dy.toFixed(2)})`;
+    ctx.font = 'bold 11px ui-monospace, monospace';
+    const textW = ctx.measureText(badgeText).width;
+
+    ctx.fillStyle = 'rgba(24, 24, 37, 0.85)';
+    ctx.fillRect(midX - textW / 2 - 6, midY - 18, textW + 12, 20);
+    ctx.strokeStyle = '#f9e2af';
+    ctx.strokeRect(midX - textW / 2 - 6, midY - 18, textW + 12, 20);
+
+    ctx.fillStyle = '#f9e2af';
+    ctx.fillText(badgeText, midX - textW / 2, midY - 4);
   }
 }
 

@@ -19,6 +19,11 @@ export PYTHONPATH="${SCRIPT_DIR}:${SCRIPT_DIR}/silis:${SCRIPT_DIR}/silis/core:${
 export PATH="${SCRIPT_DIR}/assets/bin:${SCRIPT_DIR}/silis/third-party/bin:${SCRIPT_DIR}/third-party/bin:${PATH}"
 export LIBGL_ALWAYS_SOFTWARE=1
 
+# Iteration 45: Fallback display for native GUI / OpenROAD viewer in containers
+if [ -z "$DISPLAY" ] && [ -z "$WAYLAND_DISPLAY" ]; then
+    export DISPLAY=":1"
+fi
+
 if [ "$1" = "--gui" ] && [ -f "${SCRIPT_DIR}/silis/silis.py" ]; then
     shift
     exec "$PYTHON_EXEC" "${SCRIPT_DIR}/silis/silis.py" "$@"
