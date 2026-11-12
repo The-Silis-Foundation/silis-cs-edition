@@ -110,6 +110,14 @@ def parse_def_file(def_path):
     components = []
     pins = []
 
+    # Cache known macro physical dimensions and terminals from LEF
+    known_macros = {}
+    try:
+        for m in scan_available_macros():
+            known_macros[m["name"].lower()] = (float(m.get("width", 0.0)), float(m.get("height", 0.0)), m.get("pins", {}))
+    except Exception:
+        pass
+
     in_components = False
     in_pins = False
 
@@ -169,14 +177,29 @@ def parse_def_file(def_path):
                     m_orient = re.search(r"\)\s+([N|S|W|E|FN|FS|FW|FE|R0|R90|R180|R270|MY|MX]+)", comp_stmt)
                     if m_orient:
                         orient = m_orient.group(1)
+                    mw, mh = 40.0, 30.0
+                    macro_pins = []
+                    ctype_low = cell_type.lower()
+                    if ctype_low in known_macros:
+                        kw, kh, kpins = known_macros[ctype_low]
+                        if kw > 0.0 and kh > 0.0:
+                            mw, mh = kw, kh
+                        if isinstance(kpins, dict):
+                            for pgroup, plist in kpins.items():
+                                for p in plist:
+                                    macro_pins.append({"name": str(p), "x": round(mw / 2, 3), "y": round(mh / 2, 3)})
+                    elif "sram" in ctype_low or "mem" in ctype_low:
+                        mw, mh = 120.0, 100.0
+
                     components.append({
                         "inst": inst_name,
                         "master": cell_type,
                         "x": x,
                         "y": y,
-                        "w": 120.0 if ("sram" in cell_type.lower() or "mem" in cell_type.lower()) else 40.0,
-                        "h": 100.0 if ("sram" in cell_type.lower() or "mem" in cell_type.lower()) else 30.0,
+                        "w": mw,
+                        "h": mh,
                         "orient": orient,
+                        "pins": macro_pins,
                     })
                 comp_stmt = ""
 

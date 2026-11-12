@@ -33,45 +33,49 @@
           <canvas id="peeker-canvas"></canvas>
         </div>
         <footer id="status-bar">
-          <span id="status-cursor">X: 0.000 um | Y: 0.000 um</span>
+          <span id="status-cursor">X: 0.000 µm | Y: 0.000 µm</span>
           <span id="status-selection">Selected: None</span>
           <span id="status-zoom">Zoom: 100%</span>
         </footer>
       </section>
 
-      <!-- Inspector Sidebar -->
+      <!-- Inspector Sidebar (Desktop Silis Parity: inspector_widget.py) -->
       <aside id="inspector-sidebar">
-        <div class="inspector-header">Component Inspector</div>
+        <div class="inspector-header">Property Inspector</div>
         <div class="inspector-content" id="inspector-content">
+          <div class="inspector-subheader">Identity</div>
           <div class="prop-row">
-            <span class="prop-label">Instance:</span>
+            <span class="prop-label">Instance Name:</span>
             <span class="prop-val" id="val-inst">None</span>
           </div>
           <div class="prop-row">
-            <span class="prop-label">Master:</span>
+            <span class="prop-label">Master Cell:</span>
             <span class="prop-val" id="val-master">-</span>
           </div>
           <div class="prop-row">
-            <span class="prop-label">Origin X:</span>
-            <span class="prop-val" id="val-x">-</span>
+            <span class="prop-label">Power Domain:</span>
+            <span class="prop-val" id="val-domain">PD_TOP</span>
+          </div>
+
+          <div class="inspector-subheader">Geometry</div>
+          <div class="prop-row">
+            <span class="prop-label">Origin (µm):</span>
+            <span class="prop-val" id="val-origin">-</span>
           </div>
           <div class="prop-row">
-            <span class="prop-label">Origin Y:</span>
-            <span class="prop-val" id="val-y">-</span>
-          </div>
-          <div class="prop-row">
-            <span class="prop-label">Width:</span>
+            <span class="prop-label">Width (µm):</span>
             <span class="prop-val" id="val-w">-</span>
           </div>
           <div class="prop-row">
-            <span class="prop-label">Height:</span>
+            <span class="prop-label">Height (µm):</span>
             <span class="prop-val" id="val-h">-</span>
           </div>
           <div class="prop-row">
             <span class="prop-label">Orientation:</span>
             <span class="prop-val" id="val-orient">-</span>
           </div>
-          <div class="inspector-subheader">Pin Terminals</div>
+
+          <div class="inspector-subheader" id="hdr-terminals">Terminals (0)</div>
           <div id="pins-list-container">
             <div class="no-pins">No component selected</div>
           </div>

@@ -659,6 +659,23 @@ function activate(context) {
 
             activeFloorplanPanel.webview.html = getFpsWebviewHtml(activeFloorplanPanel.webview, context.extensionUri, pName);
 
+            // Hydrate existing floorplan session state from .silis_fp_session.json
+            const wsFolders = vscode.workspace.workspaceFolders;
+            const rootPath = wsFolders ? wsFolders[0].uri.fsPath : '';
+            const sessionPath = path.join(rootPath, 'projects', pName, '.silis_fp_session.json');
+            if (fs.existsSync(sessionPath)) {
+                try {
+                    const sessionData = JSON.parse(fs.readFileSync(sessionPath, 'utf8'));
+                    setTimeout(() => {
+                        if (activeFloorplanPanel && activeFloorplanPanel.webview) {
+                            activeFloorplanPanel.webview.postMessage({ command: 'loadSession', session: sessionData });
+                        }
+                    }, 400);
+                } catch (e) {
+                    console.error('Failed to parse existing .silis_fp_session.json', e);
+                }
+            }
+
             activeFloorplanPanel.webview.onDidReceiveMessage(async (msg) => {
                 if (msg && msg.command === 'fpsAction') {
                     const action = msg.action;

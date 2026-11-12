@@ -77,12 +77,22 @@ function snapCoordinate(val, grid) {
 }
 
 // Render Engine
+// Voltage Tier Palette (Desktop Silis Parity: floorplanner.py:628-640)
+function getVoltageColors(v) {
+  const volt = Number(v) || 1.8;
+  if (volt >= 2.5) return { stroke: '#b58900', fill: 'rgba(181, 137, 0, 0.20)' }; // Amber (High voltage / Padring)
+  if (volt >= 1.6) return { stroke: '#268bd2', fill: 'rgba(38, 139, 210, 0.20)' }; // Cyan (Nominal core)
+  if (volt >= 0.8) return { stroke: '#6c71c4', fill: 'rgba(108, 113, 196, 0.20)' }; // Slate purple / Indigo (Gated core)
+  return { stroke: '#2aa198', fill: 'rgba(42, 161, 152, 0.20)' }; // Muted teal (Ultra-low voltage island)
+}
+
+// Render Engine (100% Visual and Behavioral Parity with Silis Desktop)
 function render() {
   const rect = wrapper.getBoundingClientRect();
   ctx.clearRect(0, 0, rect.width, rect.height);
 
-  // Background
-  ctx.fillStyle = '#0f0f17';
+  // Background (Strict Desktop Pure Pitch Black #000000)
+  ctx.fillStyle = '#000000';
   ctx.fillRect(0, 0, rect.width, rect.height);
 
   // 1. Site Rows Grid (Sky130 2.72 µm)
@@ -104,12 +114,12 @@ function render() {
     }
   }
 
-  // 2. Outer Die Boundary
+  // 2. Outer Die Boundary (Catppuccin Blue #89b4fa, width 2.0)
   const dieP1 = worldToScreen(0, 0);
   const dieW = state.die.w * state.zoom;
   const dieH = state.die.h * state.zoom;
-  ctx.strokeStyle = '#6c7086';
-  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = '#89b4fa';
+  ctx.lineWidth = 2.0;
   ctx.strokeRect(dieP1.x, dieP1.y - dieH, dieW, dieH);
 
   // Die Dimension Text
@@ -117,33 +127,37 @@ function render() {
   ctx.font = '10px ui-monospace, monospace';
   ctx.fillText(`Die: ${state.die.w} × ${state.die.h} µm`, dieP1.x + 8, dieP1.y - dieH - 6);
 
-  // 3. Inner Core Boundary
+  // 3. Inner Core Boundary (Subtext0 #a6adc8, DashLine, width 1.0)
   const coreX = state.core.border;
   const coreY = state.core.border;
   const coreW = (state.die.w - state.core.border * 2) * state.zoom;
   const coreH = (state.die.h - state.core.border * 2) * state.zoom;
   const coreP = worldToScreen(coreX, coreY);
-  ctx.strokeStyle = '#89b4fa';
-  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = '#a6adc8';
+  ctx.lineWidth = 1.0;
+  ctx.setLineDash([6, 4]);
   ctx.strokeRect(coreP.x, coreP.y - coreH, coreW, coreH);
+  ctx.setLineDash([]);
 
-  // 4. Power Domain Islands (UPF)
+  // 4. Power Domain Islands (UPF DashDotLine & Voltage Palette)
   for (const dom of state.domains) {
-    if (dom.name === 'PD_TOP') continue; // Skip core top domain for clarity
+    if (dom.name === 'PD_TOP') continue;
     const [x1, y1, x2, y2] = dom.box;
     const dp = worldToScreen(x1, y1);
     const dw = (x2 - x1) * state.zoom;
     const dh = (y2 - y1) * state.zoom;
-    ctx.fillStyle = dom.color;
+    const vColors = getVoltageColors(dom.voltage);
+    ctx.fillStyle = vColors.fill;
     ctx.fillRect(dp.x, dp.y - dh, dw, dh);
-    ctx.strokeStyle = dom.stroke;
-    ctx.lineWidth = 1.5;
-    ctx.setLineDash([4, 4]);
+    ctx.strokeStyle = vColors.stroke;
+    ctx.lineWidth = 1.8;
+    ctx.setLineDash([8, 3, 2, 3]); // DashDotLine
     ctx.strokeRect(dp.x, dp.y - dh, dw, dh);
     ctx.setLineDash([]);
-    ctx.fillStyle = dom.stroke;
-    const voltStr = (dom.voltage != null && !isNaN(Number(dom.voltage))) ? Number(dom.voltage).toFixed(3) : '1.800';
-    ctx.fillText(`${dom.name} (${voltStr} V)`, dp.x + 6, dp.y - dh + 14);
+    ctx.fillStyle = vColors.stroke;
+    const voltStr = (dom.voltage != null && !isNaN(Number(dom.voltage))) ? Number(dom.voltage).toFixed(2) : '1.80';
+    ctx.font = '10px ui-monospace, monospace';
+    ctx.fillText(`ISLAND: ${dom.name} (${voltStr}V)`, dp.x + 6, dp.y - dh + 14);
   }
 
   // 5. Placed Macros
@@ -153,13 +167,14 @@ function render() {
     const mw = m.w * state.zoom;
     const mh = m.h * state.zoom;
 
-    // Halo (Dashed Pink keepout)
-    const [hl, hr, hb, ht] = m.halo;
+    // Halo (Dashed Pink keepout #f38ba8)
+    const halo = Array.isArray(m.halo) && m.halo.length >= 4 ? m.halo : [10, 10, 10, 10];
+    const [hl, hr, hb, ht] = halo;
     const hp = worldToScreen(m.x - hl, m.y - hb);
     const hw = (m.w + hl + hr) * state.zoom;
     const hh = (m.h + hb + ht) * state.zoom;
     ctx.strokeStyle = '#f38ba8';
-    ctx.lineWidth = 1;
+    ctx.lineWidth = 1.2;
     ctx.setLineDash([3, 3]);
     ctx.strokeRect(hp.x, hp.y - hh, hw, hh);
     ctx.setLineDash([]);
@@ -167,14 +182,14 @@ function render() {
     // Macro Block Body
     ctx.fillStyle = isSel ? '#45475a' : '#313244';
     ctx.fillRect(mp.x, mp.y - mh, mw, mh);
-    ctx.strokeStyle = isSel ? '#f9e2af' : '#89b4fa';
+    ctx.strokeStyle = isSel ? '#00FFFF' : '#89b4fa';
     ctx.lineWidth = isSel ? 2 : 1.5;
     ctx.strokeRect(mp.x, mp.y - mh, mw, mh);
 
     // Orientation Badge
     ctx.fillStyle = '#89b4fa';
     ctx.font = '9px monospace';
-    ctx.fillText(`[${m.orient}]`, mp.x + 4, mp.y - mh + 12);
+    ctx.fillText(`[${m.orient || 'R0'}]`, mp.x + 4, mp.y - mh + 12);
 
     // Labels: Instance & Master Name
     if (state.zoom > 0.05) {
@@ -199,23 +214,47 @@ function render() {
   // 6. Peripheral I/O Pads on N, S, E, W die perimeters
   renderPadRings();
 
-  // 7. Interconnect Flightlines
-  if (state.showFlightlines && state.macros.length >= 2) {
-    ctx.strokeStyle = 'rgba(137, 180, 250, 0.45)';
-    ctx.lineWidth = 1;
-    const m0 = state.macros[0];
-    const m1 = state.macros[1];
-    const p1 = worldToScreen(m0.x + m0.w, m0.y + m0.h / 2);
-    const p2 = worldToScreen(m1.x, m1.y + m1.h / 2);
-    ctx.beginPath();
-    ctx.moveTo(p1.x, p1.y);
-    const cx = (p1.x + p2.x) / 2;
-    ctx.bezierCurveTo(cx, p1.y, cx, p2.y, p2.x, p2.y);
-    ctx.stroke();
+  // 7. Interconnect Elastic Flylines (Pad to Macro & Inter-Macro)
+  if (state.showFlightlines) {
+    ctx.lineWidth = 1.2;
+    ctx.setLineDash([4, 3]);
+
+    for (const pad of state.pads) {
+      let px = 0, py = 0;
+      if (pad.edge === 'bottom') { px = pad.pos; py = 0; }
+      else if (pad.edge === 'top') { px = pad.pos; py = state.die.h; }
+      else if (pad.edge === 'left') { px = 0; py = pad.pos; }
+      else if (pad.edge === 'right') { px = state.die.w; py = pad.pos; }
+      const p1 = worldToScreen(px, py);
+
+      let targetM = state.macros[0];
+      for (const m of state.macros) {
+        if (pad.name.toLowerCase().includes(m.inst.toLowerCase().replace('u_', ''))) {
+          targetM = m;
+          break;
+        }
+      }
+      if (!targetM) continue;
+
+      const p2 = worldToScreen(targetM.x + targetM.w / 2, targetM.y + targetM.h / 2);
+      const isClkRst = /clk|rst|reset|clock/i.test(pad.name);
+      const isPwr = /vdd|vss|power|gnd/i.test(pad.name);
+      ctx.strokeStyle = isClkRst ? 'rgba(249, 226, 175, 0.55)' : (isPwr ? 'rgba(243, 139, 168, 0.55)' : 'rgba(137, 220, 235, 0.47)');
+
+      ctx.beginPath();
+      ctx.moveTo(p1.x, p1.y);
+      const cx1 = p1.x + (p2.x - p1.x) * 0.25;
+      const cy1 = p1.y + (p2.y - p1.y) * 0.05;
+      const cx2 = p1.x + (p2.x - p1.x) * 0.75;
+      const cy2 = p1.y + (p2.y - p1.y) * 0.95;
+      ctx.bezierCurveTo(cx1, cy1, cx2, cy2, p2.x, p2.y);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
   }
 }
 
-// Render Peripheral Pad Rings
+// Render Peripheral Pad Rings (Desktop Silis Parity: ioplacer.py & floorplanner.py)
 function renderPadRings() {
   const dieP1 = worldToScreen(0, 0);
   const dieW = state.die.w * state.zoom;
@@ -231,14 +270,16 @@ function renderPadRings() {
 
   for (const [e, rect] of Object.entries(edges)) {
     const isActive = state.activeEdge === e;
-    ctx.fillStyle = isActive ? 'rgba(137, 180, 250, 0.35)' : 'rgba(255, 255, 255, 0.05)';
+    ctx.fillStyle = isActive ? 'rgba(0, 255, 255, 0.12)' : 'rgba(69, 71, 90, 0.06)';
     ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
-    ctx.strokeStyle = isActive ? '#89b4fa' : '#313244';
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = isActive ? '#00FFFF' : '#45475a';
+    ctx.lineWidth = isActive ? 2 : 1;
+    if (!isActive) ctx.setLineDash([4, 4]);
     ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
+    if (!isActive) ctx.setLineDash([]);
   }
 
-  // Draw Pad markers
+  // Draw Pad markers with Desktop Silis directional colors
   for (const pad of state.pads) {
     let px = 0, py = 0;
     if (pad.edge === 'bottom') { px = pad.pos; py = 0; }
@@ -247,8 +288,27 @@ function renderPadRings() {
     else if (pad.edge === 'right') { px = state.die.w; py = pad.pos; }
 
     const sp = worldToScreen(px, py);
-    ctx.fillStyle = '#f9e2af';
-    ctx.fillRect(sp.x - 3, sp.y - 3, 6, 6);
+    const pdir = pad.dir || (pad.name.startsWith('out') ? 'output' : (pad.name.startsWith('io') ? 'inout' : (pad.name.includes('v') ? 'power' : 'input')));
+    let fill = '#89dceb';
+    let stroke = '#11111b';
+    let strokeWidth = 1;
+    if (pdir === 'input') fill = '#a6e3a1';
+    else if (pdir === 'output') fill = '#89b4fa';
+    else if (pdir === 'inout') fill = '#cba6f7';
+    else if (pdir === 'power') { fill = '#f9e2af'; stroke = '#f38ba8'; strokeWidth = 1.5; }
+    else if (pdir === 'ground') { fill = '#f9e2af'; stroke = '#89b4fa'; strokeWidth = 1.5; }
+
+    ctx.fillStyle = fill;
+    ctx.fillRect(sp.x - 3.5, sp.y - 3.5, 7, 7);
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth = strokeWidth;
+    ctx.strokeRect(sp.x - 3.5, sp.y - 3.5, 7, 7);
+
+    if (state.zoom > 0.08) {
+      ctx.fillStyle = '#cdd6f4';
+      ctx.font = '8px ui-monospace, monospace';
+      ctx.fillText(pad.name, sp.x + 5, sp.y + 3);
+    }
   }
 }
 
@@ -260,7 +320,7 @@ canvas.addEventListener('wheel', (e) => {
   const my = e.clientY - rect.top;
 
   const oldWorld = screenToWorld(mx, my);
-  const factor = e.deltaY < 0 ? 1.15 : 0.85;
+  const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
   state.zoom = Math.max(0.01, Math.min(20.0, state.zoom * factor));
 
   // Keep mouse point stationary in world coordinates
@@ -449,7 +509,82 @@ function canvasZoomFit() {
   requestAnimationFrame(render);
 }
 
-// Live TCL Generator
+// Native Desktop Keyboard Shortcuts Engine (Desktop Parity: floorplanner.py:1900-1920)
+function isInputActive() {
+  const el = document.activeElement;
+  return el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT');
+}
+
+function deselectAll() {
+  state.selectedMacro = null;
+  const selStatus = document.getElementById('status-selection');
+  if (selStatus) selStatus.innerText = 'Selected: None';
+  const selLbl = document.getElementById('lbl-sel-name');
+  if (selLbl) selLbl.innerText = 'None';
+  requestAnimationFrame(render);
+}
+
+function selectAllMacros() {
+  if (state.macros.length > 0) {
+    state.selectedMacro = state.macros[0];
+    syncSelectedMacroCard(state.selectedMacro);
+    requestAnimationFrame(render);
+  }
+}
+
+function deleteSelected() {
+  if (!state.selectedMacro) return;
+  const idx = state.macros.findIndex(m => m.inst === state.selectedMacro.inst);
+  if (idx !== -1) {
+    state.macros.splice(idx, 1);
+    deselectAll();
+    regenerateTcl();
+    requestAnimationFrame(render);
+  }
+}
+
+window.addEventListener('keydown', (e) => {
+  if (e.ctrlKey || e.metaKey) {
+    const k = e.key.toLowerCase();
+    if (k === 's') {
+      e.preventDefault();
+      acceptAndLock();
+    } else if (k === 'z') {
+      e.preventDefault();
+      action('undo');
+    } else if (k === 'y') {
+      e.preventDefault();
+      action('redo');
+    } else if (k === 'a') {
+      if (!isInputActive()) {
+        e.preventDefault();
+        selectAllMacros();
+      }
+    } else if (k === 'e') {
+      e.preventDefault();
+      action('exportTcl');
+    }
+    return;
+  }
+
+  if (isInputActive()) return;
+
+  if (e.key === 'f' || e.key === 'F') {
+    e.preventDefault();
+    canvasZoomFit();
+  } else if (e.key === 'Delete' || e.key === 'Backspace') {
+    e.preventDefault();
+    deleteSelected();
+  } else if (e.key === 'Escape') {
+    e.preventDefault();
+    deselectAll();
+  } else if (e.key === 'a' || e.key === 'A') {
+    e.preventDefault();
+    action('autoPlaceMacros');
+  }
+});
+
+// Live TCL Generator (Strict OpenROAD & Desktop Parity)
 function regenerateTcl() {
   let tcl = `# Silis Floorplan & Power Studio (FPS) - Generated Flow Script\n`;
   tcl += `initialize_floorplan -die_area { 0.000 0.000 ${state.die.w.toFixed(3)} ${state.die.h.toFixed(3)} } \\\n`;
@@ -462,9 +597,11 @@ function regenerateTcl() {
       tcl += `set_domain_area ${dom.name} -area { ${dom.box.map(v => v.toFixed(3)).join(' ')} }\n`;
     }
   }
-  tcl += `\n# Macro Placements\n`;
+  tcl += `\n# Macro Placements and Keepout Halos\n`;
   for (const m of state.macros) {
-    tcl += `place_macro -inst ${m.inst} -origin { ${m.x.toFixed(3)} ${m.y.toFixed(3)} } -orient ${m.orient}\n`;
+    tcl += `place_macro -inst ${m.inst} -origin { ${m.x.toFixed(3)} ${m.y.toFixed(3)} } -orient ${m.orient || 'R0'}\n`;
+    const halo = Array.isArray(m.halo) && m.halo.length >= 4 ? m.halo : [10, 10, 10, 10];
+    tcl += `set_macro_halo -inst ${m.inst} -halo { ${halo[0].toFixed(3)} ${halo[2].toFixed(3)} ${halo[1].toFixed(3)} ${halo[3].toFixed(3)} }\n`;
   }
   tcl += `\n# PDN Ring & Straps\n`;
   tcl += `add_pdn_ring -grid grid_top -layers { met5 met4 } -widths { 5.0 5.0 } -spacings { 2.0 2.0 }\n`;
@@ -475,16 +612,80 @@ function regenerateTcl() {
   if (ed) ed.value = tcl;
 }
 
-// IPC Action Dispatcher
+// IPC Action Dispatcher (Dual-Schema Desktop 2.0-FPS Parity: floorplanner.py:1969-2038)
 function action(name, data = {}) {
   const ed = document.getElementById('live-tcl-editor');
   const tcl = (ed && ed.value) ? ed.value : '';
+
+  const fullState = {
+    version: '2.0-FPS',
+    netlist_checksum: state.netlist_checksum || '',
+    is_pad_mode: state.pads && state.pads.length > 0,
+    die: {
+      w: state.die.w,
+      h: state.die.h,
+      mt: state.core.border,
+      mb: state.core.border,
+      ml: state.core.border,
+      mr: state.core.border
+    },
+    core: state.core,
+    macros: state.macros.map(m => ({
+      name: m.master || m.name || m.inst,
+      master: m.master || m.name || m.inst,
+      inst_name: m.inst || m.inst_name,
+      inst: m.inst || m.inst_name,
+      x: m.x,
+      y: m.y,
+      w: m.w,
+      h: m.h,
+      orientation: m.orient || m.orientation || 'R0',
+      orient: m.orient || m.orientation || 'R0',
+      halo: Array.isArray(m.halo) ? m.halo : [10, 10, 10, 10],
+      pins: m.pins || []
+    })),
+    power_domains: state.domains.map(d => ({
+      domain_name: d.name,
+      name: d.name,
+      voltage: d.voltage,
+      domain_type: d.domain_type || 'Internally Gated',
+      box: d.box,
+      halo: d.halo || [15, 15, 15, 15],
+      x: d.box[0],
+      y: d.box[1],
+      w: d.box[2] - d.box[0],
+      h: d.box[3] - d.box[1]
+    })),
+    domains: state.domains,
+    pins: state.pads.map(p => ({
+      name: p.name,
+      edge: p.edge,
+      pos: p.pos,
+      dir: p.dir || 'input'
+    })),
+    pads: state.pads,
+    tap_distance: 14.0,
+    pdn_config: {
+      enable_ring: true,
+      ring_width: 5.0,
+      ring_spacing: 2.0,
+      ring_offset: 5.0,
+      ring_h_layer: 'met5',
+      ring_v_layer: 'met4',
+      enable_trunks: true,
+      trunk_layer: 'met4',
+      trunk_width: 3.2,
+      targeted_bridges: true
+    },
+    weights: state.weights
+  };
+
   const payload = {
     command: 'fpsAction',
     action: name,
     tcl,
     ...data,
-    state: { die: state.die, core: state.core, macros: state.macros, weights: state.weights }
+    state: fullState
   };
   if (window.vscode) {
     window.vscode.postMessage(payload);
@@ -492,6 +693,73 @@ function action(name, data = {}) {
     window.parent.postMessage({ fromSilisFPS: true, data: payload }, '*');
   }
 }
+
+// Session Hydration from Host or VS Code
+function loadSessionData(s) {
+  if (!s || typeof s !== 'object') return;
+  if (s.die) {
+    state.die.w = Number(s.die.w) || state.die.w;
+    state.die.h = Number(s.die.h) || state.die.h;
+    const border = Number(s.die.mt) || Number(s.die.ml) || (s.core && Number(s.core.border)) || state.core.border;
+    state.core.border = border;
+    state.core.w = state.die.w - border * 2;
+    state.core.h = state.die.h - border * 2;
+  }
+  if (Array.isArray(s.macros)) {
+    state.macros = s.macros.map(m => ({
+      inst: m.inst_name || m.inst || 'inst',
+      master: m.name || m.master || 'master',
+      x: Number(m.x) || 0,
+      y: Number(m.y) || 0,
+      w: Number(m.w) || 420,
+      h: Number(m.h) || 280,
+      orient: m.orientation || m.orient || 'R0',
+      halo: Array.isArray(m.halo) ? m.halo : [10, 10, 10, 10],
+      pins: m.pins || []
+    }));
+  }
+  if (Array.isArray(s.power_domains) && s.power_domains.length > 0) {
+    state.domains = s.power_domains.map(pd => {
+      const x1 = Number(pd.x) || (pd.box ? pd.box[0] : 0);
+      const y1 = Number(pd.y) || (pd.box ? pd.box[1] : 0);
+      const w = Number(pd.w) || (pd.box ? pd.box[2] - pd.box[0] : 400);
+      const h = Number(pd.h) || (pd.box ? pd.box[3] - pd.box[1] : 400);
+      const name = pd.domain_name || pd.name || 'PD_UNKNOWN';
+      return {
+        name,
+        voltage: Number(pd.voltage) || 1.8,
+        domain_type: pd.domain_type || 'Internally Gated',
+        box: [x1, y1, x1 + w, y1 + h]
+      };
+    });
+  } else if (Array.isArray(s.domains)) {
+    state.domains = s.domains;
+  }
+  if (Array.isArray(s.pins) && s.pins.length > 0) {
+    state.pads = s.pins.map(p => ({
+      name: p.name || 'pin',
+      edge: p.edge || 'bottom',
+      pos: Number(p.pos) || 0,
+      dir: p.dir || 'input'
+    }));
+  } else if (Array.isArray(s.pads)) {
+    state.pads = s.pads;
+  }
+  if (s.netlist_checksum) state.netlist_checksum = s.netlist_checksum;
+  if (s.weights) state.weights = { ...state.weights, ...s.weights };
+
+  canvasZoomFit();
+  regenerateTcl();
+  requestAnimationFrame(render);
+}
+
+window.addEventListener('message', (event) => {
+  const msg = event.data;
+  if (!msg) return;
+  if (msg.command === 'loadSession' && msg.session) {
+    loadSessionData(msg.session);
+  }
+});
 
 // Acquire VS Code API if available
 try {

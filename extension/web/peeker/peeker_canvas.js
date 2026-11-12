@@ -104,15 +104,15 @@ function screenToWorld(sx, sy) {
   return { x: wx, y: wy };
 }
 
-// Zoom & Pan controls
+// Zoom & Pan controls (Desktop Parity: 1.15 zoom factor)
 function canvasZoomIn() {
-  state.zoom *= 1.25;
+  state.zoom = Math.min(20.0, state.zoom * 1.15);
   requestAnimationFrame(render);
   updateZoomHud();
 }
 
 function canvasZoomOut() {
-  state.zoom /= 1.25;
+  state.zoom = Math.max(0.01, state.zoom / 1.15);
   requestAnimationFrame(render);
   updateZoomHud();
 }
@@ -171,7 +171,7 @@ function onMouseMove(e) {
   const mouseY = e.clientY - rect.top;
   const worldPos = screenToWorld(mouseX, mouseY);
 
-  document.getElementById('status-cursor').innerText = `X: ${worldPos.x.toFixed(3)} um | Y: ${worldPos.y.toFixed(3)} um`;
+  document.getElementById('status-cursor').innerText = `X: ${worldPos.x.toFixed(3)} µm | Y: ${worldPos.y.toFixed(3)} µm`;
 
   if (isMouseDown) {
     const dx = e.clientX - mouseStart.x;
@@ -243,47 +243,74 @@ function performSelection(pos) {
 
 function updateInspector(m) {
   if (!m) {
-    document.getElementById('val-inst').innerText = 'None';
-    document.getElementById('val-master').innerText = '-';
-    document.getElementById('val-x').innerText = '-';
-    document.getElementById('val-y').innerText = '-';
-    document.getElementById('val-w').innerText = '-';
-    document.getElementById('val-h').innerText = '-';
-    document.getElementById('val-orient').innerText = '-';
-    document.getElementById('status-selection').innerText = 'Selected: None';
-    document.getElementById('pins-list-container').innerHTML = '<div class="no-pins">No component selected</div>';
+    const elInst = document.getElementById('val-inst'); if (elInst) elInst.innerText = 'None';
+    const elMaster = document.getElementById('val-master'); if (elMaster) elMaster.innerText = '-';
+    const elDomain = document.getElementById('val-domain'); if (elDomain) elDomain.innerText = 'PD_TOP';
+    const elOrigin = document.getElementById('val-origin'); if (elOrigin) elOrigin.innerText = '-';
+    const elW = document.getElementById('val-w'); if (elW) elW.innerText = '-';
+    const elH = document.getElementById('val-h'); if (elH) elH.innerText = '-';
+    const elOrient = document.getElementById('val-orient'); if (elOrient) elOrient.innerText = '-';
+    const elHdrTerms = document.getElementById('hdr-terminals'); if (elHdrTerms) elHdrTerms.innerText = 'Terminals (0)';
+    const elSel = document.getElementById('status-selection'); if (elSel) elSel.innerText = 'Selected: None';
+    const pinsContainer = document.getElementById('pins-list-container');
+    if (pinsContainer) pinsContainer.innerHTML = '<div class="no-pins">No component selected</div>';
     return;
   }
 
   const safeNum = (v, fallback = 0) => (v != null && !isNaN(Number(v)) ? Number(v).toFixed(3) : Number(fallback).toFixed(3));
-  document.getElementById('val-inst').innerText = m.inst || '-';
-  document.getElementById('val-master').innerText = m.master || '-';
-  document.getElementById('val-x').innerText = safeNum(m.x, 0) + ' um';
-  document.getElementById('val-y').innerText = safeNum(m.y, 0) + ' um';
-  document.getElementById('val-w').innerText = safeNum(m.w, 40) + ' um';
-  document.getElementById('val-h').innerText = safeNum(m.h, 30) + ' um';
-  document.getElementById('val-orient').innerText = m.orient || 'R0';
-  document.getElementById('status-selection').innerText = `Selected: ${m.inst || 'Unknown'} (${m.master || 'Unknown'})`;
+  const elInst = document.getElementById('val-inst'); if (elInst) elInst.innerText = m.inst || '-';
+  const elMaster = document.getElementById('val-master'); if (elMaster) elMaster.innerText = m.master || '-';
+  const elDomain = document.getElementById('val-domain'); if (elDomain) elDomain.innerText = m.domain || 'PD_TOP';
+  const elOrigin = document.getElementById('val-origin'); if (elOrigin) elOrigin.innerText = `(${safeNum(m.x, 0)}, ${safeNum(m.y, 0)}) µm`;
+  const elW = document.getElementById('val-w'); if (elW) elW.innerText = safeNum(m.w, 40) + ' µm';
+  const elH = document.getElementById('val-h'); if (elH) elH.innerText = safeNum(m.h, 30) + ' µm';
+  const elOrient = document.getElementById('val-orient'); if (elOrient) elOrient.innerText = m.orient || 'R0';
+  const pinCount = (m.pins && Array.isArray(m.pins)) ? m.pins.length : 0;
+  const elHdrTerms = document.getElementById('hdr-terminals'); if (elHdrTerms) elHdrTerms.innerText = `Terminals (${pinCount})`;
+  const elSel = document.getElementById('status-selection'); if (elSel) elSel.innerText = `Selected: ${m.inst || 'Unknown'} (${m.master || 'Unknown'})`;
 
   const pinsContainer = document.getElementById('pins-list-container');
-  if (m.pins && m.pins.length > 0) {
-    let html = '';
-    for (const p of m.pins) {
-      html += `<div class="pin-item"><span>${p.name || 'pin'}</span><span>X: ${p.x != null ? p.x : 0}, Y: ${p.y != null ? p.y : 0}</span></div>`;
+  if (pinsContainer) {
+    if (m.pins && m.pins.length > 0) {
+      let html = '';
+      for (const p of m.pins) {
+        html += `<div class="pin-item"><span>${p.name || 'pin'}</span><span>X: ${p.x != null ? p.x : 0}, Y: ${p.y != null ? p.y : 0}</span></div>`;
+      }
+      pinsContainer.innerHTML = html;
+    } else {
+      pinsContainer.innerHTML = '<div class="no-pins">No pin terminals defined</div>';
     }
-    pinsContainer.innerHTML = html;
-  } else {
-    pinsContainer.innerHTML = '<div class="no-pins">No pin terminals defined</div>';
   }
 }
 
-// Render Engine
+// Global Keyboard Shortcuts (Desktop Parity)
+window.addEventListener('keydown', (e) => {
+  const el = document.activeElement;
+  if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) return;
+  if (e.key === 'f' || e.key === 'F') {
+    e.preventDefault();
+    canvasZoomFit();
+  } else if (e.key === '+' || e.key === '=') {
+    e.preventDefault();
+    canvasZoomIn();
+  } else if (e.key === '-' || e.key === '_') {
+    e.preventDefault();
+    canvasZoomOut();
+  } else if (e.key === 'Escape') {
+    e.preventDefault();
+    state.selectedMacro = null;
+    updateInspector(null);
+    requestAnimationFrame(render);
+  }
+});
+
+// Render Engine (Desktop Silis Pure Black #000000 & Subtext Parity)
 function render() {
   const rect = wrapper.getBoundingClientRect();
   ctx.clearRect(0, 0, rect.width, rect.height);
 
-  // Background
-  ctx.fillStyle = '#0f0f17';
+  // Background (Strict Desktop Pitch Black #000000)
+  ctx.fillStyle = '#000000';
   ctx.fillRect(0, 0, rect.width, rect.height);
 
   // 1. Grid & Site Rows
@@ -305,27 +332,29 @@ function render() {
     }
   }
 
-  // 2. Die Bounding Box
+  // 2. Die Bounding Box (Catppuccin Blue #89b4fa, width 2.0)
   const dieP1 = worldToScreen(0, 0);
   const dieW = state.die.w * state.zoom;
   const dieH = state.die.h * state.zoom;
-  ctx.strokeStyle = '#6c7086';
-  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = '#89b4fa';
+  ctx.lineWidth = 2.0;
   ctx.strokeRect(dieP1.x, dieP1.y - dieH, dieW, dieH);
 
   ctx.fillStyle = '#a6adc8';
   ctx.font = '10px ui-monospace, monospace';
-  ctx.fillText(`Die: ${state.die.w} x ${state.die.h} um`, dieP1.x + 8, dieP1.y - dieH - 6);
+  ctx.fillText(`Die: ${state.die.w} × ${state.die.h} µm`, dieP1.x + 8, dieP1.y - dieH - 6);
 
-  // 3. Core Area
+  // 3. Core Area (Subtext0 #a6adc8, DashLine [6, 4], width 1.0)
   const coreX = state.core.border;
   const coreY = state.core.border;
   const coreW = (state.die.w - state.core.border * 2) * state.zoom;
   const coreH = (state.die.h - state.core.border * 2) * state.zoom;
   const coreP = worldToScreen(coreX, coreY);
-  ctx.strokeStyle = '#89b4fa';
-  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = '#a6adc8';
+  ctx.lineWidth = 1.0;
+  ctx.setLineDash([6, 4]);
   ctx.strokeRect(coreP.x, coreP.y - coreH, coreW, coreH);
+  ctx.setLineDash([]);
 
   // 4. Placed Components / Macros
   for (const m of state.macros) {
