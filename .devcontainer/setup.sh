@@ -10,6 +10,11 @@ if [ ! -d "$WORKSPACE_DIR" ]; then
     WORKSPACE_DIR="$(pwd)"
 fi
 
+# 0. Ensure SSH server is active
+if command -v service >/dev/null 2>&1; then
+    sudo service ssh start 2>/dev/null || true
+fi
+
 # 1. Initialize Git Submodules (Silis core)
 echo "Initializing Silis submodules..."
 cd "$WORKSPACE_DIR"
