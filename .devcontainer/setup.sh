@@ -10,11 +10,15 @@ if [ ! -d "$WORKSPACE_DIR" ]; then
     WORKSPACE_DIR="$(pwd)"
 fi
 
-# 0. Ensure SSH server is installed and active
+# 0. Ensure SSH server and X11 framebuffers are installed and active
 if ! command -v sshd >/dev/null 2>&1; then
     echo "Installing OpenSSH server for Codespaces CLI..."
     sudo apt-get update -qq && sudo apt-get install -y -qq openssh-server 2>/dev/null || true
     sudo mkdir -p /var/run/sshd
+fi
+if ! command -v Xvfb >/dev/null 2>&1; then
+    echo "Installing Xvfb, x11vnc, websockify, and novnc..."
+    sudo apt-get update -qq && sudo apt-get install -y -qq xvfb x11vnc websockify novnc 2>/dev/null || true
 fi
 if command -v service >/dev/null 2>&1; then
     sudo service ssh start 2>/dev/null || true
@@ -97,7 +101,8 @@ sudo ln -sf "${WORKSPACE_DIR}/assets/bin/silis" /usr/bin/silis 2>/dev/null || tr
 # 7. Start Native Web CAD Server (Schematic, Waveforms & Web FPS) on Port 8765
 if [ -f "${WORKSPACE_DIR}/tools/cs_server.py" ]; then
     pkill -f "cs_server.py" 2>/dev/null || true
-    nohup /opt/silis/runtime/opt/python/bin/python3 "${WORKSPACE_DIR}/tools/cs_server.py" 8765 > /tmp/cs_cad_server.log 2>&1 &
+    export LD_LIBRARY_PATH="/opt/silis/runtime/usr/lib/x86_64-linux-gnu:/opt/silis/runtime/opt/python/lib:${LD_LIBRARY_PATH}"
+    nohup python3 "${WORKSPACE_DIR}/tools/cs_server.py" 8765 > /tmp/cs_cad_server.log 2>&1 &
     disown
     echo "Silis CAD Web Hub daemon initiated on port 8765."
 fi
