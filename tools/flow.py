@@ -235,7 +235,9 @@ def run_tapeout(project_dir):
     print(f"[Silis Flow] === Running Full Tapeout Flow (OpenROAD) ===")
     run_synth(project_dir, json_only=False)
     # Check if OpenROAD script exists
-    fp_tcl = os.path.join(REPO_ROOT, "core", "backendflow", "floorplanner", "silis_fp.tcl")
+    fp_tcl = os.path.join(REPO_ROOT, "silis", "core", "backendflow", "floorplanner", "silis_fp.tcl")
+    if not os.path.isfile(fp_tcl):
+        fp_tcl = os.path.join(REPO_ROOT, "core", "backendflow", "floorplanner", "silis_fp.tcl")
     if os.path.isfile(fp_tcl):
         print(f"[Silis Flow] Synthesizing floorplan via OpenROAD...")
         subprocess.run([OPENROAD_BIN, fp_tcl], cwd=project_dir)
