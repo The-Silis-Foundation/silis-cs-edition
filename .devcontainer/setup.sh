@@ -1,110 +1,51 @@
 #!/usr/bin/env bash
 set -e
 
-echo "================================================================="
-echo "SILIS CS EDITION: CONTAINER PROVISIONING & SETUP"
-echo "================================================================="
-
 WORKSPACE_DIR="/workspaces/silis-cs-edition"
-if [ ! -d "$WORKSPACE_DIR" ]; then
-    WORKSPACE_DIR="$(pwd)"
-fi
+[ -d "$WORKSPACE_DIR" ] || WORKSPACE_DIR="$(pwd)"
 
-# 0. Ensure SSH server and X11 framebuffers are installed and active
-if ! command -v sshd >/dev/null 2>&1; then
-    echo "Installing OpenSSH server for Codespaces CLI..."
-    sudo apt-get update -qq && sudo apt-get install -y -qq openssh-server 2>/dev/null || true
-    sudo mkdir -p /var/run/sshd
-fi
-if ! command -v Xvfb >/dev/null 2>&1; then
-    echo "Installing Xvfb, x11vnc, websockify, and novnc..."
-    sudo apt-get update -qq && sudo apt-get install -y -qq xvfb x11vnc websockify novnc 2>/dev/null || true
-fi
-if command -v service >/dev/null 2>&1; then
-    sudo service ssh start 2>/dev/null || true
-fi
+# 1. Submodules
+git -C "$WORKSPACE_DIR" submodule update --init silis 2>/dev/null || true
 
-# 1. Initialize Git Submodules (Silis core)
-echo "Initializing Silis submodules..."
-cd "$WORKSPACE_DIR"
-git submodule update --init silis 2>/dev/null || true
-
-# 2. Ensure novnc index.html link
-if [ -f "/usr/share/novnc/vnc.html" ] && [ ! -f "/usr/share/novnc/index.html" ]; then
-    sudo ln -sf /usr/share/novnc/vnc.html /usr/share/novnc/index.html
-fi
-
-# 3. Unpack Python + Qt6 Standalone Runtime
+# 2. Extract AppImage runtime into /opt/silis/runtime
 OPT_DIR="/opt/silis/runtime"
-RUNTIME_APPIMAGE="/tmp/silis-python-qt-x86_64.AppImage"
-
 if [ ! -d "$OPT_DIR" ]; then
-    sudo mkdir -p /opt/silis
-    mkdir -p "${WORKSPACE_DIR}/assets"
-
-    if [ ! -f "${WORKSPACE_DIR}/assets/silis-python-qt-x86_64.AppImage" ] || [ ! -s "${WORKSPACE_DIR}/assets/silis-python-qt-x86_64.AppImage" ]; then
-        echo "Retrieving standalone AppImage runtime into assets/..."
+    sudo mkdir -p /opt/silis "${WORKSPACE_DIR}/assets"
+    if [ ! -s "${WORKSPACE_DIR}/assets/silis-python-qt-x86_64.AppImage" ]; then
         curl -sL "https://github.com/The-Silis-Foundation/silis-cs-edition/releases/download/v1.0.0-runtime/silis-python-qt-x86_64.AppImage" \
             -o "${WORKSPACE_DIR}/assets/silis-python-qt-x86_64.AppImage"
     fi
     chmod +x "${WORKSPACE_DIR}/assets/silis-python-qt-x86_64.AppImage"
-    sudo cp "${WORKSPACE_DIR}/assets/silis-python-qt-x86_64.AppImage" "$RUNTIME_APPIMAGE"
-    sudo chmod +x "$RUNTIME_APPIMAGE"
-
-    echo "Extracting runtime into $OPT_DIR..."
-    (cd /opt/silis && sudo "$RUNTIME_APPIMAGE" --appimage-extract && sudo mv squashfs-root runtime && sudo chmod -R a+rX /opt/silis)
-    sudo rm -f "$RUNTIME_APPIMAGE"
+    (cd /opt/silis && sudo "${WORKSPACE_DIR}/assets/silis-python-qt-x86_64.AppImage" --appimage-extract && sudo mv squashfs-root runtime && sudo chmod -R a+rX /opt/silis)
 fi
 
-# 4. Configure system shared libraries and Python symlinks
-if [ -d "/opt/silis/runtime/opt/python" ]; then
-    echo "Activating /opt/silis/runtime..."
-    sudo chmod -R a+rX /opt/silis
-    sudo mkdir -p /etc/ld.so.conf.d
-    echo "/opt/silis/runtime/usr/lib/x86_64-linux-gnu" | sudo tee /etc/ld.so.conf.d/silis_runtime.conf > /dev/null
-    echo "/opt/silis/runtime/opt/python/lib" | sudo tee -a /etc/ld.so.conf.d/silis_runtime.conf > /dev/null
-    sudo ldconfig 2>/dev/null || true
-
-    sudo ln -sf /opt/silis/runtime/opt/python/bin/python3 /usr/local/bin/python3
-    sudo ln -sf /opt/silis/runtime/opt/python/bin/python3 /usr/local/bin/python
-    sudo ln -sf /opt/silis/runtime/opt/python/bin/pip3 /usr/local/bin/pip3
-    sudo ln -sf /opt/silis/runtime/opt/python/bin/pip3 /usr/local/bin/pip
-    sudo ln -sf /opt/silis/runtime/opt/python/bin/python3 /usr/bin/python3 2>/dev/null || true
-    sudo ln -sf /opt/silis/runtime/opt/python/bin/python3 /usr/bin/python 2>/dev/null || true
-    python3 -m pip install Pillow --no-warn-script-location 2>/dev/null || true
-fi
-
-# 5. Install Silis CAD Workbench VS Code Extension locally
-ACTUAL_USER="$(id -un)"
-ACTUAL_GROUP="$(id -gn)"
-for EXT_BASE in "/home/vscode/.vscode-server/extensions" "/home/vscode/.vscode-remote/extensions" "/home/codespace/.vscode-server/extensions" "/home/codespace/.vscode-remote/extensions" "${HOME}/.vscode-server/extensions" "${HOME}/.vscode-remote/extensions"; do
-    if sudo mkdir -p "$EXT_BASE" 2>/dev/null; then
-        TARGET="${EXT_BASE}/the-silis-foundation.silis-cad-workbench-1.0.0"
-        sudo rm -rf "$TARGET"
-        sudo cp -r "${WORKSPACE_DIR}/extension" "$TARGET" 2>/dev/null || true
-        sudo chown -R "${ACTUAL_USER}:${ACTUAL_GROUP}" "$EXT_BASE" 2>/dev/null || true
-    fi
-done
-
-# 6. CLI symlinks in PATH
+# 3. Environment & Symlinks (leave system /usr/bin/python3 untouched to preserve VS Code Server)
+sudo ln -sf /opt/silis/runtime/opt/python/bin/python3 /usr/local/bin/silis-python3 2>/dev/null || true
 sudo ln -sf "${WORKSPACE_DIR}/assets/bin/silis" /usr/local/bin/silis 2>/dev/null || true
-sudo ln -sf "${WORKSPACE_DIR}/assets/bin/silis" /usr/bin/silis 2>/dev/null || true
 
-{
-    echo "export PATH=\"/opt/silis/runtime/opt/python/bin:${WORKSPACE_DIR}/assets/bin:${WORKSPACE_DIR}/silis/third-party/bin:\$PATH\""
-    echo "export PYTHONPATH=\"/opt/silis/runtime/opt/python/lib/python3.12/site-packages:${WORKSPACE_DIR}:${WORKSPACE_DIR}/silis:${WORKSPACE_DIR}/silis/core:${WORKSPACE_DIR}/silis/third-party/siliconcompiler:\$PYTHONPATH\""
-    echo "export LD_LIBRARY_PATH=\"/opt/silis/runtime/usr/lib/x86_64-linux-gnu:/opt/silis/runtime/opt/python/lib:\$LD_LIBRARY_PATH\""
-    echo 'export LIBGL_ALWAYS_SOFTWARE=1'
-    echo 'export QT_QPA_PLATFORM=xcb'
-} | sudo tee /etc/profile.d/silis_env.sh > /dev/null
+cat << 'EOF' | sudo tee /etc/profile.d/silis_env.sh > /dev/null
+export PATH="/opt/silis/runtime/opt/python/bin:/workspaces/silis-cs-edition/assets/bin:$PATH"
+export PYTHONPATH="/workspaces/silis-cs-edition:/workspaces/silis-cs-edition/silis:/workspaces/silis-cs-edition/silis/core:$PYTHONPATH"
+export LD_LIBRARY_PATH="/opt/silis/runtime/usr/lib/x86_64-linux-gnu:/opt/silis/runtime/opt/python/lib:$LD_LIBRARY_PATH"
+export LIBGL_ALWAYS_SOFTWARE=1
+export QT_QPA_PLATFORM=xcb
+EOF
 
-# 7. Start Native Web CAD Server (Schematic, Waveforms & Web FPS) on Port 8765
+# 4. Install local extension with correct non-root permissions
+CODESPACE_USER="$(id -un 1000 2>/dev/null || echo codespace)"
+CODESPACE_HOME="$(getent passwd "$CODESPACE_USER" 2>/dev/null | cut -d: -f6 || echo "/home/$CODESPACE_USER")"
+if [ -d "$CODESPACE_HOME" ]; then
+    EXT_DIR="${CODESPACE_HOME}/.vscode-remote/extensions/the-silis-foundation.silis-cad-workbench-1.0.0"
+    mkdir -p "$(dirname "$EXT_DIR")"
+    rm -rf "$EXT_DIR"
+    cp -r "${WORKSPACE_DIR}/extension" "$EXT_DIR" 2>/dev/null || true
+    sudo chown -R 1000:1000 "$CODESPACE_HOME" 2>/dev/null || true
+fi
+
+# 5. Start Web CAD Server on Port 8765
 if [ -f "${WORKSPACE_DIR}/tools/cs_server.py" ]; then
     pkill -f "cs_server.py" 2>/dev/null || true
-    export LD_LIBRARY_PATH="/opt/silis/runtime/usr/lib/x86_64-linux-gnu:/opt/silis/runtime/opt/python/lib:${LD_LIBRARY_PATH}"
     nohup python3 "${WORKSPACE_DIR}/tools/cs_server.py" 8765 > /tmp/cs_cad_server.log 2>&1 &
-    disown
-    echo "Silis CAD Web Hub daemon initiated on port 8765."
 fi
 
 echo "Silis CS Edition setup completed successfully."

@@ -1,19 +1,11 @@
 {
   "name": "Silis CS Edition",
-  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-22.04",
-  "features": {
-    "ghcr.io/devcontainers/features/sshd:1": {
-      "version": "latest"
-    }
-  },
+  "image": "mcr.microsoft.com/devcontainers/universal:2",
   "forwardPorts": [8765, 6081, 6084],
-  "containerEnv": {
-    "PYTHONPATH": "/workspaces/silis-cs-edition/silis:/workspaces/silis-cs-edition/silis/core"
-  },
   "portsAttributes": {
     "8765": {
-      "label": "Silis Native CAD Web Hub (Schematic & Waveforms)",
-      "onAutoForward": "silent",
+      "label": "Silis Native CAD Web Hub (Schematic, Waveforms & Web FPS)",
+      "onAutoForward": "openBrowserOnce",
       "visibility": "public"
     },
     "6081": {
@@ -29,39 +21,12 @@
   },
   "customizations": {
     "vscode": {
-      "extensions": [
-        "ms-python.python",
-        "eirikpre.systemverilog",
-        "mshr-h.VerilogHDL",
-        "eamodio.gitlens"
-      ],
       "settings": {
         "workbench.startupEditor": "readme",
-        "markdown.preview.openMarkdownLinks": "inEditor",
-        "workbench.editor.showTabs": "multiple",
-        "workbench.editor.openSideBySideDirection": "right",
-        "workbench.panel.defaultLocation": "bottom",
-        "python.defaultInterpreterPath": "/opt/silis/runtime/opt/python/bin/python3",
-        "files.associations": {
-          "*.v": "systemverilog",
-          "*.sv": "systemverilog",
-          "*.svh": "systemverilog",
-          "*.vh": "systemverilog",
-          "*.sdc": "tcl",
-          "*.upf": "tcl",
-          "*.silisproj": "json"
-        },
-        "workbench.editorAssociations": {
-          "*.vcd": "silis.vcdViewer",
-          "*.fst": "silis.vcdViewer",
-          "structural_*.json": "silis.schematicViewer",
-          "*.synth.json": "silis.schematicViewer",
-          "*.def": "silis.defViewer",
-          "*.gds": "silis.gdsViewer"
-        }
+        "python.defaultInterpreterPath": "/opt/silis/runtime/opt/python/bin/python3"
       }
     }
   },
   "postCreateCommand": "bash .devcontainer/setup.sh",
-  "postStartCommand": "bash .devcontainer/launch_servers.sh && python3 tools/gen_readme.py || true"
+  "postStartCommand": "bash .devcontainer/launch_servers.sh || true"
 }
