@@ -10,7 +10,12 @@ if [ ! -d "$WORKSPACE_DIR" ]; then
     WORKSPACE_DIR="$(pwd)"
 fi
 
-# 0. Ensure SSH server is active
+# 0. Ensure SSH server is installed and active
+if ! command -v sshd >/dev/null 2>&1; then
+    echo "Installing OpenSSH server for Codespaces CLI..."
+    sudo apt-get update -qq && sudo apt-get install -y -qq openssh-server 2>/dev/null || true
+    sudo mkdir -p /var/run/sshd
+fi
 if command -v service >/dev/null 2>&1; then
     sudo service ssh start 2>/dev/null || true
 fi
@@ -88,5 +93,13 @@ sudo ln -sf "${WORKSPACE_DIR}/assets/bin/silis" /usr/bin/silis 2>/dev/null || tr
     echo 'export LIBGL_ALWAYS_SOFTWARE=1'
     echo 'export QT_QPA_PLATFORM=xcb'
 } | sudo tee /etc/profile.d/silis_env.sh > /dev/null
+
+# 7. Start Native Web CAD Server (Schematic, Waveforms & Web FPS) on Port 8765
+if [ -f "${WORKSPACE_DIR}/tools/cs_server.py" ]; then
+    pkill -f "cs_server.py" 2>/dev/null || true
+    nohup /opt/silis/runtime/opt/python/bin/python3 "${WORKSPACE_DIR}/tools/cs_server.py" 8765 > /tmp/cs_cad_server.log 2>&1 &
+    disown
+    echo "Silis CAD Web Hub daemon initiated on port 8765."
+fi
 
 echo "Silis CS Edition setup completed successfully."
