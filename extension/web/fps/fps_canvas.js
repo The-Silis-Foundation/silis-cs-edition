@@ -468,7 +468,15 @@ function regenerateTcl() {
 
 // IPC Action Dispatcher
 function action(name, data = {}) {
-  const payload = { command: 'fpsAction', action: name, ...data, state: { die: state.die, core: state.core, macros: state.macros, weights: state.weights } };
+  const ed = document.getElementById('live-tcl-editor');
+  const tcl = (ed && ed.value) ? ed.value : '';
+  const payload = {
+    command: 'fpsAction',
+    action: name,
+    tcl,
+    ...data,
+    state: { die: state.die, core: state.core, macros: state.macros, weights: state.weights }
+  };
   if (window.vscode) {
     window.vscode.postMessage(payload);
   } else if (window.parent && window.parent !== window) {

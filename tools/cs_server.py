@@ -749,6 +749,7 @@ class SilisCadHandler(http.server.SimpleHTTPRequestHandler):
             name = payload.get("name", "").strip()
             top_module = payload.get("top_module", "").strip() or name
             pdk = payload.get("pdk", "sky130_fd_sc_hd")
+            starter_type = payload.get("starter_type", "empty")
 
             # Validation
             if not re.match(r"^[a-zA-Z][a-zA-Z0-9_]{0,63}$", name):
@@ -1181,8 +1182,10 @@ valid
             self.end_headers()
 
     def _locate_vcd_path(self, project_dir, target_file=None):
-        if target_file and os.path.isfile(target_file) and os.path.getsize(target_file) > 0:
-            return target_file
+        if target_file:
+            cand = target_file if os.path.isabs(target_file) else os.path.join(project_dir, target_file)
+            if os.path.isfile(cand) and os.path.getsize(cand) > 0:
+                return cand
 
         candidates = [
             os.path.join(project_dir, "waveform.vcd"),
@@ -1275,7 +1278,8 @@ valid
             else:
                 read_cmds.append(f"read_verilog {vf}")
 
-        ys_script = "; ".join(read_cmds) + f"; hierarchy -auto-top; prep; write_json {out_json}"
+        hier_cmd = f"hierarchy -top {module_name}" if (module_name and module_name != "auto") else "hierarchy -auto-top"
+        ys_script = "; ".join(read_cmds) + f"; {hier_cmd}; prep; write_json {out_json}"
         try:
             subprocess.run([yosys_bin, "-q", "-p", ys_script], cwd=project_dir, timeout=30, check=True)
             if os.path.isfile(out_json):

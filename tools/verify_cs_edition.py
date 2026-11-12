@@ -148,6 +148,24 @@ def test_cs_server_endpoints():
             proc.kill()
 
 
+def test_flow_cli():
+    """Verify flow.py CLI supports --pnr, --floorplan, and --lint flags without argparse error."""
+    flow_script = os.path.join(REPO_ROOT, "tools", "flow.py")
+    res = subprocess.run([sys.executable, flow_script, "--help"], capture_output=True, text=True)
+    has_flags = ("--pnr" in res.stdout and "--floorplan" in res.stdout and "--lint" in res.stdout)
+    record_result("flow.py CLI flags (--pnr, --floorplan, --lint)", res.returncode == 0 and has_flags)
+
+
+def test_bin_launcher():
+    """Verify assets/bin/silis launcher executes successfully."""
+    bin_launcher = os.path.join(REPO_ROOT, "assets", "bin", "silis")
+    if os.path.isfile(bin_launcher) and os.access(bin_launcher, os.X_OK):
+        res = subprocess.run([bin_launcher, "--help"], capture_output=True, text=True)
+        record_result("assets/bin/silis CLI launcher", res.returncode == 0 and "Silis Headless Flow CLI" in res.stdout)
+    else:
+        record_result("assets/bin/silis CLI launcher", False, "Launcher binary missing or non-executable")
+
+
 def main():
     print("=================================================================")
     print("SILIS CS EDITION: AUTOMATED ARCHITECTURAL VERIFICATION SUITE")
@@ -157,6 +175,8 @@ def main():
     test_setup_script()
     test_extension_manifest()
     test_static_web_assets()
+    test_flow_cli()
+    test_bin_launcher()
     test_cs_server_endpoints()
 
     print("=================================================================")

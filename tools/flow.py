@@ -265,9 +265,76 @@ def run_tapeout(project_dir):
         fp_tcl = os.path.join(REPO_ROOT, "core", "backendflow", "floorplanner", "silis_fp.tcl")
     if os.path.isfile(fp_tcl):
         print(f"[Silis Flow] Synthesizing floorplan via OpenROAD...")
-        subprocess.run([OPENROAD_BIN, fp_tcl], cwd=project_dir)
+        subprocess.run([OPENROAD_BIN, "-exit", fp_tcl], cwd=project_dir)
     print(f"[Silis Flow] Tapeout flow pass complete.")
     return 0
+
+
+def _is_tool_available(bin_path):
+    if not bin_path:
+        return False
+    if os.path.isabs(bin_path):
+        return os.path.isfile(bin_path) and os.access(bin_path, os.X_OK)
+    return bool(shutil.which(bin_path))
+
+
+def run_lint(project_dir):
+    print(f"[Silis Flow] === Running Verilator RTL Lint for {os.path.basename(project_dir)} ===")
+    if not _is_tool_available(VERILATOR_BIN):
+        print(f"[Silis Flow] [WARN] Verilator executable '{VERILATOR_BIN}' not found in runtime or system PATH.")
+        return 0
+
+    v_files = []
+    for d in ["rtl", "source", "."]:
+        p = os.path.join(project_dir, d)
+        if os.path.isdir(p):
+            for f in sorted(os.listdir(p)):
+                if (f.endswith(".v") or f.endswith(".sv")) and not f.startswith("tb_"):
+                    v_files.append(os.path.join(p, f))
+
+    if not v_files:
+        print(f"[Silis Flow] [ERR] No RTL source files found to lint in {project_dir}")
+        return 1
+
+    cmd = [VERILATOR_BIN, "--lint-only", "-sv", "-Wall", "-Wno-fatal"]
+    for inc in [os.path.join(project_dir, "rtl"), os.path.join(project_dir, "source"), project_dir]:
+        if os.path.isdir(inc):
+            cmd.append(f"-I{inc}")
+    cmd.extend(v_files)
+
+    print(f"[Silis Flow] Executing: {' '.join(cmd)}")
+    try:
+        res = subprocess.run(cmd, cwd=project_dir)
+        if res.returncode == 0:
+            print(f"[Silis Flow] [OK] RTL Lint passed with 0 errors.")
+        else:
+            print(f"[Silis Flow] [ERR] RTL Lint failed with exit code {res.returncode}")
+        return res.returncode
+    except FileNotFoundError:
+        print(f"[Silis Flow] [WARN] Verilator executable not found.")
+        return 0
+
+
+def run_floorplan(project_dir):
+    print(f"[Silis Flow] === Synthesizing Floorplan via OpenROAD for {os.path.basename(project_dir)} ===")
+    tcl_candidates = [
+        os.path.join(project_dir, "run_floorplan.tcl"),
+        os.path.join(project_dir, "floorplan.tcl"),
+        os.path.join(REPO_ROOT, "silis", "core", "backendflow", "floorplanner", "silis_fp.tcl"),
+    ]
+    tcl_file = None
+    for cand in tcl_candidates:
+        if os.path.isfile(cand) and os.path.getsize(cand) > 0:
+            tcl_file = cand
+            break
+
+    if not tcl_file:
+        print(f"[Silis Flow] [ERR] No floorplan TCL script found in {project_dir}")
+        return 1
+
+    print(f"[Silis Flow] Executing OpenROAD with {tcl_file}...")
+    res = subprocess.run([OPENROAD_BIN, "-exit", tcl_file], cwd=project_dir)
+    return res.returncode
 
 
 def run_openroad_gui(project_dir):
@@ -365,7 +432,9 @@ def main():
     parser = argparse.ArgumentParser(description="Silis Headless Flow CLI")
     parser.add_argument("--sim", "--run-sim", dest="sim", action="store_true", help="Run RTL compile and simulation")
     parser.add_argument("--synth", "--run-synth", dest="synth", action="store_true", help="Run Yosys synthesis")
-    parser.add_argument("--tapeout", "--run-all", dest="tapeout", action="store_true", help="Run full tapeout PnR")
+    parser.add_argument("--tapeout", "--run-all", "--pnr", dest="tapeout", action="store_true", help="Run full tapeout PnR")
+    parser.add_argument("--floorplan", dest="floorplan", action="store_true", help="Run floorplanning script via OpenROAD")
+    parser.add_argument("--lint", dest="lint", action="store_true", help="Run Verilator RTL lint")
     parser.add_argument("--view-openroad", "--openroad-gui", dest="view_openroad", action="store_true", help="Launch native OpenROAD GUI with project DEF/LEF")
     parser.add_argument("--project", type=str, default="", help="Project path or name")
 
@@ -378,6 +447,10 @@ def main():
         sys.exit(run_synth(proj_dir))
     elif args.tapeout:
         sys.exit(run_tapeout(proj_dir))
+    elif args.floorplan:
+        sys.exit(run_floorplan(proj_dir))
+    elif args.lint:
+        sys.exit(run_lint(proj_dir))
     elif args.view_openroad:
         sys.exit(run_openroad_gui(proj_dir))
     else:

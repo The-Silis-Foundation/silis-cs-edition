@@ -4,7 +4,7 @@
 # ==============================================================================
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 # Resolve runtime python
 if [ -x "/opt/silis/runtime/opt/python/bin/python3" ]; then
@@ -15,8 +15,13 @@ else
     PYTHON_EXEC="python3"
 fi
 
-export PYTHONPATH="${SCRIPT_DIR}:${SCRIPT_DIR}/core:${SCRIPT_DIR}/third-party/siliconcompiler:${PYTHONPATH:-}"
-export PATH="${SCRIPT_DIR}/bin:${SCRIPT_DIR}/third-party/bin:${PATH}"
+export PYTHONPATH="${SCRIPT_DIR}:${SCRIPT_DIR}/silis:${SCRIPT_DIR}/silis/core:${SCRIPT_DIR}/core:${PYTHONPATH:-}"
+export PATH="${SCRIPT_DIR}/assets/bin:${SCRIPT_DIR}/silis/third-party/bin:${SCRIPT_DIR}/third-party/bin:${PATH}"
 export LIBGL_ALWAYS_SOFTWARE=1
 
-exec "$PYTHON_EXEC" "${SCRIPT_DIR}/silis.py" "$@"
+if [ "$1" = "--gui" ] && [ -f "${SCRIPT_DIR}/silis/silis.py" ]; then
+    shift
+    exec "$PYTHON_EXEC" "${SCRIPT_DIR}/silis/silis.py" "$@"
+else
+    exec "$PYTHON_EXEC" "${SCRIPT_DIR}/tools/flow.py" "$@"
+fi
