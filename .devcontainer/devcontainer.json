@@ -58,6 +58,5 @@
     }
   },
   "postCreateCommand": "bash .devcontainer/setup.sh",
-  "postStartCommand": "bash .devcontainer/launch_servers.sh && python3 tools/gen_readme.py || true",
-  "remoteUser": "vscode"
+  "postStartCommand": "bash .devcontainer/launch_servers.sh && python3 tools/gen_readme.py || true"
 }

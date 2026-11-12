@@ -25,16 +25,18 @@ OPT_DIR="/opt/silis/runtime"
 RUNTIME_APPIMAGE="/tmp/silis-python-qt-x86_64.AppImage"
 
 if [ ! -d "$OPT_DIR" ]; then
-    echo "Downloading 270MB Standalone Python+Qt AppImage from release..."
     sudo mkdir -p /opt/silis
-    if [ -f "${WORKSPACE_DIR}/dist/silis-python-qt-x86_64.AppImage" ] && [ -s "${WORKSPACE_DIR}/dist/silis-python-qt-x86_64.AppImage" ]; then
-        sudo cp "${WORKSPACE_DIR}/dist/silis-python-qt-x86_64.AppImage" "$RUNTIME_APPIMAGE"
-    else
-        sudo wget -q \
-            "https://github.com/The-Silis-Foundation/silis-cs-edition/releases/download/v1.0.0-runtime/silis-python-qt-x86_64.AppImage" \
-            -O "$RUNTIME_APPIMAGE"
+    mkdir -p "${WORKSPACE_DIR}/assets"
+
+    if [ ! -f "${WORKSPACE_DIR}/assets/silis-python-qt-x86_64.AppImage" ] || [ ! -s "${WORKSPACE_DIR}/assets/silis-python-qt-x86_64.AppImage" ]; then
+        echo "Retrieving standalone AppImage runtime into assets/..."
+        curl -sL "https://github.com/The-Silis-Foundation/silis-cs-edition/releases/download/v1.0.0-runtime/silis-python-qt-x86_64.AppImage" \
+            -o "${WORKSPACE_DIR}/assets/silis-python-qt-x86_64.AppImage"
     fi
+    chmod +x "${WORKSPACE_DIR}/assets/silis-python-qt-x86_64.AppImage"
+    sudo cp "${WORKSPACE_DIR}/assets/silis-python-qt-x86_64.AppImage" "$RUNTIME_APPIMAGE"
     sudo chmod +x "$RUNTIME_APPIMAGE"
+
     echo "Extracting runtime into $OPT_DIR..."
     (cd /opt/silis && sudo "$RUNTIME_APPIMAGE" --appimage-extract && sudo mv squashfs-root runtime && sudo chmod -R a+rX /opt/silis)
     sudo rm -f "$RUNTIME_APPIMAGE"
@@ -59,12 +61,14 @@ if [ -d "/opt/silis/runtime/opt/python" ]; then
 fi
 
 # 5. Install Silis CAD Workbench VS Code Extension locally
-for EXT_BASE in "/home/vscode/.vscode-server/extensions" "/home/vscode/.vscode-remote/extensions" "${HOME}/.vscode-server/extensions" "${HOME}/.vscode-remote/extensions"; do
+ACTUAL_USER="$(id -un)"
+ACTUAL_GROUP="$(id -gn)"
+for EXT_BASE in "/home/vscode/.vscode-server/extensions" "/home/vscode/.vscode-remote/extensions" "/home/codespace/.vscode-server/extensions" "/home/codespace/.vscode-remote/extensions" "${HOME}/.vscode-server/extensions" "${HOME}/.vscode-remote/extensions"; do
     if sudo mkdir -p "$EXT_BASE" 2>/dev/null; then
         TARGET="${EXT_BASE}/the-silis-foundation.silis-cad-workbench-1.0.0"
         sudo rm -rf "$TARGET"
         sudo cp -r "${WORKSPACE_DIR}/extension" "$TARGET" 2>/dev/null || true
-        sudo chown -R vscode:vscode "$EXT_BASE" 2>/dev/null || true
+        sudo chown -R "${ACTUAL_USER}:${ACTUAL_GROUP}" "$EXT_BASE" 2>/dev/null || true
     fi
 done
 

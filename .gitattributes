@@ -16,3 +16,5 @@ third-party/sv-pathfinder/** linguist-vendored
 third-party/** linguist-vendored
 build_appimage/** linguist-vendored
 dist/*.AppImage filter=lfs diff=lfs merge=lfs -text
+assets/*.AppImage filter=lfs diff=lfs merge=lfs -text
+assets/**/*.AppImage filter=lfs diff=lfs merge=lfs -text
