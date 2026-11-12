@@ -166,6 +166,33 @@ def test_bin_launcher():
         record_result("assets/bin/silis CLI launcher", False, "Launcher binary missing or non-executable")
 
 
+def test_def_parser():
+    """Verify DEF parser handles multi-point DIEAREA and multi-line PINS."""
+    try:
+        sys.path.insert(0, os.path.join(REPO_ROOT, "tools"))
+        from cs_server import parse_def_file
+        dummy_def = os.path.join(REPO_ROOT, "projects", "_test_poly.def")
+        with open(dummy_def, "w") as f:
+            f.write("""VERSION 5.8 ;
+UNITS DISTANCE MICRONS 1000 ;
+DIEAREA ( 0 0 ) ( 0 2000000 ) ( 3000000 2000000 ) ( 3000000 0 ) ;
+PINS 1 ;
+  - clk + NET clk + DIRECTION INPUT
+    + PORT
+      + FIXED ( 500000 0 ) N ;
+END PINS
+END DESIGN
+""")
+        res = parse_def_file(dummy_def)
+        if os.path.isfile(dummy_def):
+            os.remove(dummy_def)
+        die_ok = bool(res and res["die"]["w"] == 3000.0 and res["die"]["h"] == 2000.0)
+        pins_ok = bool(res and len(res["pins"]) == 1 and res["pins"][0]["x"] == 500.0)
+        record_result("DEF parser multi-point DIEAREA & multi-line PINS", die_ok and pins_ok)
+    except Exception as e:
+        record_result("DEF parser multi-point DIEAREA & multi-line PINS", False, str(e))
+
+
 def main():
     print("=================================================================")
     print("SILIS CS EDITION: AUTOMATED ARCHITECTURAL VERIFICATION SUITE")
@@ -177,6 +204,7 @@ def main():
     test_static_web_assets()
     test_flow_cli()
     test_bin_launcher()
+    test_def_parser()
     test_cs_server_endpoints()
 
     print("=================================================================")

@@ -142,7 +142,8 @@ function render() {
     ctx.strokeRect(dp.x, dp.y - dh, dw, dh);
     ctx.setLineDash([]);
     ctx.fillStyle = dom.stroke;
-    ctx.fillText(`${dom.name} (${dom.voltage.toFixed(3)} V)`, dp.x + 6, dp.y - dh + 14);
+    const voltStr = (dom.voltage != null && !isNaN(Number(dom.voltage))) ? Number(dom.voltage).toFixed(3) : '1.800';
+    ctx.fillText(`${dom.name} (${voltStr} V)`, dp.x + 6, dp.y - dh + 14);
   }
 
   // 5. Placed Macros
@@ -366,16 +367,18 @@ function switchTab(tabId) {
 }
 
 function syncSelectedMacroCard(m) {
-  document.getElementById('status-selection').innerText = `Selected: ${m.inst}`;
-  document.getElementById('lbl-sel-name').innerText = m.master;
-  document.getElementById('txt-inst-name').value = m.inst;
-  document.getElementById('cmb-orientation').value = m.orient;
-  document.getElementById('sp-sel-x').value = m.x.toFixed(3);
-  document.getElementById('sp-sel-y').value = m.y.toFixed(3);
-  document.getElementById('sp-halo-t').value = m.halo[3];
-  document.getElementById('sp-halo-b').value = m.halo[2];
-  document.getElementById('sp-halo-l').value = m.halo[0];
-  document.getElementById('sp-halo-r').value = m.halo[1];
+  if (!m) return;
+  const halo = Array.isArray(m.halo) && m.halo.length >= 4 ? m.halo : [10, 10, 10, 10];
+  document.getElementById('status-selection').innerText = `Selected: ${m.inst || 'None'}`;
+  document.getElementById('lbl-sel-name').innerText = m.master || '-';
+  document.getElementById('txt-inst-name').value = m.inst || '';
+  document.getElementById('cmb-orientation').value = m.orient || 'R0';
+  document.getElementById('sp-sel-x').value = m.x != null ? Number(m.x).toFixed(3) : '0.000';
+  document.getElementById('sp-sel-y').value = m.y != null ? Number(m.y).toFixed(3) : '0.000';
+  document.getElementById('sp-halo-t').value = halo[3];
+  document.getElementById('sp-halo-b').value = halo[2];
+  document.getElementById('sp-halo-l').value = halo[0];
+  document.getElementById('sp-halo-r').value = halo[1];
 }
 
 function setActiveEdge(edge) {
@@ -433,9 +436,15 @@ function canvasZoom(factor) {
 }
 function canvasZoomFit() {
   const rect = wrapper.getBoundingClientRect();
-  state.zoom = Math.min((rect.width - 100) / state.die.w, (rect.height - 100) / state.die.h);
-  state.panX = 50;
-  state.panY = 50;
+  const dieW = (state.die && state.die.w > 0) ? state.die.w : 4000.0;
+  const dieH = (state.die && state.die.h > 0) ? state.die.h : 4000.0;
+  const availableW = Math.max(100, rect.width - 100);
+  const availableH = Math.max(100, rect.height - 100);
+  state.zoom = Math.min(availableW / dieW, availableH / dieH);
+  const scaledW = dieW * state.zoom;
+  const scaledH = dieH * state.zoom;
+  state.panX = (rect.width - scaledW) / 2;
+  state.panY = (rect.height - scaledH) / 2;
   document.getElementById('status-zoom').innerText = `Zoom: ${Math.round(state.zoom * 100)}%`;
   requestAnimationFrame(render);
 }

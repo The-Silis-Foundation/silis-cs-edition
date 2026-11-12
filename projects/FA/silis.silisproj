@@ -1,6 +1,6 @@
 {
     "project_name": "FA",
-    "top_module": "FA",
+    "top_module": "full_adder",
     "pdk": "sky130_fd_sc_hd",
     "macros": [],
     "auto_sdc": true,

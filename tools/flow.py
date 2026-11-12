@@ -18,6 +18,7 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 def _resolve_binary(name):
     cands = [
         os.path.join(REPO_ROOT, "silis", "third-party", "bin", name),
+        os.path.join(REPO_ROOT, "..", "silis", "third-party", "bin", name),
         os.path.join(REPO_ROOT, "third-party", "bin", name),
         os.path.join("/opt/silis/runtime", "bin", name),
         shutil.which(name) or "",
@@ -34,6 +35,22 @@ OPENROAD_BIN = _resolve_binary("openroad")
 VERILATOR_ROOT = os.path.join(REPO_ROOT, "silis", "third-party", "share", "verilator")
 if not os.path.isdir(VERILATOR_ROOT):
     VERILATOR_ROOT = os.path.join(REPO_ROOT, "third-party", "share", "verilator")
+
+
+def _get_flow_env():
+    env = os.environ.copy()
+    extra_paths = [
+        os.path.join(REPO_ROOT, "silis", "third-party", "bin"),
+        os.path.join(REPO_ROOT, "..", "silis", "third-party", "bin"),
+        os.path.join(REPO_ROOT, "third-party", "bin"),
+        os.path.join(REPO_ROOT, "assets", "bin"),
+        "/opt/silis/runtime/bin",
+    ]
+    cur_path = env.get("PATH", "")
+    env["PATH"] = os.pathsep.join([p for p in extra_paths if os.path.isdir(p)] + [cur_path])
+    if os.path.isdir(VERILATOR_ROOT):
+        env["VERILATOR_ROOT"] = VERILATOR_ROOT
+    return env
 
 
 def get_project_dir(proj_arg):
@@ -128,6 +145,11 @@ def run_sim(project_dir):
     print(f"[Silis Flow] Detected Simulation Top: {sim_top}")
     print(f"[Silis Flow] Compiling {len(sources)} RTL sources + {len(tb_files)} testbench files...")
 
+    # Check Verilator availability
+    if not _is_tool_available(VERILATOR_BIN):
+        print(f"[Silis Flow] [ERR] Verilator executable '{VERILATOR_BIN}' not found in runtime or system PATH. Cannot compile RTL simulation.")
+        return 1
+
     # Inject VCD waveform dumping if not present
     vcd_out = os.path.join(project_dir, "waveform.vcd")
     has_dump = False
@@ -142,7 +164,7 @@ def run_sim(project_dir):
 
     auto_dump_file = None
     if not has_dump and sim_top:
-        # Create lightweight VCD dump companion
+        # Create lightweight VCD dump companion bound to simulation top
         os.makedirs(os.path.join(project_dir, "build"), exist_ok=True)
         auto_dump_file = os.path.join(project_dir, "build", "silis_vcd_dump.sv")
         with open(auto_dump_file, "w", encoding="utf-8") as f:
@@ -153,6 +175,7 @@ module _silis_vcd_tracer;
         $dumpvars(0, {sim_top});
     end
 endmodule
+bind {sim_top} _silis_vcd_tracer _silis_auto_vcd_inst();
 """)
 
     compile_files = list(sources) + list(tb_files)
@@ -181,16 +204,24 @@ endmodule
     ] + inc_args + compile_files
 
     print(f"[Silis Flow] Executing Verilator native compilation...")
-    res = subprocess.run(v_cmd, cwd=project_dir, env=env)
-    if res.returncode != 0:
-        print(f"[Silis Flow] [ERR] Verilator compilation failed with exit code {res.returncode}")
-        return res.returncode
+    try:
+        res = subprocess.run(v_cmd, cwd=project_dir, env=env)
+        if res.returncode != 0:
+            print(f"[Silis Flow] [ERR] Verilator compilation failed with exit code {res.returncode}")
+            return res.returncode
+    except FileNotFoundError:
+        print(f"[Silis Flow] [ERR] Verilator executable '{VERILATOR_BIN}' not found.")
+        return 1
 
     # Run binary
     print(f"[Silis Flow] Running simulation binary: {out_bin}...")
-    sim_proc = subprocess.run([out_bin], cwd=project_dir, env=env)
-    if sim_proc.returncode != 0:
-        print(f"[Silis Flow] [WARN] Simulation exited with code {sim_proc.returncode}")
+    try:
+        sim_proc = subprocess.run([out_bin], cwd=project_dir, env=env)
+        if sim_proc.returncode != 0:
+            print(f"[Silis Flow] [WARN] Simulation exited with code {sim_proc.returncode}")
+    except FileNotFoundError:
+        print(f"[Silis Flow] [ERR] Compiled simulation binary '{out_bin}' not found.")
+        return 1
 
     if os.path.isfile(vcd_out) and os.path.getsize(vcd_out) > 0:
         print(f"[Silis Flow] [OK] Waveform generated successfully: {vcd_out} ({os.path.getsize(vcd_out)} bytes)")
@@ -209,6 +240,10 @@ endmodule
 
 def run_synth(project_dir, json_only=False):
     print(f"[Silis Flow] === Running Synthesis for {os.path.basename(project_dir)} ===")
+    if not _is_tool_available(YOSYS_BIN):
+        print(f"[Silis Flow] [ERR] Yosys executable '{YOSYS_BIN}' not found in runtime or system PATH.")
+        return 1
+
     os.makedirs(os.path.join(project_dir, "build"), exist_ok=True)
     out_json = os.path.join(project_dir, "build", "structural_synth.json")
     out_v = os.path.join(project_dir, "build", "synth.v")
@@ -225,6 +260,16 @@ def run_synth(project_dir, json_only=False):
         print("[Silis Flow] [ERR] No synthesizable RTL files found.")
         return 1
 
+    # Discover declared modules across source files
+    declared_modules = []
+    for s in sources:
+        try:
+            with open(s, "r", encoding="utf-8", errors="ignore") as fp:
+                for m in re.finditer(r'\bmodule\s+([a-zA-Z0-9_]+)', fp.read()):
+                    declared_modules.append(m.group(1))
+        except Exception:
+            pass
+
     # Discover top module from silisproj or fallback to auto-top
     top_mod = None
     for sp_name in ["silis.silisproj", f"{os.path.basename(project_dir)}.silisproj"]:
@@ -238,22 +283,35 @@ def run_synth(project_dir, json_only=False):
             except Exception:
                 pass
 
+    if top_mod and top_mod in declared_modules:
+        active_top = top_mod
+    elif declared_modules:
+        active_top = declared_modules[0]
+        if top_mod:
+            print(f"[Silis Flow] [WARN] Declared top '{top_mod}' not found in sources. Auto-selecting '{active_top}'.")
+    else:
+        active_top = None
+
     read_cmds = [f"read_verilog -sv {s}" if s.endswith(".sv") else f"read_verilog {s}" for s in sources]
-    hier_cmd = f"hierarchy -top {top_mod}" if top_mod else "hierarchy -auto-top"
-    synth_cmd = f"synth -top {top_mod}" if top_mod else "synth -auto-top"
+    hier_cmd = f"hierarchy -top {active_top}" if active_top else "hierarchy -auto-top"
+    synth_cmd = f"synth -top {active_top}" if active_top else "synth -auto-top"
     script = "; ".join(read_cmds) + f"; {hier_cmd}; prep; write_json {out_json}"
     if not json_only:
         script += f"; {synth_cmd}; write_verilog {out_v}"
 
     cmd = [YOSYS_BIN, "-q", "-p", script]
-    res = subprocess.run(cmd, cwd=project_dir)
-    if res.returncode == 0:
-        print(f"[Silis Flow] [OK] Schematic Netlist generated: {out_json}")
-        if not json_only:
-            print(f"[Silis Flow] [OK] Gate-level netlist: {out_v}")
-    else:
-        print(f"[Silis Flow] [ERR] Yosys synthesis failed.")
-    return res.returncode
+    try:
+        res = subprocess.run(cmd, cwd=project_dir, env=_get_flow_env())
+        if res.returncode == 0:
+            print(f"[Silis Flow] [OK] Schematic Netlist generated: {out_json}")
+            if not json_only:
+                print(f"[Silis Flow] [OK] Gate-level netlist: {out_v}")
+        else:
+            print(f"[Silis Flow] [ERR] Yosys synthesis failed.")
+        return res.returncode
+    except FileNotFoundError:
+        print(f"[Silis Flow] [ERR] Yosys executable '{YOSYS_BIN}' not found.")
+        return 1
 
 
 def run_tapeout(project_dir):
@@ -339,6 +397,9 @@ def run_floorplan(project_dir):
 
 def run_openroad_gui(project_dir):
     print(f"[Silis Flow] === Launching OpenROAD Native GUI for {os.path.basename(project_dir)} ===")
+    if not _is_tool_available(OPENROAD_BIN):
+        print(f"[Silis Flow] [ERR] OpenROAD executable '{OPENROAD_BIN}' not found in runtime or system PATH.")
+        return 1
     
     # 1. Locate DEF or ODB file
     def_candidates = [
@@ -417,14 +478,19 @@ def run_openroad_gui(project_dir):
         fp.write("\n".join(lines) + "\n")
 
     print(f"[Silis Flow] Generated OpenROAD loader: {loader_script}")
-    env = os.environ.copy()
-    if "DISPLAY" not in env:
+    env = _get_flow_env()
+    if "DISPLAY" not in env and "WAYLAND_DISPLAY" not in env:
+        print("[Silis Flow] [WARN] No active DISPLAY or WAYLAND_DISPLAY detected. Falling back to DISPLAY=:1.")
         env["DISPLAY"] = ":1"
 
     cmd = [OPENROAD_BIN, "-gui", loader_script]
     print(f"[Silis Flow] Executing: {' '.join(cmd)}")
-    proc = subprocess.Popen(cmd, cwd=os.path.dirname(def_file), env=env)
-    print(f"[Silis Flow] [OK] OpenROAD GUI launched (PID: {proc.pid})")
+    try:
+        proc = subprocess.Popen(cmd, cwd=os.path.dirname(def_file), env=env)
+        print(f"[Silis Flow] [OK] OpenROAD GUI launched (PID: {proc.pid})")
+    except Exception as e:
+        print(f"[Silis Flow] [ERR] Failed to launch OpenROAD GUI: {e}")
+        return 1
     return 0
 
 

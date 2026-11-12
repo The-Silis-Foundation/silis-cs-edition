@@ -3,18 +3,8 @@
 module chip_top(clk_pad, rst_n_pad, a_pad, b_pad, op_pad, res_pad, zero_pad, status_leds);
   wire _00_;
   wire _01_;
-  wire _02_;
-  wire _03_;
-  wire _04_;
-  wire _05_;
-  wire _06_;
-  wire _07_;
-  wire _08_;
-  wire _09_;
-  wire _10_;
-  wire _11_;
-  wire [3:0] _12_;
-  wire [3:0] _13_;
+  wire [3:0] _02_;
+  wire [3:0] _03_;
   input a_pad;
   wire a_pad;
   wire alu_res;
@@ -23,129 +13,65 @@ module chip_top(clk_pad, rst_n_pad, a_pad, b_pad, op_pad, res_pad, zero_pad, sta
   wire b_pad;
   input clk_pad;
   wire clk_pad;
-  wire [3:0] counter;
+  reg [3:0] counter;
   input op_pad;
   wire op_pad;
-  wire reg_a;
-  wire reg_b;
-  wire reg_op;
+  reg reg_a;
+  reg reg_b;
+  reg reg_op;
   output res_pad;
-  wire res_pad;
+  reg res_pad;
   input rst_n_pad;
   wire rst_n_pad;
   output [3:0] status_leds;
-  wire [3:0] status_leds;
+  reg [3:0] status_leds;
   output zero_pad;
-  wire zero_pad;
-  sky130_fd_sc_hd__clkinv_1 _14_ (
-    .A(_06_),
-    .Y(_02_)
-  );
-  sky130_fd_sc_hd__xor2_1 _15_ (
-    .A(_07_),
-    .B(_06_),
-    .X(_03_)
-  );
-  sky130_fd_sc_hd__nand3_1 _16_ (
-    .A(_07_),
-    .B(_06_),
-    .C(_08_),
-    .Y(_10_)
-  );
-  sky130_fd_sc_hd__a21oi_1 _17_ (
-    .A1(_07_),
-    .A2(_06_),
-    .B1(_08_),
-    .Y(_11_)
-  );
-  sky130_fd_sc_hd__lpflow_isobufsrc_1 _18_ (
-    .A(_10_),
-    .SLEEP(_11_),
-    .X(_04_)
-  );
-  sky130_fd_sc_hd__xnor2_1 _19_ (
-    .A(_09_),
-    .B(_10_),
-    .Y(_05_)
-  );
-  sky130_fd_sc_hd__dfrtp_1 _20_ (
-    .CLK(clk_pad),
-    .D(counter[2]),
-    .Q(status_leds[2]),
-    .RESET_B(rst_n_pad)
-  );
-  sky130_fd_sc_hd__dfrtp_1 _21_ (
-    .CLK(clk_pad),
-    .D(counter[3]),
-    .Q(status_leds[3]),
-    .RESET_B(rst_n_pad)
-  );
-  sky130_fd_sc_hd__dfrtp_1 _22_ (
-    .CLK(clk_pad),
-    .D(a_pad),
-    .Q(reg_a),
-    .RESET_B(rst_n_pad)
-  );
-  sky130_fd_sc_hd__dfrtp_1 _23_ (
-    .CLK(clk_pad),
-    .D(b_pad),
-    .Q(reg_b),
-    .RESET_B(rst_n_pad)
-  );
-  sky130_fd_sc_hd__dfrtp_1 _24_ (
-    .CLK(clk_pad),
-    .D(op_pad),
-    .Q(reg_op),
-    .RESET_B(rst_n_pad)
-  );
-  sky130_fd_sc_hd__dfrtp_1 _25_ (
-    .CLK(clk_pad),
-    .D(_12_[0]),
-    .Q(counter[0]),
-    .RESET_B(rst_n_pad)
-  );
-  sky130_fd_sc_hd__dfrtp_1 _26_ (
-    .CLK(clk_pad),
-    .D(_13_[1]),
-    .Q(counter[1]),
-    .RESET_B(rst_n_pad)
-  );
-  sky130_fd_sc_hd__dfrtp_1 _27_ (
-    .CLK(clk_pad),
-    .D(_13_[2]),
-    .Q(counter[2]),
-    .RESET_B(rst_n_pad)
-  );
-  sky130_fd_sc_hd__dfrtp_1 _28_ (
-    .CLK(clk_pad),
-    .D(_13_[3]),
-    .Q(counter[3]),
-    .RESET_B(rst_n_pad)
-  );
-  sky130_fd_sc_hd__dfrtp_1 _29_ (
-    .CLK(clk_pad),
-    .D(alu_res),
-    .Q(res_pad),
-    .RESET_B(rst_n_pad)
-  );
-  sky130_fd_sc_hd__dfrtp_1 _30_ (
-    .CLK(clk_pad),
-    .D(alu_zero),
-    .Q(zero_pad),
-    .RESET_B(rst_n_pad)
-  );
-  sky130_fd_sc_hd__dfrtp_1 _31_ (
-    .CLK(clk_pad),
-    .D(counter[0]),
-    .Q(status_leds[0]),
-    .RESET_B(rst_n_pad)
-  );
-  sky130_fd_sc_hd__dfrtp_1 _32_ (
-    .CLK(clk_pad),
-    .D(counter[1]),
-    .Q(status_leds[1]),
-    .RESET_B(rst_n_pad)
-  );
+  reg zero_pad;
+  assign _02_[0] = ~counter[0];
+  assign _03_[1] = counter[1] ^ counter[0];
+  assign _00_ = ~(counter[1] & counter[0]);
+  assign _03_[2] = ~(_00_ ^ counter[2]);
+  assign _01_ = counter[2] & ~(_00_);
+  assign _03_[3] = _01_ ^ counter[3];
+  always @(posedge clk_pad, negedge rst_n_pad)
+    if (!rst_n_pad) status_leds[2] <= 1'h0;
+    else status_leds[2] <= counter[2];
+  always @(posedge clk_pad, negedge rst_n_pad)
+    if (!rst_n_pad) status_leds[3] <= 1'h0;
+    else status_leds[3] <= counter[3];
+  always @(posedge clk_pad, negedge rst_n_pad)
+    if (!rst_n_pad) reg_a <= 1'h0;
+    else reg_a <= a_pad;
+  always @(posedge clk_pad, negedge rst_n_pad)
+    if (!rst_n_pad) reg_b <= 1'h0;
+    else reg_b <= b_pad;
+  always @(posedge clk_pad, negedge rst_n_pad)
+    if (!rst_n_pad) reg_op <= 1'h0;
+    else reg_op <= op_pad;
+  always @(posedge clk_pad, negedge rst_n_pad)
+    if (!rst_n_pad) counter[0] <= 1'h0;
+    else counter[0] <= _02_[0];
+  always @(posedge clk_pad, negedge rst_n_pad)
+    if (!rst_n_pad) counter[1] <= 1'h0;
+    else counter[1] <= _03_[1];
+  always @(posedge clk_pad, negedge rst_n_pad)
+    if (!rst_n_pad) counter[2] <= 1'h0;
+    else counter[2] <= _03_[2];
+  always @(posedge clk_pad, negedge rst_n_pad)
+    if (!rst_n_pad) counter[3] <= 1'h0;
+    else counter[3] <= _03_[3];
+  always @(posedge clk_pad, negedge rst_n_pad)
+    if (!rst_n_pad) res_pad <= 1'h0;
+    else res_pad <= alu_res;
+  always @(posedge clk_pad, negedge rst_n_pad)
+    if (!rst_n_pad) zero_pad <= 1'h0;
+    else zero_pad <= alu_zero;
+  always @(posedge clk_pad, negedge rst_n_pad)
+    if (!rst_n_pad) status_leds[0] <= 1'h0;
+    else status_leds[0] <= counter[0];
+  always @(posedge clk_pad, negedge rst_n_pad)
+    if (!rst_n_pad) status_leds[1] <= 1'h0;
+    else status_leds[1] <= counter[1];
   simple_alu u_alu_core (
     .a_in(reg_a),
     .b_in(reg_b),
@@ -155,14 +81,6 @@ module chip_top(clk_pad, rst_n_pad, a_pad, b_pad, op_pad, res_pad, zero_pad, sta
     .res_out(alu_res),
     .rst_n(rst_n_pad)
   );
-  assign _12_[3:1] = counter[3:1];
-  assign _13_[0] = _12_[0];
-  assign _07_ = counter[1];
-  assign _06_ = counter[0];
-  assign _13_[1] = _03_;
-  assign _08_ = counter[2];
-  assign _13_[2] = _04_;
-  assign _09_ = counter[3];
-  assign _13_[3] = _05_;
-  assign _12_[0] = _02_;
+  assign _02_[3:1] = counter[3:1];
+  assign _03_[0] = _02_[0];
 endmodule

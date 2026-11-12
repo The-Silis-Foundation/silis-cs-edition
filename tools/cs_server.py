@@ -40,6 +40,7 @@ def resolve_tool_bin(name):
     """Resolves an EDA tool binary across submodule, runtime, and system PATH."""
     cands = [
         os.path.join(REPO_ROOT, "silis", "third-party", "bin", name),
+        os.path.join(REPO_ROOT, "..", "silis", "third-party", "bin", name),
         os.path.join(REPO_ROOT, "third-party", "bin", name),
         os.path.join("/opt/silis/runtime", "bin", name),
         os.path.join(REPO_ROOT, "assets", "bin", name),
@@ -126,76 +127,87 @@ def parse_def_file(def_path):
                     pass
 
         elif line_s.startswith("DIEAREA"):
-            coords = re.findall(r"[\d\.\-]+", line_s)
-            if len(coords) >= 4:
-                x1, y1, x2, y2 = [float(c) / units for c in coords[:4]]
+            nums = [float(c) / units for c in re.findall(r"[\d\.\-]+", line_s)]
+            if len(nums) >= 4 and len(nums) % 2 == 0:
+                xs = nums[0::2]
+                ys = nums[1::2]
+                min_x, max_x = min(xs), max(xs)
+                min_y, max_y = min(ys), max(ys)
                 die = {
-                    "x1": round(min(x1, x2), 3),
-                    "y1": round(min(y1, y2), 3),
-                    "x2": round(max(x1, x2), 3),
-                    "y2": round(max(y1, y2), 3),
-                    "w": round(abs(x2 - x1), 3),
-                    "h": round(abs(y2 - y1), 3),
+                    "x1": round(min_x, 3),
+                    "y1": round(min_y, 3),
+                    "x2": round(max_x, 3),
+                    "y2": round(max_y, 3),
+                    "w": round(max(max_x - min_x, 1.0), 3),
+                    "h": round(max(max_y - min_y, 1.0), 3),
                 }
 
         elif line_s.startswith("COMPONENTS"):
             in_components = True
+            comp_stmt = ""
             continue
         elif line_s.startswith("END COMPONENTS"):
             in_components = False
             continue
 
-        elif in_components and line_s.startswith("-"):
-            parts = line_s.split()
-            if len(parts) >= 3:
-                inst_name = parts[1]
-                cell_type = parts[2]
-                orient = "R0"
-                x, y = 0.0, 0.0
-                coords = re.findall(r"\(\s*([\d\.\-]+)\s+([\d\.\-]+)\s*\)", line_s)
-                if coords:
-                    try:
-                        x = round(float(coords[0][0]) / units, 3)
-                        y = round(float(coords[0][1]) / units, 3)
-                    except ValueError:
-                        pass
-                m_orient = re.search(r"\)\s+([N|S|W|E|FN|FS|FW|FE|R0|R90|R180|R270|MY|MX]+)", line_s)
-                if m_orient:
-                    orient = m_orient.group(1)
-                components.append({
-                    "inst": inst_name,
-                    "master": cell_type,
-                    "x": x,
-                    "y": y,
-                    "w": 120.0 if ("sram" in cell_type.lower() or "mem" in cell_type.lower()) else 40.0,
-                    "h": 100.0 if ("sram" in cell_type.lower() or "mem" in cell_type.lower()) else 30.0,
-                    "orient": orient,
-                })
+        elif in_components:
+            comp_stmt += " " + line_s
+            if ";" in line_s:
+                parts = comp_stmt.split()
+                if len(parts) >= 3 and parts[0] == "-":
+                    inst_name = parts[1]
+                    cell_type = parts[2]
+                    orient = "R0"
+                    x, y = 0.0, 0.0
+                    coords = re.findall(r"\(\s*([\d\.\-]+)\s+([\d\.\-]+)\s*\)", comp_stmt)
+                    if coords:
+                        try:
+                            x = round(float(coords[0][0]) / units, 3)
+                            y = round(float(coords[0][1]) / units, 3)
+                        except ValueError:
+                            pass
+                    m_orient = re.search(r"\)\s+([N|S|W|E|FN|FS|FW|FE|R0|R90|R180|R270|MY|MX]+)", comp_stmt)
+                    if m_orient:
+                        orient = m_orient.group(1)
+                    components.append({
+                        "inst": inst_name,
+                        "master": cell_type,
+                        "x": x,
+                        "y": y,
+                        "w": 120.0 if ("sram" in cell_type.lower() or "mem" in cell_type.lower()) else 40.0,
+                        "h": 100.0 if ("sram" in cell_type.lower() or "mem" in cell_type.lower()) else 30.0,
+                        "orient": orient,
+                    })
+                comp_stmt = ""
 
         elif line_s.startswith("PINS"):
             in_pins = True
+            pin_stmt = ""
             continue
         elif line_s.startswith("END PINS"):
             in_pins = False
             continue
 
-        elif in_pins and line_s.startswith("-"):
-            parts = line_s.split()
-            if len(parts) >= 2:
-                pname = parts[1]
-                coords = re.findall(r"\(\s*([\d\.\-]+)\s+([\d\.\-]+)\s*\)", line_s)
-                x, y = 0.0, 0.0
-                if coords:
-                    try:
-                        x = round(float(coords[-1][0]) / units, 3)
-                        y = round(float(coords[-1][1]) / units, 3)
-                    except ValueError:
-                        pass
-                pins.append({
-                    "name": pname,
-                    "x": x,
-                    "y": y,
-                })
+        elif in_pins:
+            pin_stmt += " " + line_s
+            if ";" in line_s:
+                parts = pin_stmt.split()
+                if len(parts) >= 2 and parts[0] == "-":
+                    pname = parts[1]
+                    coords = re.findall(r"\(\s*([\d\.\-]+)\s+([\d\.\-]+)\s*\)", pin_stmt)
+                    x, y = 0.0, 0.0
+                    if coords:
+                        try:
+                            x = round(float(coords[-1][0]) / units, 3)
+                            y = round(float(coords[-1][1]) / units, 3)
+                        except ValueError:
+                            pass
+                    pins.append({
+                        "name": pname,
+                        "x": x,
+                        "y": y,
+                    })
+                pin_stmt = ""
 
     return {
         "status": "ok",
@@ -576,8 +588,14 @@ class SilisCadHandler(http.server.SimpleHTTPRequestHandler):
         if path == "/api/def/parse":
             def_path = query.get("file", [None])[0] or query.get("def", [None])[0]
             proj_name = query.get("project", [None])[0]
-            if not def_path:
-                p_dir = resolve_project_dir(proj_name)
+            p_dir = resolve_project_dir(proj_name)
+            if def_path:
+                cand = def_path if os.path.isabs(def_path) else os.path.join(p_dir, def_path)
+                if not (os.path.isfile(cand) and os.path.getsize(cand) > 0):
+                    cand = os.path.join(REPO_ROOT, def_path)
+                if os.path.isfile(cand) and os.path.getsize(cand) > 0:
+                    def_path = cand
+            else:
                 cands = [
                     os.path.join(p_dir, "results", "temp.def"),
                     os.path.join(p_dir, "temp.def"),
@@ -1089,12 +1107,16 @@ valid
         # 3. API: Load DEF file for FastSiliconPeeker 2D Layout
         if path == "/api/peeker/load_def":
             def_path = payload.get("def_path")
-            if def_path and os.path.isfile(def_path):
-                results_temp = os.path.join(REPO_ROOT, "results", "temp.def")
-                os.makedirs(os.path.dirname(results_temp), exist_ok=True)
-                shutil.copy2(def_path, results_temp)
-                self._send_json(200, {"status": "ok", "loaded": def_path})
-                return
+            if def_path:
+                cand = def_path if os.path.isabs(def_path) else os.path.join(SilisCadHandler.active_project_dir, def_path)
+                if not (os.path.isfile(cand) and os.path.getsize(cand) > 0):
+                    cand = os.path.join(REPO_ROOT, def_path)
+                if os.path.isfile(cand) and os.path.getsize(cand) > 0:
+                    results_temp = os.path.join(REPO_ROOT, "results", "temp.def")
+                    os.makedirs(os.path.dirname(results_temp), exist_ok=True)
+                    shutil.copy2(cand, results_temp)
+                    self._send_json(200, {"status": "ok", "loaded": cand})
+                    return
             self._send_json(400, {"error": "Invalid def_path"})
             return
 
