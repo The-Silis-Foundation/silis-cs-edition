@@ -36,6 +36,21 @@ if SILIS_DIR not in sys.path:
     sys.path.insert(0, SILIS_DIR)
 
 
+def resolve_tool_bin(name):
+    """Resolves an EDA tool binary across submodule, runtime, and system PATH."""
+    cands = [
+        os.path.join(REPO_ROOT, "silis", "third-party", "bin", name),
+        os.path.join(REPO_ROOT, "third-party", "bin", name),
+        os.path.join("/opt/silis/runtime", "bin", name),
+        os.path.join(REPO_ROOT, "assets", "bin", name),
+        shutil.which(name) or "",
+    ]
+    for c in cands:
+        if c and os.path.isfile(c) and os.access(c, os.X_OK):
+            return os.path.abspath(c)
+    return shutil.which(name) or name
+
+
 def resolve_project_dir(proj_arg):
     """Fuzzy-resolves any project identifier or path into an absolute project directory."""
     if not proj_arg:
@@ -292,12 +307,16 @@ def scan_available_macros(pdk_name=None):
     seen = set()
 
     search_dirs = [
+        os.path.join(REPO_ROOT, "assets", "pdk", "macros"),
+        os.path.join(REPO_ROOT, "silis", "assets", "pdk", "macros"),
         os.path.join(REPO_ROOT, "pdk", "macros"),
         os.path.join(REPO_ROOT, "projects"),
         os.path.expanduser("~/.silis/macrocache"),
     ]
     if pdk_name:
-        search_dirs.insert(0, os.path.join(REPO_ROOT, "pdk", "macros", pdk_name))
+        search_dirs.insert(0, os.path.join(REPO_ROOT, "assets", "pdk", "macros", pdk_name))
+        search_dirs.insert(1, os.path.join(REPO_ROOT, "silis", "assets", "pdk", "macros", pdk_name))
+        search_dirs.insert(2, os.path.join(REPO_ROOT, "pdk", "macros", pdk_name))
 
     for s_dir in search_dirs:
         if not os.path.isdir(s_dir):
@@ -428,8 +447,8 @@ class SilisCadHandler(http.server.SimpleHTTPRequestHandler):
 
         # 2. API: System / Runtime Status
         if path == "/api/status":
-            openroad_path = shutil.which("openroad") or os.path.join(REPO_ROOT, "third-party", "bin", "openroad")
-            yosys_path = shutil.which("yosys") or os.path.join(REPO_ROOT, "third-party", "bin", "yosys")
+            openroad_path = resolve_tool_bin("openroad")
+            yosys_path = resolve_tool_bin("yosys")
 
             status = {
                 "status": "ready",
@@ -1186,9 +1205,7 @@ valid
         return None
 
     def _run_lint(self, project_dir):
-        verilator_bin = os.path.join(REPO_ROOT, "third-party", "bin", "verilator")
-        if not (os.path.isfile(verilator_bin) and os.access(verilator_bin, os.X_OK)):
-            verilator_bin = shutil.which("verilator") or "verilator"
+        verilator_bin = resolve_tool_bin("verilator")
 
         v_files = []
         for d in ["rtl", "source", "."]:
@@ -1234,9 +1251,7 @@ valid
                 with open(cand, "r", encoding="utf-8") as f:
                     return f.read()
 
-        yosys_bin = os.path.join(REPO_ROOT, "third-party", "bin", "yosys")
-        if not (os.path.isfile(yosys_bin) and os.access(yosys_bin, os.X_OK)):
-            yosys_bin = shutil.which("yosys") or "yosys"
+        yosys_bin = resolve_tool_bin("yosys")
 
         os.makedirs(os.path.join(project_dir, "build"), exist_ok=True)
         out_json = os.path.join(project_dir, "build", f"structural_{module_name}.json")
@@ -1275,12 +1290,19 @@ valid
 def _generate_floorplan_tcl(session: dict) -> str:
     """Synthesizes an OpenROAD-compliant floorplan script from session JSON."""
     lines = ["# Silis CS Edition - Synthesized OpenROAD Floorplan", ""]
-    die_w = float(session.get("die_w", 500.0))
-    die_h = float(session.get("die_h", 500.0))
-    ml = float(session.get("marg_l", 15.0))
-    mb = float(session.get("marg_b", 15.0))
-    mr = float(session.get("marg_r", 15.0))
-    mt = float(session.get("marg_t", 15.0))
+    
+    # Extract die dimensions (support both nested and flat dict formats)
+    die_obj = session.get("die") if isinstance(session.get("die"), dict) else {}
+    core_obj = session.get("core") if isinstance(session.get("core"), dict) else {}
+
+    die_w = float(die_obj.get("w") or session.get("die_w", 5000.0))
+    die_h = float(die_obj.get("h") or session.get("die_h", 5000.0))
+    border = float(core_obj.get("border") or session.get("border", 20.0))
+
+    ml = float(session.get("marg_l") or border)
+    mb = float(session.get("marg_b") or border)
+    mr = float(session.get("marg_r") or border)
+    mt = float(session.get("marg_t") or border)
     cx1 = round(ml, 3)
     cy1 = round(mb, 3)
     cx2 = round(die_w - mr, 3)
@@ -1291,9 +1313,10 @@ def _generate_floorplan_tcl(session: dict) -> str:
     lines.append("                     -site unithd")
     lines.append("")
 
-    for m in session.get("macros", []):
-        iname = m.get("inst_name", m.get("name", "macro"))
-        master = m.get("master", iname)
+    for idx, m in enumerate(session.get("macros", [])):
+        # Support inst, inst_name, name
+        iname = m.get("inst") or m.get("inst_name") or m.get("name") or f"macro_inst_{idx}"
+        master = m.get("master") or iname
         x = float(m.get("x", 0.0))
         y = float(m.get("y", 0.0))
         orient = m.get("orient", "R0")

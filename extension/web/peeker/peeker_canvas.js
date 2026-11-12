@@ -122,12 +122,14 @@ function canvasZoomFit() {
   const margin = 60;
   const availableW = Math.max(100, rect.width - margin * 2);
   const availableH = Math.max(100, rect.height - margin * 2);
-  const scaleX = availableW / state.die.w;
-  const scaleY = availableH / state.die.h;
+  const dieW = (state.die && state.die.w > 0) ? state.die.w : 5000.0;
+  const dieH = (state.die && state.die.h > 0) ? state.die.h : 5000.0;
+  const scaleX = availableW / dieW;
+  const scaleY = availableH / dieH;
   state.zoom = Math.min(scaleX, scaleY);
   
-  const scaledW = state.die.w * state.zoom;
-  const scaledH = state.die.h * state.zoom;
+  const scaledW = dieW * state.zoom;
+  const scaledH = dieH * state.zoom;
   state.panX = (rect.width - scaledW) / 2;
   state.panY = (rect.height - scaledH) / 2;
   
@@ -224,7 +226,11 @@ function onWheel(e) {
 function performSelection(pos) {
   let found = null;
   for (const m of state.macros) {
-    if (pos.x >= m.x && pos.x <= m.x + m.w && pos.y >= m.y && pos.y <= m.y + m.h) {
+    const mx = Number(m.x) || 0;
+    const my = Number(m.y) || 0;
+    const mw = Number(m.w) || 40;
+    const mh = Number(m.h) || 30;
+    if (pos.x >= mx && pos.x <= mx + mw && pos.y >= my && pos.y <= my + mh) {
       found = m;
       break;
     }
@@ -249,20 +255,21 @@ function updateInspector(m) {
     return;
   }
 
-  document.getElementById('val-inst').innerText = m.inst;
-  document.getElementById('val-master').innerText = m.master;
-  document.getElementById('val-x').innerText = m.x.toFixed(3) + ' um';
-  document.getElementById('val-y').innerText = m.y.toFixed(3) + ' um';
-  document.getElementById('val-w').innerText = m.w.toFixed(3) + ' um';
-  document.getElementById('val-h').innerText = m.h.toFixed(3) + ' um';
-  document.getElementById('val-orient').innerText = m.orient;
-  document.getElementById('status-selection').innerText = `Selected: ${m.inst} (${m.master})`;
+  const safeNum = (v, fallback = 0) => (v != null && !isNaN(Number(v)) ? Number(v).toFixed(3) : Number(fallback).toFixed(3));
+  document.getElementById('val-inst').innerText = m.inst || '-';
+  document.getElementById('val-master').innerText = m.master || '-';
+  document.getElementById('val-x').innerText = safeNum(m.x, 0) + ' um';
+  document.getElementById('val-y').innerText = safeNum(m.y, 0) + ' um';
+  document.getElementById('val-w').innerText = safeNum(m.w, 40) + ' um';
+  document.getElementById('val-h').innerText = safeNum(m.h, 30) + ' um';
+  document.getElementById('val-orient').innerText = m.orient || 'R0';
+  document.getElementById('status-selection').innerText = `Selected: ${m.inst || 'Unknown'} (${m.master || 'Unknown'})`;
 
   const pinsContainer = document.getElementById('pins-list-container');
   if (m.pins && m.pins.length > 0) {
     let html = '';
     for (const p of m.pins) {
-      html += `<div class="pin-item"><span>${p.name}</span><span>X: ${p.x}, Y: ${p.y}</span></div>`;
+      html += `<div class="pin-item"><span>${p.name || 'pin'}</span><span>X: ${p.x != null ? p.x : 0}, Y: ${p.y != null ? p.y : 0}</span></div>`;
     }
     pinsContainer.innerHTML = html;
   } else {
@@ -325,9 +332,11 @@ function render() {
     const isSel = state.selectedMacro && state.selectedMacro.inst === m.inst;
     const isMatched = state.searchQuery && m.inst.toLowerCase().includes(state.searchQuery);
 
-    const p = worldToScreen(m.x, m.y);
-    const mw = m.w * state.zoom;
-    const mh = m.h * state.zoom;
+    const mx = Number(m.x) || 0;
+    const my = Number(m.y) || 0;
+    const mw = (Number(m.w) || 40) * state.zoom;
+    const mh = (Number(m.h) || 30) * state.zoom;
+    const p = worldToScreen(mx, my);
 
     // Macro Fill
     ctx.fillStyle = isSel ? 'rgba(137, 180, 250, 0.35)' : (isMatched ? 'rgba(249, 226, 175, 0.30)' : 'rgba(45, 45, 68, 0.85)');
@@ -342,17 +351,19 @@ function render() {
     if (state.zoom > 0.08) {
       ctx.fillStyle = isSel ? '#89b4fa' : '#cdd6f4';
       ctx.font = '11px ui-monospace, monospace';
-      ctx.fillText(m.inst, p.x + 6, p.y - mh + 16);
+      ctx.fillText(m.inst || '', p.x + 6, p.y - mh + 16);
       ctx.fillStyle = '#a6adc8';
       ctx.font = '9px ui-monospace, monospace';
-      ctx.fillText(m.master, p.x + 6, p.y - mh + 28);
+      ctx.fillText(m.master || '', p.x + 6, p.y - mh + 28);
     }
 
     // Pin Terminals
     if (m.pins && state.zoom > 0.15) {
       ctx.fillStyle = '#fab387';
       for (const pin of m.pins) {
-        const pp = worldToScreen(m.x + pin.x, m.y + pin.y);
+        const px = Number(pin.x) || 0;
+        const py = Number(pin.y) || 0;
+        const pp = worldToScreen(mx + px, my + py);
         ctx.fillRect(pp.x - 2, pp.y - 2, 4, 4);
       }
     }

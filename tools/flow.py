@@ -15,15 +15,25 @@ import subprocess
 import argparse
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-BIN_DIR = os.path.join(REPO_ROOT, "third-party", "bin")
-VERILATOR_BIN = os.path.join(BIN_DIR, "verilator")
-VERILATOR_ROOT = os.path.join(REPO_ROOT, "third-party", "share", "verilator")
-YOSYS_BIN = os.path.join(BIN_DIR, "yosys")
-if not os.path.isfile(YOSYS_BIN):
-    YOSYS_BIN = shutil.which("yosys") or "yosys"
-OPENROAD_BIN = os.path.join(BIN_DIR, "openroad")
-if not os.path.isfile(OPENROAD_BIN):
-    OPENROAD_BIN = shutil.which("openroad") or "openroad"
+def _resolve_binary(name):
+    cands = [
+        os.path.join(REPO_ROOT, "silis", "third-party", "bin", name),
+        os.path.join(REPO_ROOT, "third-party", "bin", name),
+        os.path.join("/opt/silis/runtime", "bin", name),
+        shutil.which(name) or "",
+    ]
+    for c in cands:
+        if c and os.path.isfile(c) and os.access(c, os.X_OK):
+            return os.path.abspath(c)
+    return shutil.which(name) or name
+
+VERILATOR_BIN = _resolve_binary("verilator")
+YOSYS_BIN = _resolve_binary("yosys")
+OPENROAD_BIN = _resolve_binary("openroad")
+
+VERILATOR_ROOT = os.path.join(REPO_ROOT, "silis", "third-party", "share", "verilator")
+if not os.path.isdir(VERILATOR_ROOT):
+    VERILATOR_ROOT = os.path.join(REPO_ROOT, "third-party", "share", "verilator")
 
 
 def get_project_dir(proj_arg):
@@ -215,10 +225,25 @@ def run_synth(project_dir, json_only=False):
         print("[Silis Flow] [ERR] No synthesizable RTL files found.")
         return 1
 
+    # Discover top module from silisproj or fallback to auto-top
+    top_mod = None
+    for sp_name in ["silis.silisproj", f"{os.path.basename(project_dir)}.silisproj"]:
+        cfg_file = os.path.join(project_dir, sp_name)
+        if os.path.isfile(cfg_file):
+            try:
+                with open(cfg_file) as f:
+                    top_mod = json.load(f).get("top_module")
+                    if top_mod:
+                        break
+            except Exception:
+                pass
+
     read_cmds = [f"read_verilog -sv {s}" if s.endswith(".sv") else f"read_verilog {s}" for s in sources]
-    script = "; ".join(read_cmds) + f"; hierarchy -auto-top; prep; write_json {out_json}"
+    hier_cmd = f"hierarchy -top {top_mod}" if top_mod else "hierarchy -auto-top"
+    synth_cmd = f"synth -top {top_mod}" if top_mod else "synth -auto-top"
+    script = "; ".join(read_cmds) + f"; {hier_cmd}; prep; write_json {out_json}"
     if not json_only:
-        script += f"; synth -top full_adder; write_verilog {out_v}"
+        script += f"; {synth_cmd}; write_verilog {out_v}"
 
     cmd = [YOSYS_BIN, "-q", "-p", script]
     res = subprocess.run(cmd, cwd=project_dir)
@@ -278,6 +303,11 @@ def run_openroad_gui(project_dir):
     lef_dirs = [
         os.path.expanduser("~/.silis/pdks/sky130"),
         os.path.expanduser("~/.silis/pdks"),
+        os.path.join(REPO_ROOT, "assets", "pdk", "macros", "sky130"),
+        os.path.join(REPO_ROOT, "assets", "pdk", "macros"),
+        os.path.join(REPO_ROOT, "assets", "pdk"),
+        os.path.join(REPO_ROOT, "silis", "assets", "pdk", "macros", "sky130"),
+        os.path.join(REPO_ROOT, "silis", "pdk"),
         os.path.join(REPO_ROOT, "third-party", "pdks"),
         os.path.join(REPO_ROOT, "..", "silis", "third-party", "pdks"),
         os.path.join(project_dir, "source"),
