@@ -1,112 +1,62 @@
-# Trademark and Identity Policy
+# Trademark and Identity Policy — The Silis Foundation
 
-## Project Name and Identity
+## 1. Project Names and Protected Identifiers
 
-The following names and identifiers are associated with this project:
+The following names, brands, logos, and identifiers are protected by **The Silis Foundation**:
 
-- Silis
-- Silicon Scaffold
-- The Silis Foundation
-- Project logos and ASCII banners
-- Project visual identity and slogans
+- **Silis**
+- **Silis CS Edition** / **Silis Codespaces Edition**
+- **Silicon Scaffold**
+- **The Silis Foundation**
+- Project visual identity, ASCII banners, and application icons (`silisicon.png`)
+- Official project slogans, documentation themes, and engineering logos
 
-These represent the identity of the Silis project.
-
-This document describes how these identifiers may be used.
-
----
-
-## Permitted Use
-
-You may use the Silis name and branding to:
-
-- Refer to the unmodified project
-- Attribute this project in research or documentation
-- Describe compatibility with Silis
-- Acknowledge use of Silis in derived works
-- Redistribute Silis under the AGPL-3.0 license
-
-Examples of allowed usage:
-- "Built using Silis — Silicon Scaffold"
-- "Derived from Silis (AGPL-3.0)"
-- "Compatible with Silis"
+These represent the identity and reputation of the Silis project and its physical design EDA suite.
 
 ---
 
-## Restricted Use
+## 2. Permitted Use
 
-You may NOT:
+You are encouraged to use the Silis name and branding for:
+- Referencing the official, unmodified project and repository
+- Citing Silis in academic papers, theses, and technical articles
+- Describing technical compatibility (e.g. "Compatible with Silis EDA", "Silis-compliant PDK")
+- Acknowledging use of Silis in manufactured integrated circuits or research tapeouts
+- Distributing unmodified or modified versions under the terms of the **GNU AGPL-3.0 license**
 
-- Claim your modified version is the official Silis release
-- Remove attribution and present Silis as your own original work
-- Use the Silis name to misrepresent authorship
-- Use Silis branding for commercial endorsement without permission
-- Imply the Silis Foundation approves your fork
-
-Forks must use distinct naming if they diverge significantly from the original project.
-
----
-
-## Attribution Requirement
-
-All derived works must preserve:
-
-- Copyright notices
-- License notices
-- Project attribution
-- Reference to the Silis Foundation
-
-Removal of copyright or license notices violates the AGPL-3.0 license.
+### Permitted Attribution Phrasing
+- *"Synthesized and floorplanned using Silis — Silicon Scaffold"*
+- *"Layout verified with Silis CS Edition"*
+- *"Forked from Silis under GNU AGPL-3.0"*
 
 ---
 
-## Logos and Visual Identity
+## 3. Restricted Use & Forking Policy
 
-Project ASCII banners and identity graphics may be included in:
-- Generated reports
-- Logs
-- Documentation
-- Screenshots
-
-They must not be removed when distributing Silis or derived versions unless replaced with clearly distinct branding.
+To prevent confusion in the semiconductor community and protect users from counterfeit or untested physical design builds, you may **NOT**:
+- Distribute modified versions using the name "Silis", "Silis CS Edition", or "The Silis Foundation" as the primary application title without clear fork indicators.
+- Imply that a derived fork, commercial service, or altered distribution is endorsed, certified, or sponsored by The Silis Foundation.
+- Remove copyright notices, author credits, or license disclaimers from source files, generated DEF headers, or reports.
+- Use project branding or trademarks in commercial marketing without explicit prior written authorization.
 
 ---
 
-## Academic and Educational Use
+## 4. Academic and Educational Citation
 
-Academic use is encouraged.
-
-Publications using Silis should:
-- Cite the project (see CITATION.cff)
-- Acknowledge the Silis core team
-- Reference the official repository
+Academic, research, and educational use of Silis is strongly supported. Publications and preprints utilizing Silis for ASIC tapeout, synthesis, or floorplanning should:
+1. Cite the project using the metadata in [CITATION.cff](CITATION.cff).
+2. Acknowledge Jerome Antony Robin and The Silis Foundation.
+3. Link to the official repository: [https://github.com/The-Silis-Foundation/silis](https://github.com/The-Silis-Foundation/silis).
 
 ---
 
-## Enforcement
+## 5. Enforcement & Inquiries
 
-The Silis Foundation reserves the right to:
-- Request correction of misuse
-- Request removal of misleading branding
-- Protect the project identity from misrepresentation
-
-This policy exists to protect contributors and users from confusion, not to restrict open-source collaboration.
+The Silis Foundation actively monitors usage of its trademarks to prevent community confusion and maintain the highest standards of silicon tapeout integrity. Questions regarding branding or commercial licensing should be directed to the Foundation maintainers.
 
 ---
-
-Silis is open source.  
-Silis has an identity.  
-Silis has authors.
-
----
-
-Silis is not governed by a single developer, but guided by a unified vision.
-Technical decisions are shared.  
-Philosophical, UX, and public-facing decisions are stewarded by the Lead.
 
 ```
-
-
 ███████╗ ██╗ ██╗      ██╗ ███████╗
 ██╔════╝ ██║ ██║      ██║ ██╔════╝
 ███████╗ ██║ ██║      ██║ ███████╗
@@ -114,15 +64,14 @@ Philosophical, UX, and public-facing decisions are stewarded by the Lead.
 ███████║ ██║ ███████╗ ██║ ███████║
 ╚══════╝ ╚═╝ ╚══════╝ ╚═╝ ╚══════╝
 
-
 Silis — Silicon Scaffold
 Organisation: The Silis Foundation
-https://github.com/The-Silis-Foundation/silis
+Repositories:
+  - Core Studio:    https://github.com/The-Silis-Foundation/silis
+  - Cloud Edition:  https://github.com/The-Silis-Foundation/silis-cs-edition
 ___________________________________________
 Generated by Silis — Silicon Scaffold
 © 2026 The Silis Foundation
 Licensed under AGPL-3.0
 ___________________________________________
-
-
 ```

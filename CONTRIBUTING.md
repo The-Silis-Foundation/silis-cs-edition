@@ -1,99 +1,96 @@
-# Contributing to Silis — Silicon Scaffold
+# Contributing to Silis — Codespaces Edition
 
-Thank you for your interest in contributing to Silis.
+Thank you for your interest in contributing to **Silis CS Edition**.
 
-Silis is developed and maintained by The Silis Foundation.  
-Before contributing, please read this document carefully.
+Silis is developed and maintained by **The Silis Foundation**.  
+Before contributing to the Codespaces edition, please read this document carefully.
 
 ---
 
-## 1. License
+## 1. License & Contributor Agreement
 
-Silis is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0).
-
+### License
+Silis CS Edition is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)**.  
 All contributions to this repository are licensed under AGPL-3.0.
 
-By submitting a pull request, issue, patch, or any contribution, you agree that your contribution will be distributed under AGPL-3.0.
-
----
-
-## 2. Contributor Agreement (Contribution Assignment & Rights)
-
-By contributing to Silis, you agree to the following:
-
+### Contributor Assignment & Rights
+By submitting a pull request, issue, patch, or any contribution to this repository, you agree to the following:
 1. You certify that you have the legal right to submit the contribution.
 2. You grant The Silis Foundation a perpetual, worldwide, non-exclusive, irrevocable license to use, modify, distribute, and sublicense your contribution.
 3. You agree that The Silis Foundation may:
    - Commercially license Silis separately.
-   - Dual-license Silis under alternative licensing terms.
-   - Use your contribution in commercial agreements.
+   - Dual-license Silis under alternative commercial or open-source terms.
+   - Use your contribution in commercial and academic agreements.
 
-This does not revoke AGPL rights for the public version.  
-It allows the Foundation to offer separate commercial licenses when required.
-
----
-
-## 3. Governance Model
-
-Silis follows a centralized governance model.
-
-Project direction, philosophy, architecture decisions, and public representation are determined by The Silis Foundation core team.
-
-Contributing code does **not**:
-
-- Grant governance rights
-- Grant decision-making authority
-- Grant ownership of the project
-- Grant trademark rights over the name "Silis" or "Silicon Scaffold"
-
-All strategic and philosophical decisions remain with the Foundation.
+This allows the Foundation to protect the project's sustainability while preserving copyleft guarantees for the public community edition.
 
 ---
 
-## 4. Trademarks & Naming
+## 2. Engineering Architecture & The Parity Law
 
-The names:
+### Zero GUI-SDK Deviance
+The Silis Codespaces Edition (Webviews, HTML5 canvases, and REST APIs) must never implement divergent physical design mathematics or file export logic from the core Silis Python SDK (`silis.core.sdk`).
+- **Single Source of Truth**: Macro legalization, halo clearance calculations, site-row quantization, and IEEE 1801 UPF syntax generation must match the desktop engine down to the nanometer.
+- **Pre-Flight Invariants**: Any coordinate emitted by the Codespaces edition must satisfy manufacturing grid quantization ($x \pmod{0.005} = 0, y \pmod{0.005} = 0$).
 
-- "Silis"
-- "Silicon Scaffold"
-- "The Silis Foundation"
-
-represent the identity of this project.
-
-Forks and derived works must not imply official affiliation unless explicitly authorized.
-
----
-
-## 5. Acceptance of Contributions
-
-All contributions are reviewed at the discretion of the maintainers.
-
-Submitting a contribution does not guarantee:
-
-- Acceptance
-- Merge
-- Inclusion in future releases
-
-Maintainers reserve full editorial control.
+### Code Conventions & UI Standards
+- **Absolute Emoji Ban**: Do not use emojis in UI titles, button labels, logs, status bar messages, dialogs, tooltips, or commit messages.
+- **Physical Units**: Always specify engineering units explicitly (`µm`, `DBU`, `V`, `ps`, `ns`, `µm²`).
+- **Typography**: Numerical coordinates, voltages, and memory counts must use monospace formatting.
 
 ---
 
-## 6. External Contributors
+## 3. Local Development & Verification Workflow
 
-At this stage, Silis is not open for unrestricted external contribution.
+### Dev Container Environment
+The recommended development environment is GitHub Codespaces or a local VS Code Dev Container using the configuration in `.devcontainer/devcontainer.json`.
 
-Pull requests may be closed without explanation if they do not align with the project's philosophy, technical direction, or stability requirements.
+```bash
+# Verify backend web hub and server endpoints:
+python3 tools/verify_cs_edition.py
+
+# Test headless physical design flow:
+python3 tools/flow.py
+
+# Update dynamic project registry and README dashboard:
+python3 tools/gen_readme.py
+```
+
+### VS Code Extension Development
+The webview extension source resides in `extension/`. To verify and compile changes:
+```bash
+cd extension
+# Verify extension package integrity
+node -e "require('./extension.js'); console.log('Extension syntax valid');"
+```
 
 ---
 
-## 7. Code of Conduct
+## 4. Governance Model
 
-Be professional.  
-Be technical.  
-No drama.  
-No ownership disputes.  
+Developed by **Jerome Antony Robin**, this repository follows a **BDFL Governance model**.  
+Co-developed by **Eatheshwar**, **Venkat**, and **Adhil**.
 
+Project direction, architectural decisions, and public representations are stewarded by the Founder and BDFL, **Jerome Antony Robin**. *Silis took 11 months from POC to pre-release.*
+
+Contributing code does **not** grant governance rights, project ownership, or trademark rights over the names "Silis", "Silis CS Edition", "Silicon Scaffold", or "The Silis Foundation".
 
 ---
 
-By submitting a contribution, you acknowledge that you have read and agreed to this document.
+## 5. Trademarks & Identity
+
+The names **Silis**, **Silis CS Edition**, **Silicon Scaffold**, and **The Silis Foundation** represent the identity of this project.  
+Forks and derived works must comply with [TRADEMARK.md](TRADEMARK.md) and must not imply official affiliation unless explicitly authorized.
+
+---
+
+## 6. Code of Conduct
+
+- Be professional.
+- Be technical.
+- Deliver evidence-backed code and test verification.
+- Zero drama, zero ownership disputes.
+
+---
+
+By submitting a pull request or issue, you acknowledge that you have read and agreed to this document.

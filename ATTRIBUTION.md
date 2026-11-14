@@ -43,7 +43,7 @@ The **Silis Codespaces Edition** integrates and orchestrates open-source EDA eng
 - **Project**: Wilson Snyder, Duane McCracken, and Paul Wasson
 - **Repository**: [https://github.com/verilator/verilator](https://github.com/verilator/verilator)
 - **License**: GNU LGPL v3.0 / Artistic License 2.0
-- **Role in Silis**: High-performance cycle-accurate C++ simulation, multithreaded testbench execution, and coverage analysis.
+- **Role in Silis**: High-performance cycle-accurate C++ simulation, multithreaded testbench execution, and strict RTL linting.
 
 ### sv2v (SystemVerilog to Verilog)
 - **Project**: Zachary Snow
@@ -85,11 +85,23 @@ The **Silis Codespaces Edition** integrates and orchestrates open-source EDA eng
 - **License**: MIT License
 - **Role in Silis**: Interactive schematic layout and logic gate graph rendering.
 
+### ELKjs (Eclipse Layout Kernel)
+- **Project**: Kieler / Eclipse Layout Kernel Contributors
+- **Repository**: [https://github.com/kieler/elkjs](https://github.com/kieler/elkjs)
+- **License**: Eclipse Public License 2.0 (EPL-2.0)
+- **Role in Silis**: High-performance automatic orthogonal graph routing and hierarchical port placement for DigitalJS schematics.
+
+### FastSiliconPeeker
+- **Project**: The Silis Foundation
+- **Repository**: [https://github.com/The-Silis-Foundation/silis-cs-edition](https://github.com/The-Silis-Foundation/silis-cs-edition)
+- **License**: AGPL-3.0
+- **Role in Silis**: High-throughput 2D DEF physical layout rendering engine with sub-pixel quantization and macro halo inspection.
+
 ### noVNC & websockify
 - **Projects**:
   - noVNC: [https://github.com/novnc/noVNC](https://github.com/novnc/noVNC) (MPL 2.0)
   - websockify: [https://github.com/novnc/websockify](https://github.com/novnc/websockify) (LGPL 3.0)
-- **Role in Silis**: In-browser HTML5 VNC client and WebSocket translation proxy for isolated virtual framebuffers.
+- **Role in Silis**: In-browser HTML5 VNC client and WebSocket translation proxy for isolated virtual framebuffers (fallback display mode).
 
 ---
 
@@ -99,4 +111,4 @@ The **Silis Codespaces Edition** integrates and orchestrates open-source EDA eng
 - **Collaboration**: Google & SkyWater Technology Foundry
 - **Repository**: [https://github.com/google/skywater-pdk](https://github.com/google/skywater-pdk)
 - **License**: Apache License 2.0
-- **Role in Silis**: Reference open-source 130nm high-density standard cell library (`sky130_fd_sc_hd`).
+- **Role in Silis**: Reference open-source 130nm high-density standard cell library (`sky130_fd_sc_hd`), technology LEF, and power switch macros.

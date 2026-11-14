@@ -105,6 +105,7 @@ def build_dashboard_markdown(projects):
 
     lines.append("### Key Commands (`Ctrl+Shift+P`)")
     lines.append("")
+    lines.append("- `Silis: Open Unified CAD Workbench` -- Open all 4 CAD tools tabbed in a single Webview")
     lines.append("- `Silis: Open Project` -- Select active project, focus directory in Explorer, and open top RTL on left")
     lines.append("- `Silis: Compile & Run Simulation` -- Compile design, display schematic split beside RTL, focus bottom waveform dock")
     lines.append("- `Silis: Lint RTL (Ctrl+L)` -- Run Verilator strict RTL lint checks")

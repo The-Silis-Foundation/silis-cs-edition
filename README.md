@@ -13,21 +13,30 @@
 ### Multi-Framebuffer Cloud CAD Workbench for GitHub Codespaces & VS Code Web
 
 <h4>
-  <a href="#workbench-canvases">Visual Canvases</a>
+  <a href="#workbench-guide--control-center">Control Center</a>
   ·
-  <a href="#architecture">Architecture</a>
+  <a href="#visual-cad-surfaces">Visual Surfaces</a>
+  ·
+  <a href="#architectural-principles">Architecture</a>
+  ·
+  <a href="#port-and-service-matrix">Port Matrix</a>
   ·
   <a href="#quick-start">Quick Start</a>
   ·
-  <a href="#port-allocation">Display Matrix</a>
-  ·
-  <a href="#attributions">Attributions</a>
+  <a href="#third-party-attributions">Attributions</a>
 </h4>
 
 <p>
   <img alt="Platform" src="https://img.shields.io/badge/Platform-GitHub%20Codespaces-blue.svg?style=for-the-badge&logo=github&logoColor=white">
   <img alt="VS Code Web" src="https://img.shields.io/badge/Integration-VS%20Code%20Webviews-007ACC.svg?style=for-the-badge&logo=visualstudiocode&logoColor=white">
-  <img alt="Architecture" src="https://img.shields.io/badge/Architecture-Isolated%20Framebuffers-green.svg?style=for-the-badge">
+  <img alt="License" src="https://img.shields.io/badge/License-AGPL%203.0-green.svg?style=for-the-badge">
+  <a href="https://github.com/The-Silis-Foundation/silis/releases/tag/v0.1.1-pre"><img alt="Desktop Release" src="https://img.shields.io/badge/Desktop%20Core-v0.1.1--pre-orange.svg?style=for-the-badge"></a>
+</p>
+
+<p align="center">
+  Developed by <strong>Jerome Antony Robin</strong>. This repository follows a <strong>BDFL Governance model</strong>.<br>
+  Co-developed by <strong>Eatheshwar</strong>, <strong>Venkat</strong>, and <strong>Adhil</strong>.<br>
+  <em>Silis took 11 months from POC to pre-release.</em>
 </p>
 
 </div>
@@ -52,11 +61,12 @@
 
 | Project | Process (PDK) | Top Module | Layout (DEF) | Waveforms | Source Files |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **FA** | `sky130_fd_sc_hd` | `FA` | Pending PnR | Pending Sim | 1 file(s) |
+| **FA** | `sky130_fd_sc_hd` | `full_adder` | Pending PnR | Available | 1 file(s) |
 | **demo_soc** | `sky130` | `chip_top` | Available | Available | 2 file(s) |
 
 ### Key Commands (`Ctrl+Shift+P`)
 
+- `Silis: Open Unified CAD Workbench` -- Open all 4 CAD tools tabbed in a single Webview
 - `Silis: Open Project` -- Select active project, focus directory in Explorer, and open top RTL on left
 - `Silis: Compile & Run Simulation` -- Compile design, display schematic split beside RTL, focus bottom waveform dock
 - `Silis: Lint RTL (Ctrl+L)` -- Run Verilator strict RTL lint checks
@@ -69,60 +79,74 @@
 
 ---
 
-## Workbench Canvases (Dock as VS Code Editor Tabs)
+## Visual CAD Surfaces
 
-In GitHub Codespaces, visualizer surfaces render to dedicated virtual framebuffers and dock directly inside VS Code Web editor tabs as split-pane webviews using the built-in Simple Browser:
+Silis CS Edition delivers four interactive engineering visualizers directly inside VS Code Web editor tabs and via the standalone CAD Web Hub on Port `8765`:
 
-| Subsystem | Port | One-Click Dock Link | Description |
+| Subsystem | Primary Access (VS Code Web) | Standalone Browser Link | Technical Description |
 | :--- | :--- | :--- | :--- |
-| **Silis Floorplan Studio** | `6084` | [Open Floorplan Studio](http://localhost:6084/vnc_lite.html?autoconnect=true&resize=scale) | Always-open interactive floorplanner, halo clearance inspector, and UPF power domain studio. |
-| **FastSiliconPeeker (2D Layout)** | `6081` | [Open 2D Layout Canvas](http://localhost:6081/vnc_lite.html?autoconnect=true&resize=scale) | Auto-docks as soon as `results/temp.def` is synthesized. Sub-pixel hardware-accelerated DEF placement. |
-| **Frontend Studio & Waveforms** | `6082` | [Open Waveform Viewer](http://localhost:6082/vnc_lite.html?autoconnect=true&resize=scale) | File explorer, Monaco RTL editor with live hover cards, C++ schematic viewer, and Intel ROHD waveform drawer. |
+| **Unified CAD Dock** | `Silis: Open Unified CAD Workbench` | [Open CAD Workbench](http://localhost:8765/workbench) | Central engineering cockpit embedding Schematics, Waveforms, 2D Layout, and Floorplanner in synchronized tabbed panels. |
+| **Schematic Explorer** | Click `structural_*.json` or `Silis: Open DigitalJS Schematic` | [Open Schematics](http://localhost:8765/schematic) | Interactive DigitalJS netlist visualizer with ELK automatic orthogonal layout and live gate-level logic evaluation. |
+| **Waveform Inspector** | Click `*.vcd` / `*.fst` or `Silis: Open ROHD Waveforms` | [Open Waveforms](http://localhost:8765/waveforms) | Hardware-accelerated Intel ROHD digital waveform viewer with signal transition search and synchronized marker cursors. |
+| **2D Layout Peeker** | Click `*.def` or `Silis: Open 2D Layout Canvas` | [Open 2D Layout](http://localhost:8765/layout) | Sub-pixel hardware-accelerated FastSiliconPeeker canvas rendering macro placements, halos, pins, and metal routing layers. |
+| **Floorplan & Power Studio** | `Silis: Open Floorplan & Power Studio` | [Open Web FPS](http://localhost:8765/floorplan) | Interactive IEEE 1801 (UPF 3.0) multi-voltage power domain editor, voltage fence synthesizers, and macro halo clearance verifier. |
 
 ---
 
 ## Architectural Principles
 
-### 1. Division of Labor
-- **VS Code Web**: Serves as the primary code editor (Verilog, SystemVerilog, VHDL, C++ HLS), integrated terminal, git workspace, and Python SDK script runner.
-- **Dedicated Framebuffer Isolation**: Never run overlapping windows in an uncontrolled desktop manager. Every graphical surface runs on its own isolated `Xvfb` virtual display server paired with an independent `x11vnc` daemon and `websockify` WebSocket bridge.
+### 1. Zero-Install Cloud Workbench
+- **VS Code Web Integration**: All CAD tools run natively in your browser using Webview panels, HTML5 Canvas, and WebAssembly. No desktop X11 forwarding or heavy VNC bandwidth is required for everyday RTL synthesis, simulation, and floorplanning.
+- **Port 8765 Native Web Hub**: A lightweight Python ASGI/HTTP server (`tools/cs_server.py`) provides fast bidirectional REST endpoints, layout parsing, and cross-probing event routing.
 
-### 2. Auto-Docking on Layout Synthesis
-When a physical design pipeline generates or updates `results/temp.def`, a background watcher automatically loads the new placement into `FastSiliconPeeker` on Display `:1` and invokes VS Code Web's Simple Browser to present the 2D layout side-by-side with your code.
+### 2. Full Parity with Desktop Silis Core
+- **Identical Physical Invariants**: All geometric quantization (0.005 µm manufacturing grid), site-row snapping, halo clearance rules, and UPF power intent emission strictly mirror the desktop Qt6 engine (`silis.core.sdk`).
+- **Synchronized Dataflow**: Floorplan state files (`.silis_fp_session.json`), TCL synthesis scripts, and DEF layouts are 100% interchangeable between desktop AppImage installations and cloud Codespaces.
 
-### 3. Native Pre-Compiled Binary Runtime
-Silis CS Edition includes pre-compiled, stripped production EDA binaries (`openroad`, `yosys`, `yosys-abc`, `magic`, `sv2v`, `verilator`) and native C++ shared library modules (`silis_layer_viewer.so`, `schematic_engine.so`, `fast_layout_viewer.so`) directly in the workspace filesystem.
-
----
-
-## Display & Port Allocation Matrix
-
-| Subsystem | Python SDK Trigger | Display | Internal VNC | noVNC Web | Auto-Dock Trigger |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **FastSiliconPeeker** | `silis.view_layout(def_path)` | `:1` | `5901` | `6081` | Automatic upon `temp.def` write |
-| **Frontend Studio** | `silis.view_waveforms(vcd_path)` | `:2` | `5902` | `6082` | On-demand or task trigger |
-| **Silis FPS** | `silis.open_floorplanner(proj)` | `:4` | `5904` | `6084` | Always running |
+### 3. Embedded Pre-Compiled EDA Toolchain
+Silis CS Edition bundles stripped, production-grade Linux x86-64 EDA binaries and libraries in the workspace:
+- **Synthesis & Elaboration**: Yosys, Yosys-ABC, sv2v, GHDL
+- **Physical Design & PnR**: OpenROAD (TritonMacroPlace, RePlAce, OpenDP, TritonCTS, FastRoute, TritonRoute)
+- **Simulation & Verification**: Verilator, SymbiYosys (SBY), Magic VLSI, Netgen LVS
+- **Process Design Kit**: SkyWater 130nm (`sky130_fd_sc_hd` standard cell library, tech LEF, power switch cells)
 
 ---
 
-## Quick Start (Codespaces Terminal)
+## Port and Service Matrix
 
-Launch a complete end-to-end ASIC flow directly from the integrated VS Code terminal:
+| Port | Service | Protocol | Visibility | Purpose |
+| :--- | :--- | :--- | :--- | :--- |
+| `8765` | **Silis CAD Web Hub** | HTTP / WebSocket | Forwarded / Public | Serves Workbench, DigitalJS schematics, ROHD waveforms, FastSiliconPeeker layout, and REST APIs. |
+| `6081` | *FastSiliconPeeker (X11 Fallback)* | HTTP (noVNC) | Local / Optional | Virtual framebuffer `:1` for standalone headless X11 layout viewer binaries. |
+| `6082` | *Frontend Studio (X11 Fallback)* | HTTP (noVNC) | Local / Optional | Virtual framebuffer `:2` for standalone headless X11 waveform viewer binaries. |
+| `6084` | *Silis FPS (X11 Fallback)* | HTTP (noVNC) | Local / Optional | Virtual framebuffer `:4` for standalone headless X11 Qt6 floorplanner instances. |
+
+---
+
+## Quick Start
+
+### 1. Interactive Web Workflow
+1. Open any Verilog/SystemVerilog file in `projects/demo_soc/source/` (e.g. `chip_top.sv`).
+2. Click the **Play button** on the top right editor bar to compile and simulate.
+3. Observe the structural schematic render side-by-side and waveforms dock in the lower panel.
+4. Open the command palette (`Ctrl+Shift+P`) and run `Silis: Open Unified CAD Workbench` to inspect the full design cockpit.
+
+### 2. Headless Python SDK Flow
+Execute a complete physical design pass from the integrated terminal:
 
 ```bash
-# 1. Run headless Python SDK pipeline:
 python3 -c "
 import silis
 pipe = silis.Pipeline('demo_soc', pdk='sky130')
 pipe.floorplan(die_area=[0, 0, 1200, 1200], core_margin=20.0)
 pipe.place()
 "
-
-# FastSiliconPeeker will automatically dock the resulting layout on Port 6081!
 ```
+
+The resulting layout will be written to `projects/demo_soc/results/temp.def` and can be immediately viewed by clicking the file in the Explorer.
 
 ---
 
 ## Third-Party Attributions
 
-Silis orchestrates open-source EDA engines including OpenROAD, Yosys, SiliconCompiler, Magic, Netgen, Verilator, sv2v, GHDL, and Intel ROHD Wave Viewer. Full licensing, source repository links, and developer attributions are documented in [ATTRIBUTION.md](ATTRIBUTION.md).
+Silis orchestrates open-source EDA engines including OpenROAD, Yosys, SiliconCompiler, Magic, Netgen, Verilator, sv2v, GHDL, Intel ROHD Wave Viewer, DigitalJS, and ELKjs. Full licensing, source repository links, and developer attributions are documented in [ATTRIBUTION.md](ATTRIBUTION.md).
