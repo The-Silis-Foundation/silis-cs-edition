@@ -147,6 +147,15 @@ The resulting layout will be written to `projects/demo_soc/results/temp.def` and
 
 ---
 
+## Desktop Deliverables & Latest Release
+
+Looking for the standalone offline desktop studio?  
+Pre-built Linux binaries and update manifests are available on [GitHub Releases (v0.1.1-pre)](https://github.com/The-Silis-Foundation/silis/releases/tag/v0.1.1-pre):
+- **Standalone Linux AppImage**: [`Silis-x86_64.AppImage` (1.2 GB)](https://github.com/The-Silis-Foundation/silis/releases/download/v0.1.1-pre/Silis-x86_64.AppImage)
+- **Delta Updater**: [`Silis-x86_64.AppImage.zsync`](https://github.com/The-Silis-Foundation/silis/releases/download/v0.1.1-pre/Silis-x86_64.AppImage.zsync)
+
+---
+
 ## Third-Party Attributions
 
 Silis orchestrates open-source EDA engines including OpenROAD, Yosys, SiliconCompiler, Magic, Netgen, Verilator, sv2v, GHDL, Intel ROHD Wave Viewer, DigitalJS, and ELKjs. Full licensing, source repository links, and developer attributions are documented in [ATTRIBUTION.md](ATTRIBUTION.md).
