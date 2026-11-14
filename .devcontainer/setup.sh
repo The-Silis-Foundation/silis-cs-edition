@@ -9,14 +9,19 @@ git -C "$WORKSPACE_DIR" submodule update --init silis 2>/dev/null || true
 
 # 2. Extract AppImage runtime into /opt/silis/runtime if not present
 OPT_DIR="/opt/silis/runtime"
+APPIMAGE="${WORKSPACE_DIR}/assets/silis-python-qt-x86_64.AppImage"
+EXPECTED_SIZE=305945080
 if [ ! -d "$OPT_DIR" ]; then
     sudo mkdir -p /opt/silis "${WORKSPACE_DIR}/assets"
-    if [ ! -s "${WORKSPACE_DIR}/assets/silis-python-qt-x86_64.AppImage" ]; then
-        curl -sL "https://github.com/The-Silis-Foundation/silis-cs-edition/releases/download/v1.0.0-runtime/silis-python-qt-x86_64.AppImage" \
-            -o "${WORKSPACE_DIR}/assets/silis-python-qt-x86_64.AppImage"
+    CURRENT_SIZE="$(stat -c %s "$APPIMAGE" 2>/dev/null || echo 0)"
+    if [ "$CURRENT_SIZE" -ne "$EXPECTED_SIZE" ]; then
+        echo "Fetching silis runtime AppImage (expected size: $EXPECTED_SIZE bytes)..."
+        rm -f "$APPIMAGE"
+        curl -sL --retry 3 "https://github.com/The-Silis-Foundation/silis-cs-edition/releases/download/v1.0.0-runtime/silis-python-qt-x86_64.AppImage" \
+            -o "$APPIMAGE"
     fi
-    chmod +x "${WORKSPACE_DIR}/assets/silis-python-qt-x86_64.AppImage"
-    (cd /opt/silis && sudo "${WORKSPACE_DIR}/assets/silis-python-qt-x86_64.AppImage" --appimage-extract && sudo mv squashfs-root runtime && sudo chmod -R a+rX /opt/silis)
+    chmod +x "$APPIMAGE"
+    (cd /opt/silis && sudo "$APPIMAGE" --appimage-extract && sudo mv squashfs-root runtime && sudo chmod -R a+rX /opt/silis)
 fi
 
 # 3. DO NOT overwrite system /usr/bin/python3. Create /usr/local/bin/silis-python3 and export PATH in /etc/profile.d/silis_env.sh
