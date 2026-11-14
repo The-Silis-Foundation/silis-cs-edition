@@ -31,18 +31,48 @@ export LIBGL_ALWAYS_SOFTWARE=1
 export QT_QPA_PLATFORM=xcb
 EOF
 
-# 4. Enforce non-root ownership (UID 1000) on home directory. DO NOT manually create or chown ~/.vscode-server as root.
+# 4. Install and register the Silis CAD Workbench extension
+VSIX_PATH="${WORKSPACE_DIR}/extension/silis-cad-workbench-1.0.0.vsix"
+if command -v code >/dev/null 2>&1 && [ -f "$VSIX_PATH" ]; then
+    code --install-extension "$VSIX_PATH" --force 2>/dev/null || true
+fi
+
+# 5. Enforce non-root ownership on home directory and register extension in extensions.json
 CODESPACE_USER="$(id -un 1000 2>/dev/null || echo codespace)"
 CODESPACE_HOME="$(getent passwd "$CODESPACE_USER" 2>/dev/null | cut -d: -f6 || echo "/home/$CODESPACE_USER")"
 if [ -d "$CODESPACE_HOME" ]; then
     sudo chown -R 1000:1000 "$CODESPACE_HOME" 2>/dev/null || true
-    # Copy extension to non-root user extension directories with 1000:1000 ownership
     for EDIR in "${CODESPACE_HOME}/.vscode-remote/extensions" "${CODESPACE_HOME}/.vscode-server/extensions"; do
         mkdir -p "$EDIR" 2>/dev/null || true
         TARGET="${EDIR}/the-silis-foundation.silis-cad-workbench-1.0.0"
         rm -rf "$TARGET"
         cp -r "${WORKSPACE_DIR}/extension" "$TARGET" 2>/dev/null || true
+        # Register in extensions.json database
+        python3 -c "
+import json, os
+from pathlib import Path
+ext_id = 'the-silis-foundation.silis-cad-workbench'
+target = Path('$TARGET')
+edir = target.parent
+json_file = edir / 'extensions.json'
+items = []
+if json_file.is_file():
+    try:
+        items = json.loads(json_file.read_text(encoding='utf-8'))
+    except Exception:
+        items = []
+if not any(x.get('identifier', {}).get('id') == ext_id for x in items):
+    items.append({
+        'identifier': {'id': ext_id},
+        'version': '1.0.0',
+        'location': {'\$mid': 1, 'path': str(target), 'scheme': 'file'},
+        'relativeLocation': target.name,
+        'metadata': {'installedTimestamp': 1762832000000}
+    })
+    json_file.write_text(json.dumps(items), encoding='utf-8')
+" 2>/dev/null || true
         chown -R 1000:1000 "$TARGET" 2>/dev/null || true
+        chown 1000:1000 "$EDIR/extensions.json" 2>/dev/null || true
     done
 fi
 

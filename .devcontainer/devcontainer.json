@@ -13,8 +13,18 @@
     "vscode": {
       "settings": {
         "workbench.startupEditor": "readme",
-        "python.defaultInterpreterPath": "/opt/silis/runtime/opt/python/bin/python3"
-      }
+        "python.defaultInterpreterPath": "/opt/silis/runtime/opt/python/bin/python3",
+        "files.associations": {
+          "*.v": "systemverilog",
+          "*.sv": "systemverilog",
+          "*.svh": "systemverilog",
+          "*.vh": "systemverilog"
+        }
+      },
+      "extensions": [
+        "${containerWorkspaceFolder}/extension/silis-cad-workbench-1.0.0.vsix",
+        "mshr-h.VerilogHDL"
+      ]
     }
   },
   "postCreateCommand": "bash .devcontainer/setup.sh",
