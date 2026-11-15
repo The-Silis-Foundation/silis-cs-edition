@@ -1,10 +1,15 @@
 {
   "name": "Silis CS Edition",
   "image": "mcr.microsoft.com/devcontainers/universal:2",
-  "forwardPorts": [8765],
+  "forwardPorts": [8765, 6081],
   "portsAttributes": {
     "8765": {
       "label": "Silis Native CAD Web Hub (Schematic, Waveforms & Web FPS)",
+      "onAutoForward": "silent",
+      "visibility": "public"
+    },
+    "6081": {
+      "label": "Silis OpenROAD Native GUI (noVNC Layout)",
       "onAutoForward": "silent",
       "visibility": "public"
     }

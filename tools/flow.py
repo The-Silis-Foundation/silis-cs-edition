@@ -504,6 +504,17 @@ def run_openroad_gui(project_dir):
         fp.write("\n".join(lines) + "\n")
 
     print(f"[Silis Flow] Generated OpenROAD loader: {loader_script}")
+    
+    # Auto-ensure VNC and virtual framebuffer :1 are running
+    try:
+        import vnc_manager
+        vnc_st = vnc_manager.start_vnc()
+        if vnc_st.get("ready"):
+            print(f"[Silis Flow] [OK] Virtual Display and VNC Server active on {vnc_st.get('display')} (Port {vnc_st.get('novnc_port')}).")
+            print(f"[Silis Flow] [OK] Direct Layout VNC Stream: http://127.0.0.1:{vnc_st.get('novnc_port')}/vnc.html?autoconnect=true&resize=remote&reconnect=true")
+    except Exception as e:
+        print(f"[Silis Flow] [NOTICE] VNC auto-start skipped: {e}")
+
     env = _get_flow_env()
     if "DISPLAY" not in env and "WAYLAND_DISPLAY" not in env:
         print("[Silis Flow] [WARN] No active DISPLAY or WAYLAND_DISPLAY detected. Falling back to DISPLAY=:1.")
@@ -514,6 +525,7 @@ def run_openroad_gui(project_dir):
     try:
         proc = subprocess.Popen(cmd, cwd=os.path.dirname(def_file), env=env)
         print(f"[Silis Flow] [OK] OpenROAD GUI launched (PID: {proc.pid})")
+        print(f"[Silis Flow] To view physical layout in browser: connect to http://127.0.0.1:6081/vnc.html?autoconnect=true&resize=remote&reconnect=true")
     except Exception as e:
         print(f"[Silis Flow] [ERR] Failed to launch OpenROAD GUI: {e}")
         return 1

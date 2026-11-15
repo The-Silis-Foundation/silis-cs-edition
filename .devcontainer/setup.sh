@@ -7,6 +7,15 @@ WORKSPACE_DIR="/workspaces/silis-cs-edition"
 # 1. Check and init git submodule silis
 git -C "$WORKSPACE_DIR" submodule update --init silis 2>/dev/null || true
 
+# 1b. Ensure Xvfb, x11vnc, novnc, and websockify for OpenROAD GUI VNC
+if ! command -v Xvfb >/dev/null 2>&1 || ! command -v x11vnc >/dev/null 2>&1 || ! command -v websockify >/dev/null 2>&1; then
+    echo "Installing Xvfb, x11vnc, websockify, and novnc for native OpenROAD GUI..."
+    sudo apt-get update -qq && sudo apt-get install -y -qq xvfb x11vnc websockify novnc 2>/dev/null || true
+fi
+if [ -f "/usr/share/novnc/vnc.html" ] && [ ! -f "/usr/share/novnc/index.html" ]; then
+    sudo ln -sf /usr/share/novnc/vnc.html /usr/share/novnc/index.html 2>/dev/null || true
+fi
+
 # 2. Extract AppImage runtime into /opt/silis/runtime if not present
 OPT_DIR="/opt/silis/runtime"
 APPIMAGE="${WORKSPACE_DIR}/assets/silis-python-qt-x86_64.AppImage"

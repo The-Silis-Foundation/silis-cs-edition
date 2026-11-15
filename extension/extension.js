@@ -75,6 +75,144 @@ function activate(context) {
     let bottomDockWebview = null;
     let activeSchematicPanel = null;
     let activeLayoutPanel = null;
+    let activeOpenRoadPanel = null;
+
+    function getSchematicWebviewHtml(webview, extensionUri, pName) {
+        const schemDir = vscode.Uri.joinPath(extensionUri, 'web', 'schematic');
+        const cssUri = webview.asWebviewUri(vscode.Uri.joinPath(schemDir, 'schematic_webview.css'));
+        const yosysBridgeUri = webview.asWebviewUri(vscode.Uri.joinPath(schemDir, 'yosys_bridge.js'));
+        const jsUri = webview.asWebviewUri(vscode.Uri.joinPath(schemDir, 'schematic_webview.js'));
+        const htmlPath = path.join(extensionUri.fsPath, 'web', 'schematic', 'index.html');
+        let html = fs.readFileSync(htmlPath, 'utf8');
+        html = html.replace('href="schematic_webview.css"', `href="${cssUri}"`);
+        html = html.replace('src="yosys_bridge.js"', `src="${yosysBridgeUri}"`);
+        html = html.replace('src="schematic_webview.js"', `src="${jsUri}"`);
+        return html;
+    }
+
+    function getWaveformsWebviewHtml(webview, extensionUri) {
+        const waveDir = vscode.Uri.joinPath(extensionUri, 'web', 'waveforms');
+        const baseUri = webview.asWebviewUri(waveDir);
+        const htmlPath = path.join(extensionUri.fsPath, 'web', 'waveforms', 'index.html');
+        let html = fs.readFileSync(htmlPath, 'utf8');
+        html = html.replace('<base href="./">', `<base href="${baseUri}/">`);
+        return html;
+    }
+
+    function getPeekerWebviewHtml(webview, extensionUri, pName) {
+        const peekerDir = vscode.Uri.joinPath(extensionUri, 'web', 'peeker');
+        const cssUri = webview.asWebviewUri(vscode.Uri.joinPath(peekerDir, 'peeker.css'));
+        const jsUri = webview.asWebviewUri(vscode.Uri.joinPath(peekerDir, 'peeker_canvas.js'));
+        const htmlPath = path.join(extensionUri.fsPath, 'web', 'peeker', 'index.html');
+        let html = fs.readFileSync(htmlPath, 'utf8');
+        html = html.replace('href="peeker.css"', `href="${cssUri}"`);
+        html = html.replace('src="peeker_canvas.js"', `src="${jsUri}"`);
+        return html;
+    }
+
+    function getOpenRoadGuiWebviewHtml(vncUrl, pName) {
+        return `<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src * 'unsafe-inline' 'unsafe-eval' data: blob: ws: wss:; frame-src *; child-src *;">
+    <style>
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: var(--vscode-editor-background); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        #vnc-toolbar {
+            height: 38px;
+            background: var(--vscode-editor-background);
+            border-bottom: 1px solid var(--vscode-editorWidget-border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 12px;
+            color: var(--vscode-foreground);
+            font-size: 12px;
+            box-sizing: border-box;
+            user-select: none;
+        }
+        .vnc-title { font-weight: 600; color: var(--vscode-textLink-foreground); display: flex; align-items: center; gap: 8px; }
+        .vnc-badge { font-size: 10px; background: var(--vscode-badge-background, #388bfd33); color: var(--vscode-badge-foreground, #58a6ff); padding: 2px 6px; border-radius: 4px; font-weight: normal; }
+        .vnc-actions { display: flex; align-items: center; gap: 8px; }
+        .btn-primary {
+            background: var(--vscode-button-background, #007acc);
+            color: var(--vscode-button-foreground, #ffffff);
+            border: none;
+            border-radius: 4px;
+            padding: 4px 10px;
+            font-size: 11px;
+            font-weight: 600;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .btn-primary:hover { background: var(--vscode-button-hoverBackground, #0062a3); }
+        .btn-secondary {
+            background: var(--vscode-editorWidget-border, #333);
+            color: var(--vscode-foreground);
+            border: 1px solid var(--vscode-editorWidget-border);
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 11px;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+        }
+        .btn-secondary:hover { background: var(--vscode-list-hoverBackground); }
+        #ff-banner {
+            display: none;
+            padding: 6px 12px;
+            background: var(--vscode-statusBarItem-warningBackground, #855b00);
+            color: var(--vscode-statusBarItem-warningForeground, #ffffff);
+            font-size: 11px;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid var(--vscode-editorWidget-border);
+        }
+        .vnc-frame-wrap { width: 100%; height: calc(100% - 38px); position: relative; }
+        iframe { width: 100%; height: 100%; border: none; background: #000; }
+    </style>
+</head>
+<body>
+    <div id="vnc-toolbar">
+        <div class="vnc-title">
+            <span>OpenROAD Native Layout: ${pName}</span>
+            <span class="vnc-badge">Display :1 / noVNC 6081</span>
+        </div>
+        <div class="vnc-actions">
+            <button class="btn-primary" onclick="vscode.postMessage({ command: 'openExternal', url: '${vncUrl}' })">
+                Open in Dedicated Tab
+            </button>
+            <button class="btn-secondary" onclick="vscode.postMessage({ command: 'restartOpenRoad' })">
+                Restart OpenROAD GUI
+            </button>
+            <button class="btn-secondary" onclick="const f=document.getElementById('vnc-frame'); if(f) f.src='${vncUrl}';">
+                Reload Stream
+            </button>
+        </div>
+    </div>
+    <div id="ff-banner">
+        <span>Firefox Note: If an embedding security notice appears below, click <strong>Open in Dedicated Tab</strong> to view the hardware-accelerated layout stream directly with full permissions.</span>
+        <button class="btn-secondary" onclick="document.getElementById('ff-banner').style.display='none';">Dismiss</button>
+    </div>
+    <div class="vnc-frame-wrap">
+        <iframe id="vnc-frame" src="${vncUrl}" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-downloads allow-pointer-lock" allow="clipboard-read; clipboard-write; fullscreen;"></iframe>
+    </div>
+    <script>
+        const vscode = acquireVsCodeApi();
+        if (navigator.userAgent.toLowerCase().includes('firefox')) {
+            setTimeout(() => {
+                const b = document.getElementById('ff-banner');
+                if (b) b.style.display = 'flex';
+            }, 3000);
+        }
+    </script>
+</body>
+</html>`;
+    }
 
     async function openSchematicPanel(projectName, viewColumn = vscode.ViewColumn.Beside) {
         let pName = projectName || activeProject || 'demo_soc';
@@ -93,17 +231,36 @@ function activate(context) {
             'silisSchematic',
             `Schematic: ${pName}`,
             viewColumn,
-            { enableScripts: true, retainContextWhenHidden: true }
+            {
+                enableScripts: true,
+                retainContextWhenHidden: true,
+                localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'web')]
+            }
         );
         activeSchematicPanel = panel;
 
-        const projDir = getActiveProjectDir(pName);
-        const uri = await resolveUrl(`http://127.0.0.1:8765/schematic/digitaljs.html?project=${encodeURIComponent(projDir)}`);
-        panel.webview.html = getIframeHtml(uri, 'Schematic: ' + pName);
+        panel.webview.html = getSchematicWebviewHtml(panel.webview, context.extensionUri, pName);
+
+        // Fetch synthesized netlist from local CAD server and hydrate
+        (async () => {
+            try {
+                const projDir = getActiveProjectDir(pName);
+                const data = await callHttpApi(`http://127.0.0.1:8765/api/schematic?project=${encodeURIComponent(projDir)}`, 'GET');
+                if (data && (data.modules || Object.keys(data).length > 0)) {
+                    setTimeout(() => {
+                        if (panel && panel.webview) {
+                            panel.webview.postMessage({ command: 'loadSchematic', netlist: data });
+                        }
+                    }, 400);
+                }
+            } catch (e) {
+                console.error('[Silis] Failed to fetch schematic data:', e);
+            }
+        })();
 
         panel.webview.onDidReceiveMessage(async (msg) => {
-            if (msg && msg.fromSilisSchem && msg.data) {
-                const cadMsg = msg.data;
+            const cadMsg = (msg && msg.fromSilisSchem && msg.data) ? msg.data : msg;
+            if (cadMsg) {
                 if (cadMsg.type === 'contextAction') {
                     if (cadMsg.action === 'addToWaveform' && cadMsg.leafName) {
                         if (bottomDockWebview) {
@@ -150,23 +307,57 @@ function activate(context) {
         if (!fileOrProject) {
             fileOrProject = getActiveProjectDir();
         }
-        let queryParam = '';
-        if (typeof fileOrProject === 'string' && (fileOrProject.endsWith('.vcd') || fileOrProject.endsWith('.fst'))) {
-            queryParam = `file=${encodeURIComponent(fileOrProject)}`;
-        } else {
-            queryParam = `project=${encodeURIComponent(fileOrProject)}`;
-        }
-        const uri = await resolveUrl(`http://127.0.0.1:8765/waveforms/index.html?${queryParam}`);
         if (bottomDockWebview) {
-            bottomDockWebview.webview.html = getIframeHtml(uri, 'ROHD Waveform Inspector');
+            bottomDockWebview.webview.html = getWaveformsWebviewHtml(bottomDockWebview.webview, context.extensionUri);
+
+            let queryParam = '';
+            if (typeof fileOrProject === 'string' && (fileOrProject.endsWith('.vcd') || fileOrProject.endsWith('.fst'))) {
+                queryParam = `file=${encodeURIComponent(fileOrProject)}`;
+            } else {
+                queryParam = `project=${encodeURIComponent(fileOrProject)}`;
+            }
+
+            // Try local file read first from workspace folder
+            let vcdText = '';
+            const wsFolders = vscode.workspace.workspaceFolders;
+            if (wsFolders && wsFolders.length > 0) {
+                const candPath = (typeof fileOrProject === 'string' && fileOrProject.endsWith('.vcd'))
+                    ? (path.isAbsolute(fileOrProject) ? fileOrProject : path.join(wsFolders[0].uri.fsPath, fileOrProject))
+                    : path.join(wsFolders[0].uri.fsPath, getActiveProjectDir(fileOrProject), 'waveform.vcd');
+                if (fs.existsSync(candPath)) {
+                    try {
+                        vcdText = fs.readFileSync(candPath, 'utf8');
+                    } catch (e) {}
+                }
+            }
+            if (!vcdText) {
+                try {
+                    vcdText = await callHttpApi(`http://127.0.0.1:8765/api/waveform?${queryParam}`, 'GET');
+                } catch (e) {}
+            }
+
+            if (typeof vcdText === 'string' && vcdText.length > 0) {
+                setTimeout(() => {
+                    if (bottomDockWebview && bottomDockWebview.webview) {
+                        bottomDockWebview.webview.postMessage({
+                            command: 'loadVcd',
+                            text: vcdText,
+                            fileName: path.basename(fileOrProject || 'waveform.vcd')
+                        });
+                    }
+                }, 500);
+            }
         }
-        // D5: Do NOT auto-focus the dock here — focus is only triggered by explicit user action.
     }
 
     const bottomDockProvider = {
         async resolveWebviewView(webviewView) {
             bottomDockWebview = webviewView;
-            webviewView.webview.options = { enableScripts: true, retainContextWhenHidden: true };
+            webviewView.webview.options = {
+                enableScripts: true,
+                retainContextWhenHidden: true,
+                localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'web')]
+            };
 
             // Check if active project already has waveform.vcd; if so, load it immediately
             const pDir = getActiveProjectDir();
@@ -229,9 +420,22 @@ function activate(context) {
     // 2. Custom Editor Provider for VCD / Waveforms
     const vcdEditorProvider = {
         async resolveCustomTextEditor(document, webviewPanel) {
-            webviewPanel.webview.options = { enableScripts: true, retainContextWhenHidden: true };
-            const uri = await resolveUrl(`http://127.0.0.1:8765/waveforms/index.html?file=${encodeURIComponent(document.fileName)}`);
-            webviewPanel.webview.html = getIframeHtml(uri, 'Silis Waveforms: ' + document.fileName);
+            webviewPanel.webview.options = {
+                enableScripts: true,
+                retainContextWhenHidden: true,
+                localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'web')]
+            };
+            webviewPanel.webview.html = getWaveformsWebviewHtml(webviewPanel.webview, context.extensionUri);
+            try {
+                const text = fs.readFileSync(document.fileName, 'utf8');
+                setTimeout(() => {
+                    webviewPanel.webview.postMessage({
+                        command: 'loadVcd',
+                        text: text,
+                        fileName: path.basename(document.fileName)
+                    });
+                }, 400);
+            } catch (e) {}
         }
     };
     context.subscriptions.push(
@@ -241,9 +445,19 @@ function activate(context) {
     // 3. Custom Editor Provider for Structural Netlists (DigitalJS Schematic)
     const schematicEditorProvider = {
         async resolveCustomTextEditor(document, webviewPanel) {
-            webviewPanel.webview.options = { enableScripts: true, retainContextWhenHidden: true };
-            const uri = await resolveUrl(`http://127.0.0.1:8765/schematic/digitaljs.html?file=${encodeURIComponent(document.fileName)}`);
-            webviewPanel.webview.html = getIframeHtml(uri, 'Silis Schematic: ' + document.fileName);
+            webviewPanel.webview.options = {
+                enableScripts: true,
+                retainContextWhenHidden: true,
+                localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'web')]
+            };
+            webviewPanel.webview.html = getSchematicWebviewHtml(webviewPanel.webview, context.extensionUri, activeProject);
+            try {
+                const content = fs.readFileSync(document.fileName, 'utf8');
+                const netlist = JSON.parse(content);
+                setTimeout(() => {
+                    webviewPanel.webview.postMessage({ command: 'loadSchematic', netlist: netlist });
+                }, 400);
+            } catch (e) {}
         }
     };
     context.subscriptions.push(
@@ -253,10 +467,21 @@ function activate(context) {
     // 3b. Custom Editor Provider for DEF 2D Silicon Layout
     const defEditorProvider = {
         async resolveCustomTextEditor(document, webviewPanel) {
-            webviewPanel.webview.options = { enableScripts: true, retainContextWhenHidden: true };
+            webviewPanel.webview.options = {
+                enableScripts: true,
+                retainContextWhenHidden: true,
+                localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'web')]
+            };
             const defPath = document.fileName;
-            const uri = await resolveUrl(`http://127.0.0.1:8765/peeker/index.html?def=${encodeURIComponent(defPath)}`);
-            webviewPanel.webview.html = getIframeHtml(uri, 'Silis 2D Layout: ' + require('path').basename(defPath));
+            webviewPanel.webview.html = getPeekerWebviewHtml(webviewPanel.webview, context.extensionUri, activeProject);
+            try {
+                const defData = await callHttpApi(`http://127.0.0.1:8765/api/def/parse?def=${encodeURIComponent(defPath)}`, 'GET');
+                if (defData) {
+                    setTimeout(() => {
+                        webviewPanel.webview.postMessage({ type: 'loadDef', data: defData });
+                    }, 400);
+                }
+            } catch (e) {}
         }
     };
     context.subscriptions.push(
@@ -619,7 +844,7 @@ function activate(context) {
         })
     );
 
-    // 9. 2D Layout Canvas (World 1: FastSiliconPeeker with auto-connect)
+    // 9. 2D Layout Canvas (World 1: FastSiliconPeeker Native Webview)
     context.subscriptions.push(
         vscode.commands.registerCommand('silis.openLayout', async (projectName) => {
             const pName = projectName || activeProject || 'demo_soc';
@@ -629,12 +854,29 @@ function activate(context) {
             }
             activeLayoutPanel = vscode.window.createWebviewPanel(
                 'silisLayout',
-                '2D Layout (FastSiliconPeeker)',
+                `2D Layout: ${pName}`,
                 vscode.ViewColumn.Active,
-                { enableScripts: true, retainContextWhenHidden: true }
+                {
+                    enableScripts: true,
+                    retainContextWhenHidden: true,
+                    localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'web')]
+                }
             );
-            const uri = await resolveUrl(`http://127.0.0.1:8765/peeker/index.html?project=${encodeURIComponent(pName)}`);
-            activeLayoutPanel.webview.html = getIframeHtml(uri, '2D Layout: FastSiliconPeeker');
+            activeLayoutPanel.webview.html = getPeekerWebviewHtml(activeLayoutPanel.webview, context.extensionUri, pName);
+
+            (async () => {
+                try {
+                    const defData = await callHttpApi(`http://127.0.0.1:8765/api/def/parse?project=${encodeURIComponent(pName)}`, 'GET');
+                    if (defData) {
+                        setTimeout(() => {
+                            if (activeLayoutPanel && activeLayoutPanel.webview) {
+                                activeLayoutPanel.webview.postMessage({ type: 'loadDef', data: defData });
+                            }
+                        }, 400);
+                    }
+                } catch (e) {}
+            })();
+
             activeLayoutPanel.onDidDispose(() => { activeLayoutPanel = null; }, null, context.subscriptions);
         })
     );
@@ -725,13 +967,45 @@ function activate(context) {
         })
     );
 
-    // 10b. OpenROAD Native GUI (Physical Layout Inspection)
+    // 10b. OpenROAD Native GUI (Physical Layout Inspection via noVNC)
     context.subscriptions.push(
         vscode.commands.registerCommand('silis.openOpenRoadGui', async (projectName) => {
             const pName = projectName || activeProject || 'demo_soc';
             const term = getFlowTerminal();
             term.show();
             term.sendText(`python3 tools/flow.py --view-openroad --project projects/${pName}`);
+
+            const vncUrl = await resolveUrl('http://127.0.0.1:6081/vnc.html?autoconnect=true&resize=remote&reconnect=true');
+
+            if (activeOpenRoadPanel) {
+                activeOpenRoadPanel.reveal(vscode.ViewColumn.Active);
+                return;
+            }
+
+            const panel = vscode.window.createWebviewPanel(
+                'silisOpenRoadGui',
+                `OpenROAD Layout: ${pName}`,
+                vscode.ViewColumn.Active,
+                { enableScripts: true, retainContextWhenHidden: true }
+            );
+            activeOpenRoadPanel = panel;
+
+            panel.webview.html = getOpenRoadGuiWebviewHtml(vncUrl, pName);
+
+            panel.webview.onDidReceiveMessage(async (msg) => {
+                if (msg.command === 'openExternal') {
+                    const targetUri = vscode.Uri.parse(msg.url || vncUrl);
+                    vscode.env.openExternal(targetUri);
+                } else if (msg.command === 'restartOpenRoad') {
+                    const t = getFlowTerminal();
+                    t.show();
+                    t.sendText(`python3 tools/flow.py --view-openroad --project projects/${pName}`);
+                }
+            }, null, context.subscriptions);
+
+            panel.onDidDispose(() => {
+                activeOpenRoadPanel = null;
+            }, null, context.subscriptions);
         })
     );
 

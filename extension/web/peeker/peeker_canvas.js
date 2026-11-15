@@ -431,6 +431,20 @@ window.addEventListener('keydown', (e) => {
 window.addEventListener('message', (e) => {
   const msg = e.data;
   if (!msg) return;
+  if (msg.type === 'loadDef' || msg.type === 'loadLayout') {
+    const data = msg.data || msg.layout;
+    if (data) {
+      if (data.die) state.die = data.die;
+      if (data.core) state.core = data.core;
+      if (data.components) state.macros = data.components;
+      if (data.macros) state.macros = data.macros;
+      if (data.pins) state.pins = data.pins;
+      updateComponentCount();
+      canvasZoomFit();
+      requestAnimationFrame(render);
+    }
+    return;
+  }
   if (msg.type === 'highlightComponent') {
     const compName = (msg.name || '').toLowerCase();
     const target = state.macros.find(m => m.inst && m.inst.toLowerCase() === compName);
