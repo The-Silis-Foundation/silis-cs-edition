@@ -54,29 +54,80 @@ def resolve_tool_bin(name):
     return shutil.which(name) or name
 
 
+def is_safe_subpath(target_path, base_dirs):
+    """
+    Validates that target_path resolves strictly within one of the allowed base_dirs,
+    thwarting path traversal attacks (e.g., ../../etc/passwd).
+    """
+    if not target_path:
+        return False
+    try:
+        real_target = os.path.realpath(target_path)
+        if isinstance(base_dirs, (str, Path)):
+            base_dirs = [base_dirs]
+        for base in base_dirs:
+            if not base:
+                continue
+            real_base = os.path.realpath(base)
+            if os.path.commonpath([real_target, real_base]) == real_base:
+                return True
+        return False
+    except Exception:
+        return False
+
+
+def safe_resolve_file(file_path, base_dirs):
+    """
+    Safely resolves a file path within a list of allowed base directories.
+    Returns canonical realpath if safe and existing, else None.
+    """
+    if not file_path:
+        return None
+    if isinstance(base_dirs, (str, Path)):
+        base_dirs = [base_dirs]
+    for b in base_dirs:
+        if not b or not os.path.isdir(b):
+            continue
+        cand = file_path if os.path.isabs(file_path) else os.path.join(b, file_path)
+        try:
+            cand_real = os.path.realpath(cand)
+            base_real = os.path.realpath(b)
+            if os.path.commonpath([cand_real, base_real]) == base_real and os.path.isfile(cand_real):
+                return cand_real
+        except Exception:
+            continue
+    return None
+
+
 def resolve_project_dir(proj_arg):
-    """Fuzzy-resolves any project identifier or path into an absolute project directory."""
+    """Fuzzy-resolves any project identifier or path into an absolute project directory strictly within workspace."""
     if not proj_arg:
         return SilisCadHandler.active_project_dir
-    if os.path.isabs(proj_arg) and os.path.isdir(proj_arg):
-        return proj_arg
+
+    # Guard against path traversal attempts
+    if ".." in proj_arg:
+        proj_arg = re.sub(r"\.\.+[/\\Release]*", "", proj_arg).strip("/\\")
+
+    if os.path.isabs(proj_arg):
+        if is_safe_subpath(proj_arg, [PROJECTS_DIR, REPO_ROOT]) and os.path.isdir(proj_arg):
+            return proj_arg
+        return SilisCadHandler.active_project_dir
 
     clean = proj_arg.replace("projects/", "").strip("/")
     cands = [
-        os.path.join(REPO_ROOT, "projects", clean),
+        os.path.join(PROJECTS_DIR, clean),
         os.path.join(REPO_ROOT, proj_arg),
         os.path.join(REPO_ROOT, clean),
     ]
     for c in cands:
-        if os.path.isdir(c):
+        if is_safe_subpath(c, [PROJECTS_DIR, REPO_ROOT]) and os.path.isdir(c):
             return c
 
     # Fuzzy search projects/ by project_name or top_module in .silisproj
-    proj_dir = os.path.join(REPO_ROOT, "projects")
-    if os.path.isdir(proj_dir):
-        for item in os.listdir(proj_dir):
-            p = os.path.join(proj_dir, item)
-            if not os.path.isdir(p):
+    if os.path.isdir(PROJECTS_DIR):
+        for item in os.listdir(PROJECTS_DIR):
+            p = os.path.join(PROJECTS_DIR, item)
+            if not os.path.isdir(p) or item.startswith("."):
                 continue
             for sp_name in ["silis.silisproj", f"{item}.silisproj"]:
                 sp = os.path.join(p, sp_name)
@@ -91,10 +142,10 @@ def resolve_project_dir(proj_arg):
 
     if os.path.isdir(SilisCadHandler.active_project_dir):
         return SilisCadHandler.active_project_dir
-    demo_dir = os.path.join(REPO_ROOT, "projects", "demo_soc")
+    demo_dir = os.path.join(PROJECTS_DIR, "demo_soc")
     if os.path.isdir(demo_dir):
         return demo_dir
-    return os.path.join(REPO_ROOT, proj_arg)
+    return PROJECTS_DIR
 
 
 def parse_def_file(def_path):
@@ -725,23 +776,45 @@ class SilisCadHandler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
 
     def do_HEAD(self):
-        self.do_GET()
+        try:
+            self._handle_get()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        except Exception:
+            pass
 
     def _send_json(self, status_code, data):
-        self.send_response(status_code)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.end_headers()
-        self.wfile.write(json.dumps(data, indent=2).encode("utf-8"))
+        try:
+            self.send_response(status_code)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(json.dumps(data, indent=2).encode("utf-8"))
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def _send_html(self, status_code, html_content):
-        self.send_response(status_code)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Content-Security-Policy", "frame-ancestors *")
-        self.end_headers()
-        self.wfile.write(html_content.encode("utf-8"))
+        try:
+            self.send_response(status_code)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Content-Security-Policy", "frame-ancestors *")
+            self.end_headers()
+            self.wfile.write(html_content.encode("utf-8"))
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def do_GET(self):
+        try:
+            self._handle_get()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        except Exception as e:
+            try:
+                self._send_json(500, {"error": f"Internal server error: {e}"})
+            except Exception:
+                pass
+
+    def _handle_get(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
         query = urllib.parse.parse_qs(parsed.query)
@@ -894,6 +967,12 @@ class SilisCadHandler(http.server.SimpleHTTPRequestHandler):
             target_file = query.get("file", [None])[0]
             module_name = query.get("module", ["chip_top"])[0]
             project_dir = resolve_project_dir(query.get("project", [""])[0])
+            if target_file:
+                safe_file = safe_resolve_file(target_file, [project_dir, REPO_ROOT])
+                if not safe_file:
+                    self._send_json(403, {"error": "Access Denied: Invalid or inaccessible netlist file path."})
+                    return
+                target_file = safe_file
             data = None
             # Check if pre-synthesized structural JSON exists
             synth_json_candidates = [
@@ -926,6 +1005,12 @@ class SilisCadHandler(http.server.SimpleHTTPRequestHandler):
         if path == "/api/waveform":
             target_file = query.get("file", [None])[0]
             project_dir = resolve_project_dir(query.get("project", [""])[0])
+            if target_file:
+                safe_file = safe_resolve_file(target_file, [project_dir, REPO_ROOT])
+                if not safe_file:
+                    self._send_json(403, {"error": "Access Denied: Invalid or inaccessible waveform file path."})
+                    return
+                target_file = safe_file
             vcd_content = self._find_waveform(project_dir, target_file)
             if vcd_content:
                 self.send_response(200)
@@ -942,6 +1027,12 @@ class SilisCadHandler(http.server.SimpleHTTPRequestHandler):
         if path == "/api/waveform/values":
             target_file = query.get("file", [None])[0]
             project_dir = resolve_project_dir(query.get("project", [""])[0])
+            if target_file:
+                safe_file = safe_resolve_file(target_file, [project_dir, REPO_ROOT])
+                if not safe_file:
+                    self._send_json(403, {"error": "Access Denied: Invalid or inaccessible waveform file path."})
+                    return
+                target_file = safe_file
             try:
                 time_ps = int(query.get("time", [0])[0])
             except ValueError:
@@ -1018,11 +1109,11 @@ class SilisCadHandler(http.server.SimpleHTTPRequestHandler):
             proj_name = query.get("project", [None])[0]
             p_dir = resolve_project_dir(proj_name)
             if def_path:
-                cand = def_path if os.path.isabs(def_path) else os.path.join(p_dir, def_path)
-                if not (os.path.isfile(cand) and os.path.getsize(cand) > 0):
-                    cand = os.path.join(REPO_ROOT, def_path)
-                if os.path.isfile(cand) and os.path.getsize(cand) > 0:
-                    def_path = cand
+                cand = safe_resolve_file(def_path, [p_dir, REPO_ROOT])
+                if not cand:
+                    self._send_json(403, {"error": "Access Denied: Invalid or inaccessible DEF path."})
+                    return
+                def_path = cand
             else:
                 cands = [
                     os.path.join(p_dir, "results", "temp.def"),
@@ -1170,22 +1261,38 @@ class SilisCadHandler(http.server.SimpleHTTPRequestHandler):
 
         if path.startswith("/schematic/") or path == "/schematic.html" or path == "/digitaljs.html":
             rel_path = path.replace("/schematic/", "").replace("/schematic.html", "digitaljs.html").replace("/digitaljs.html", "digitaljs.html").lstrip("/")
-            local_file = os.path.join(SCHEMATIC_DIR, rel_path if rel_path else "digitaljs.html")
+            rel_norm = os.path.normpath(rel_path)
+            if rel_norm.startswith("..") or ".." in rel_norm.split(os.sep):
+                self._send_json(403, {"error": "Access Denied: Path traversal detected."})
+                return
+            local_file = os.path.join(SCHEMATIC_DIR, rel_norm if rel_norm and rel_norm != "." else "digitaljs.html")
             return self._serve_file(local_file)
 
         if path.startswith("/waveforms/") or path.startswith("/rohd/") or path == "/waveforms.html":
             rel_path = path.replace("/waveforms/", "").replace("/rohd/", "").replace("/waveforms.html", "index.html").lstrip("/")
-            local_file = os.path.join(ROHD_DIR, rel_path if rel_path else "index.html")
+            rel_norm = os.path.normpath(rel_path)
+            if rel_norm.startswith("..") or ".." in rel_norm.split(os.sep):
+                self._send_json(403, {"error": "Access Denied: Path traversal detected."})
+                return
+            local_file = os.path.join(ROHD_DIR, rel_norm if rel_norm and rel_norm != "." else "index.html")
             return self._serve_file(local_file)
 
         if path.startswith("/floorplanner/") or path == "/floorplanner" or path == "/floorplanner.html":
             rel_path = path.replace("/floorplanner/", "").replace("/floorplanner.html", "").replace("/floorplanner", "").lstrip("/")
-            local_file = os.path.join(FLOORPLANNER_WEB_DIR, rel_path if rel_path else "index.html")
+            rel_norm = os.path.normpath(rel_path)
+            if rel_norm.startswith("..") or ".." in rel_norm.split(os.sep):
+                self._send_json(403, {"error": "Access Denied: Path traversal detected."})
+                return
+            local_file = os.path.join(FLOORPLANNER_WEB_DIR, rel_norm if rel_norm and rel_norm != "." else "index.html")
             return self._serve_file(local_file)
 
         if path.startswith("/peeker/") or path == "/peeker" or path == "/peeker.html":
             rel_path = path.replace("/peeker/", "").replace("/peeker.html", "").replace("/peeker", "").lstrip("/")
-            local_file = os.path.join(PEEKER_WEB_DIR, rel_path if rel_path else "index.html")
+            rel_norm = os.path.normpath(rel_path)
+            if rel_norm.startswith("..") or ".." in rel_norm.split(os.sep):
+                self._send_json(403, {"error": "Access Denied: Path traversal detected."})
+                return
+            local_file = os.path.join(PEEKER_WEB_DIR, rel_norm if rel_norm and rel_norm != "." else "index.html")
             return self._serve_file(local_file)
 
         # Root endpoint: if requested by browser/iframe (text/html), serve session restorer hub
@@ -1272,15 +1379,30 @@ class SilisCadHandler(http.server.SimpleHTTPRequestHandler):
             return
 
         # Fallback to serving from SCHEMATIC_DIR or ROHD_DIR
-        if os.path.exists(os.path.join(SCHEMATIC_DIR, path.lstrip("/"))):
-            return self._serve_file(os.path.join(SCHEMATIC_DIR, path.lstrip("/")))
-        if os.path.exists(os.path.join(ROHD_DIR, path.lstrip("/"))):
-            return self._serve_file(os.path.join(ROHD_DIR, path.lstrip("/")))
+        clean_path = os.path.normpath(path.lstrip("/"))
+        if not clean_path.startswith("..") and ".." not in clean_path.split(os.sep):
+            cand_s = os.path.join(SCHEMATIC_DIR, clean_path)
+            if is_safe_subpath(cand_s, SCHEMATIC_DIR) and os.path.exists(cand_s):
+                return self._serve_file(cand_s)
+            cand_r = os.path.join(ROHD_DIR, clean_path)
+            if is_safe_subpath(cand_r, ROHD_DIR) and os.path.exists(cand_r):
+                return self._serve_file(cand_r)
 
         self.send_response(404)
         self.end_headers()
 
     def do_POST(self):
+        try:
+            self._handle_post()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        except Exception as e:
+            try:
+                self._send_json(500, {"error": f"Internal server error: {e}"})
+            except Exception:
+                pass
+
+    def _handle_post(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
 
@@ -1326,17 +1448,23 @@ class SilisCadHandler(http.server.SimpleHTTPRequestHandler):
                 raw_rtl = payload.get("rtl_files", payload.get("copy_files", []))
                 for item in raw_rtl:
                     if str(item).startswith("[NEW] "):
-                        fname = str(item)[6:].strip()
+                        fname = os.path.basename(str(item)[6:].strip())
                         fpath = os.path.join(proj_dir, "rtl", fname)
                         mod_name = os.path.splitext(fname)[0]
                         with open(fpath, "w", encoding="utf-8") as nf:
                             nf.write("// Module: " + mod_name + "\nmodule " + mod_name + " (\n    input logic clk,\n    input logic rst_n\n);\n\nendmodule\n")
                         rtl_files.append(f"rtl/{fname}")
                     elif os.path.isfile(item):
+                        if not is_safe_subpath(item, [REPO_ROOT, os.path.expanduser("~")]):
+                            self._send_json(403, {"error": f"Access Denied: File '{item}' is outside authorized workspace."})
+                            return
                         dst = os.path.join(proj_dir, "rtl", os.path.basename(item))
                         shutil.copy2(item, dst)
                         rtl_files.append(f"rtl/{os.path.basename(item)}")
                     elif os.path.isdir(item):
+                        if not is_safe_subpath(item, [REPO_ROOT, os.path.expanduser("~")]):
+                            self._send_json(403, {"error": f"Access Denied: Directory '{item}' is outside authorized workspace."})
+                            return
                         for root, _, fs in os.walk(item):
                             for f in fs:
                                 if f.endswith((".v", ".sv", ".vhd", ".vhdl")):
@@ -1425,11 +1553,14 @@ endmodule
                 sdc_files = []
                 for sdc_item in payload.get("sdc_files", []):
                     if os.path.isfile(sdc_item):
+                        if not is_safe_subpath(sdc_item, [REPO_ROOT, os.path.expanduser("~")]):
+                            self._send_json(403, {"error": f"Access Denied: SDC file '{sdc_item}' is outside authorized workspace."})
+                            return
                         dst = os.path.join(proj_dir, "constr", os.path.basename(sdc_item))
                         shutil.copy2(sdc_item, dst)
                         sdc_files.append(f"constr/{os.path.basename(sdc_item)}")
                     elif str(sdc_item).startswith("[NEW] "):
-                        sfname = str(sdc_item)[6:].strip()
+                        sfname = os.path.basename(str(sdc_item)[6:].strip())
                         sfpath = os.path.join(proj_dir, "constr", sfname)
                         with open(sfpath, "w", encoding="utf-8") as sff:
                             sff.write("create_clock -name clk -period 10.0 [get_ports clk]\n")
@@ -1453,10 +1584,16 @@ set_output_delay {clock_period * 0.2:.1f} -clock clk [all_outputs]
                 top_tb = payload.get("top_tb", "").strip() or f"tb_{top_module}"
                 for tb_item in payload.get("tb_files", []):
                     if os.path.isfile(tb_item):
+                        if not is_safe_subpath(tb_item, [REPO_ROOT, os.path.expanduser("~")]):
+                            self._send_json(403, {"error": f"Access Denied: Testbench file '{tb_item}' is outside authorized workspace."})
+                            return
                         dst = os.path.join(proj_dir, "tb", os.path.basename(tb_item))
                         shutil.copy2(tb_item, dst)
                         tb_files.append(f"tb/{os.path.basename(tb_item)}")
                     elif os.path.isdir(tb_item):
+                        if not is_safe_subpath(tb_item, [REPO_ROOT, os.path.expanduser("~")]):
+                            self._send_json(403, {"error": f"Access Denied: Testbench directory '{tb_item}' is outside authorized workspace."})
+                            return
                         for root, _, fs in os.walk(tb_item):
                             for f in fs:
                                 if f.endswith((".v", ".sv", ".vhd", ".vhdl")):
@@ -1465,7 +1602,7 @@ set_output_delay {clock_period * 0.2:.1f} -clock clk [all_outputs]
                                     shutil.copy2(src_f, dst)
                                     tb_files.append(f"tb/{f}")
                     elif str(tb_item).startswith("[NEW] "):
-                        tfname = str(tb_item)[6:].strip()
+                        tfname = os.path.basename(str(tb_item)[6:].strip())
                         tfpath = os.path.join(proj_dir, "tb", tfname)
                         with open(tfpath, "w", encoding="utf-8") as tff:
                             tff.write(f"`timescale 1ns/1ps\nmodule {top_tb};\n    initial begin\n        $dumpfile(\"waveform.vcd\");\n        $dumpvars(0, {top_tb});\n        #100 $finish;\n    end\nendmodule\n")
@@ -1511,6 +1648,9 @@ endmodule
                 upf_path = os.path.join(proj_dir, "power", "design.upf")
                 upf_user = payload.get("upf_file", "").strip()
                 if upf_user and os.path.isfile(upf_user):
+                    if not is_safe_subpath(upf_user, [REPO_ROOT, os.path.expanduser("~")]):
+                        self._send_json(403, {"error": f"Access Denied: UPF file '{upf_user}' is outside authorized workspace."})
+                        return
                     shutil.copy2(upf_user, upf_path)
                 else:
                     upf_content = f"""# IEEE 1801 UPF 3.0 Power Intent
@@ -1530,6 +1670,9 @@ set_domain_supply_net PD_TOP -primary_power_net VDD -primary_ground_net VSS
                 io_path = os.path.join(proj_dir, "io", "pin_order.cfg")
                 io_user = payload.get("io_file", "").strip()
                 if io_user and os.path.isfile(io_user):
+                    if not is_safe_subpath(io_user, [REPO_ROOT, os.path.expanduser("~")]):
+                        self._send_json(403, {"error": f"Access Denied: IO configuration file '{io_user}' is outside authorized workspace."})
+                        return
                     shutil.copy2(io_user, io_path)
                 else:
                     io_content = f"""# Silis Pin Placement Configuration
@@ -1563,7 +1706,7 @@ valid
                             sf.write(m_stub)
                         rtl_files.append(f"rtl/{m_name}_stub.v")
                     lef_path = m_item.get("lef_path")
-                    if lef_path and os.path.isfile(lef_path):
+                    if lef_path and os.path.isfile(lef_path) and is_safe_subpath(lef_path, [REPO_ROOT, os.path.expanduser("~"), "/opt/silis"]):
                         dst_lef = os.path.join(proj_dir, "rtl", os.path.basename(lef_path))
                         try:
                             shutil.copy2(lef_path, dst_lef)
@@ -1653,10 +1796,8 @@ valid
         if path == "/api/peeker/load_def":
             def_path = payload.get("def_path")
             if def_path:
-                cand = def_path if os.path.isabs(def_path) else os.path.join(SilisCadHandler.active_project_dir, def_path)
-                if not (os.path.isfile(cand) and os.path.getsize(cand) > 0):
-                    cand = os.path.join(REPO_ROOT, def_path)
-                if os.path.isfile(cand) and os.path.getsize(cand) > 0:
+                cand = safe_resolve_file(def_path, [SilisCadHandler.active_project_dir, REPO_ROOT])
+                if cand and os.path.isfile(cand) and os.path.getsize(cand) > 0 and cand.endswith(".def"):
                     results_temp = os.path.join(REPO_ROOT, "results", "temp.def")
                     os.makedirs(os.path.dirname(results_temp), exist_ok=True)
                     shutil.copy2(cand, results_temp)
@@ -1726,9 +1867,11 @@ valid
                 file_path = payload.get("file")
                 line = payload.get("line", 1)
                 if file_path:
-                    code_bin = shutil.which("code") or shutil.which("code-insiders")
-                    if code_bin:
-                        subprocess.Popen([code_bin, "--goto", f"{file_path}:{line}:1"])
+                    safe_file = safe_resolve_file(file_path, [SilisCadHandler.active_project_dir, REPO_ROOT])
+                    if safe_file:
+                        code_bin = shutil.which("code") or shutil.which("code-insiders")
+                        if code_bin:
+                            subprocess.Popen([code_bin, "--goto", f"{safe_file}:{line}:1"], start_new_session=True)
                 self._send_json(200, {"status": "ok"})
             except Exception as e:
                 self._send_json(500, {"error": str(e)})
@@ -1769,9 +1912,31 @@ valid
         self.end_headers()
 
     def _serve_file(self, full_path):
+        # Validate that full_path is strictly within permitted asset roots
+        allowed_roots = [
+            SCHEMATIC_DIR,
+            ROHD_DIR,
+            FLOORPLANNER_WEB_DIR,
+            PEEKER_WEB_DIR,
+            os.path.join(REPO_ROOT, "tools"),
+            REPO_ROOT,
+        ]
+        if not is_safe_subpath(full_path, allowed_roots):
+            try:
+                self.send_response(403)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(b'{"error": "Access Denied: Path traversal prohibited"}')
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            return
+
         if not os.path.isfile(full_path):
-            self.send_response(404)
-            self.end_headers()
+            try:
+                self.send_response(404)
+                self.end_headers()
+            except (BrokenPipeError, ConnectionResetError):
+                pass
             return
 
         ext = os.path.splitext(full_path)[1].lower()
@@ -1803,15 +1968,21 @@ valid
                 self.send_header("Cross-Origin-Embedder-Policy", "require-corp")
             self.end_headers()
             self.wfile.write(content)
-        except Exception as e:
-            self.send_response(500)
-            self.end_headers()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        except Exception:
+            try:
+                self.send_response(500)
+                self.end_headers()
+            except Exception:
+                pass
 
     def _locate_vcd_path(self, project_dir, target_file=None):
         if target_file:
-            cand = target_file if os.path.isabs(target_file) else os.path.join(project_dir, target_file)
-            if os.path.isfile(cand) and os.path.getsize(cand) > 0:
-                return cand
+            safe = safe_resolve_file(target_file, [project_dir, REPO_ROOT])
+            if safe and safe.endswith((".vcd", ".fst")):
+                return safe
+            return None
 
         candidates = [
             os.path.join(project_dir, "waveform.vcd"),
@@ -1854,7 +2025,7 @@ valid
         cmd.extend(v_files)
 
         try:
-            res = subprocess.run(cmd, cwd=project_dir, capture_output=True, text=True, timeout=30)
+            res = subprocess.run(cmd, cwd=project_dir, capture_output=True, text=True, timeout=30, start_new_session=True)
             output = res.stderr or res.stdout or ""
             return {
                 "exit_code": res.returncode,
@@ -1907,7 +2078,7 @@ valid
         hier_cmd = f"hierarchy -top {module_name}" if (module_name and module_name != "auto") else "hierarchy -auto-top"
         ys_script = "; ".join(read_cmds) + f"; {hier_cmd}; prep; write_json {out_json}"
         try:
-            subprocess.run([yosys_bin, "-q", "-p", ys_script], cwd=project_dir, timeout=30, check=True)
+            subprocess.run([yosys_bin, "-q", "-p", ys_script], cwd=project_dir, timeout=30, check=True, start_new_session=True)
             if os.path.isfile(out_json):
                 with open(out_json, "r", encoding="utf-8") as f:
                     return f.read()

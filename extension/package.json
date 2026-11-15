@@ -17,20 +17,44 @@
   "scripts": {
     "compile": "node -e \"console.log('Silis CAD Workbench: Extension is pure JS, no compilation step needed.')\""
   },
+  "activationEvents": [
+    "onStartupFinished",
+    "onView:silis-cad-sidebar",
+    "onView:silis-bottom-dock",
+    "onCommand:silis.openDashboard",
+    "onCommand:silis.newProject",
+    "onCommand:silis.openProject",
+    "onCommand:silis.refreshReadme",
+    "onCommand:silis.openWorkbench",
+    "onCommand:silis.openSchematic",
+    "onCommand:silis.openWaveforms",
+    "onCommand:silis.openWaveformInBottomDock",
+    "onCommand:silis.openLayout",
+    "onCommand:silis.openFloorplanner",
+    "onCommand:silis.openOpenRoadGui",
+    "onCommand:silis.runSimulation",
+    "onCommand:silis.runLint",
+    "onCommand:silis.runSynthesis",
+    "onCommand:silis.runAll",
+    "onCustomEditor:silis.vcdViewer",
+    "onCustomEditor:silis.schematicViewer",
+    "onCustomEditor:silis.defViewer",
+    "onCustomEditor:silis.gdsViewer"
+  ],
   "contributes": {
     "viewsContainers": {
       "activitybar": [
         {
           "id": "silis-cad-workbench",
           "title": "Silis CAD",
-          "icon": "$(circuit-board)"
+          "icon": "web/circuit-board.svg"
         }
       ],
       "panel": [
         {
           "id": "silis-waveforms-panel",
           "title": "Silis Waveforms",
-          "icon": "$(pulse)"
+          "icon": "web/pulse.svg"
         }
       ]
     },
@@ -102,57 +126,68 @@
       {
         "command": "silis.openDashboard",
         "title": "Silis: Open ASIC Studio Dashboard",
-        "category": "Silis"
+        "category": "Silis",
+        "icon": "$(dashboard)"
       },
       {
         "command": "silis.newProject",
         "title": "Silis: New ASIC Project",
-        "category": "Silis"
+        "category": "Silis",
+        "icon": "$(new-folder)"
       },
       {
         "command": "silis.openProject",
         "title": "Silis: Open Project",
-        "category": "Silis"
+        "category": "Silis",
+        "icon": "$(folder-opened)"
       },
       {
         "command": "silis.refreshReadme",
         "title": "Silis: Refresh Project Dashboard",
-        "category": "Silis"
+        "category": "Silis",
+        "icon": "$(refresh)"
       },
       {
         "command": "silis.openWorkbench",
         "title": "Silis: Open ASIC CAD Workbench Dock",
-        "category": "Silis"
+        "category": "Silis",
+        "icon": "$(window)"
       },
       {
         "command": "silis.openSchematic",
         "title": "Silis: Open Schematic Viewer",
-        "category": "Silis"
+        "category": "Silis",
+        "icon": "$(circuit-board)"
       },
       {
         "command": "silis.openWaveforms",
         "title": "Silis: Open ROHD Waveforms",
-        "category": "Silis"
+        "category": "Silis",
+        "icon": "$(pulse)"
       },
       {
         "command": "silis.openWaveformInBottomDock",
         "title": "Silis: View Waveform in Bottom Dock",
-        "category": "Silis"
+        "category": "Silis",
+        "icon": "$(pulse)"
       },
       {
         "command": "silis.openLayout",
         "title": "Silis: Open 2D Layout Canvas",
-        "category": "Silis"
+        "category": "Silis",
+        "icon": "$(layers)"
       },
       {
         "command": "silis.openFloorplanner",
         "title": "Silis: Open Floorplan & Power Studio",
-        "category": "Silis"
+        "category": "Silis",
+        "icon": "$(layout)"
       },
       {
         "command": "silis.openOpenRoadGui",
         "title": "Silis: OpenROAD Native GUI (Physical Layout)",
-        "category": "Silis"
+        "category": "Silis",
+        "icon": "$(layout-sidebar-right)"
       },
       {
         "command": "silis.runSimulation",
@@ -169,18 +204,27 @@
       {
         "command": "silis.runSynthesis",
         "title": "Silis: Run Synthesis (Yosys)",
-        "category": "Silis"
+        "category": "Silis",
+        "icon": "$(gear)"
       },
       {
         "command": "silis.runAll",
         "title": "Silis: Run Full ASIC Tapeout Flow (OpenROAD)",
-        "category": "Silis"
+        "category": "Silis",
+        "icon": "$(rocket)"
       }
     ],
     "keybindings": [
       {
         "command": "silis.runLint",
         "key": "ctrl+l",
+        "mac": "cmd+l",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "silis.runSimulation",
+        "key": "ctrl+shift+r",
+        "mac": "cmd+shift+r",
         "when": "editorTextFocus"
       }
     ],
@@ -199,7 +243,27 @@
         {
           "command": "silis.openWaveformInBottomDock",
           "when": "resourceExtname == .vcd || resourceExtname == .fst",
-          "group": "navigation"
+          "group": "navigation@1"
+        },
+        {
+          "command": "silis.openLayout",
+          "when": "resourceExtname == .def",
+          "group": "navigation@2"
+        },
+        {
+          "command": "silis.openSchematic",
+          "when": "resourceExtname == .json",
+          "group": "navigation@3"
+        },
+        {
+          "command": "silis.runSimulation",
+          "when": "resourceExtname == .v || resourceExtname == .sv",
+          "group": "navigation@4"
+        },
+        {
+          "command": "silis.runLint",
+          "when": "resourceExtname == .v || resourceExtname == .sv",
+          "group": "navigation@5"
         }
       ]
     }

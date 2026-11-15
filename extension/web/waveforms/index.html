@@ -65,7 +65,7 @@
         }
       }
       if (e.data && (e.data.command === 'addSignal' || e.data.type === 'addSignal')) {
-        const sig = e.data.signal || e.data.name;
+        const sig = e.data.signal || e.data.name || e.data.signalName;
         if (sig) {
           window.addRohdSignal(sig);
         }

@@ -26,10 +26,11 @@ if [ -f "${WORKSPACE_DIR}/tools/vnc_manager.py" ]; then
     python3 "${WORKSPACE_DIR}/tools/vnc_manager.py" start > /tmp/cs_vnc_server.log 2>&1 || true
 fi
 
-# Ensure ports 8765 and 6081 are marked public to prevent iframe authentication redirects in browser
+# Ensure ports 8765 and 6081 visibility is configured safely (defaults to private, or public if CODESPACE_PORT_VISIBILITY=public)
+TARGET_VIS="${CODESPACE_PORT_VISIBILITY:-private}"
 if command -v gh >/dev/null 2>&1 && [ -n "${CODESPACE_NAME:-}" ]; then
-    gh codespace ports visibility 8765:public -c "$CODESPACE_NAME" 2>/dev/null || true
-    gh codespace ports visibility 6081:public -c "$CODESPACE_NAME" 2>/dev/null || true
+    gh codespace ports visibility "8765:${TARGET_VIS}" -c "$CODESPACE_NAME" 2>/dev/null || true
+    gh codespace ports visibility "6081:${TARGET_VIS}" -c "$CODESPACE_NAME" 2>/dev/null || true
 fi
 
 echo "Silis CS server started on port 8765, VNC manager on port 6081. Logs at /tmp/cs_cad_server.log."

@@ -6,12 +6,12 @@
     "8765": {
       "label": "Silis Native CAD Web Hub (Schematic, Waveforms & Web FPS)",
       "onAutoForward": "silent",
-      "visibility": "public"
+      "visibility": "private"
     },
     "6081": {
       "label": "Silis OpenROAD Native GUI (noVNC Layout)",
       "onAutoForward": "silent",
-      "visibility": "public"
+      "visibility": "private"
     }
   },
   "customizations": {

@@ -10,11 +10,46 @@ import sys
 import glob
 import re
 import json
+import time
+import signal
 import shutil
 import subprocess
 import argparse
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
+
+def run_subprocess_safe(cmd, cwd=None, env=None, timeout=120):
+    """
+    Runs a subprocess in its own process group with strict timeout.
+    Prevents zombie / orphan processes by terminating the process group on timeout.
+    """
+    proc = subprocess.Popen(
+        cmd,
+        cwd=cwd,
+        env=env,
+        start_new_session=True,
+    )
+    try:
+        proc.wait(timeout=timeout)
+        return proc
+    except subprocess.TimeoutExpired:
+        print(f"[Silis Flow] [ERR] Process timed out after {timeout}s: {' '.join(str(c) for c in cmd)}")
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            time.sleep(0.5)
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except Exception:
+            pass
+        proc.wait()  # Reap process to prevent zombie
+        return proc
+    except Exception as e:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except Exception:
+            pass
+        proc.wait()
+        raise e
 def _resolve_binary(name):
     cands = [
         os.path.join(REPO_ROOT, "silis", "third-party", "bin", name),
@@ -205,7 +240,7 @@ bind {sim_top} _silis_vcd_tracer _silis_auto_vcd_inst();
 
     print(f"[Silis Flow] Executing Verilator native compilation...")
     try:
-        res = subprocess.run(v_cmd, cwd=project_dir, env=env)
+        res = run_subprocess_safe(v_cmd, cwd=project_dir, env=env, timeout=120)
         if res.returncode != 0:
             print(f"[Silis Flow] [ERR] Verilator compilation failed with exit code {res.returncode}")
             return res.returncode
@@ -216,7 +251,7 @@ bind {sim_top} _silis_vcd_tracer _silis_auto_vcd_inst();
     # Run binary
     print(f"[Silis Flow] Running simulation binary: {out_bin}...")
     try:
-        sim_proc = subprocess.run([out_bin], cwd=project_dir, env=env)
+        sim_proc = run_subprocess_safe([out_bin], cwd=project_dir, env=env, timeout=60)
         if sim_proc.returncode != 0:
             print(f"[Silis Flow] [WARN] Simulation exited with code {sim_proc.returncode}")
     except FileNotFoundError:
@@ -301,7 +336,7 @@ def run_synth(project_dir, json_only=False):
 
     cmd = [YOSYS_BIN, "-q", "-p", script]
     try:
-        res = subprocess.run(cmd, cwd=project_dir, env=_get_flow_env())
+        res = run_subprocess_safe(cmd, cwd=project_dir, env=_get_flow_env(), timeout=120)
         if res.returncode == 0:
             print(f"[Silis Flow] [OK] Schematic Netlist generated: {out_json}")
             if not json_only:
@@ -336,7 +371,7 @@ def run_tapeout(project_dir):
 
     if fp_tcl and _is_tool_available(OPENROAD_BIN):
         print(f"[Silis Flow] Synthesizing floorplan via OpenROAD using {fp_tcl}...")
-        res = subprocess.run([OPENROAD_BIN, "-exit", fp_tcl], cwd=project_dir, env=_get_flow_env())
+        res = run_subprocess_safe([OPENROAD_BIN, "-exit", fp_tcl], cwd=project_dir, env=_get_flow_env(), timeout=180)
         if res.returncode != 0:
             print(f"[Silis Flow] [ERR] OpenROAD floorplan execution failed with returncode {res.returncode}")
             return res.returncode
@@ -383,7 +418,7 @@ def run_lint(project_dir):
 
     print(f"[Silis Flow] Executing: {' '.join(cmd)}")
     try:
-        res = subprocess.run(cmd, cwd=project_dir)
+        res = run_subprocess_safe(cmd, cwd=project_dir, timeout=30)
         if res.returncode == 0:
             print(f"[Silis Flow] [OK] RTL Lint passed with 0 errors.")
         else:
@@ -417,7 +452,7 @@ def run_floorplan(project_dir):
         return 1
 
     print(f"[Silis Flow] Executing OpenROAD with {tcl_file}...")
-    res = subprocess.run([OPENROAD_BIN, "-exit", tcl_file], cwd=project_dir, env=_get_flow_env())
+    res = run_subprocess_safe([OPENROAD_BIN, "-exit", tcl_file], cwd=project_dir, env=_get_flow_env(), timeout=180)
     return res.returncode
 
 
@@ -523,7 +558,7 @@ def run_openroad_gui(project_dir):
     cmd = [OPENROAD_BIN, "-gui", loader_script]
     print(f"[Silis Flow] Executing: {' '.join(cmd)}")
     try:
-        proc = subprocess.Popen(cmd, cwd=os.path.dirname(def_file), env=env)
+        proc = subprocess.Popen(cmd, cwd=os.path.dirname(def_file), env=env, start_new_session=True)
         print(f"[Silis Flow] [OK] OpenROAD GUI launched (PID: {proc.pid})")
         print(f"[Silis Flow] To view physical layout in browser: connect to http://127.0.0.1:6081/vnc.html?autoconnect=true&resize=remote&reconnect=true")
     except Exception as e:

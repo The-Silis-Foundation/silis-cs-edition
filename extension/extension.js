@@ -2,6 +2,32 @@ const vscode = require('vscode');
 const path = require('path');
 const fs = require('fs');
 
+function escapeHtml(str) {
+    if (!str) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function safePostMessage(webviewOrPanel, msg) {
+    try {
+        if (!webviewOrPanel) return;
+        const webview = webviewOrPanel.webview || webviewOrPanel;
+        webview.postMessage(msg);
+    } catch (e) {
+        // Target webview was disposed before message could be delivered
+    }
+}
+
+function atomicWriteFileSync(filePath, content) {
+    const tmpPath = `${filePath}.tmp.${Date.now()}`;
+    fs.writeFileSync(tmpPath, content);
+    fs.renameSync(tmpPath, filePath);
+}
+
 function activate(context) {
     console.log('[Silis CAD Extension] Activating Silis CS EDA Workbench...');
 
@@ -18,9 +44,12 @@ function activate(context) {
         return `projects/${name}`;
     }
 
+    let activeSidebarWebview = null;
+
     // 1. Sidebar Webview Provider (Silis CAD in Activity Bar)
     const sidebarProvider = {
         async resolveWebviewView(webviewView) {
+            activeSidebarWebview = webviewView;
             webviewView.webview.options = { enableScripts: true };
             const apiBase = await resolveUrl('http://127.0.0.1:8765');
             webviewView.webview.html = getSidebarHtml(apiBase.replace(/\/$/, ''), activeProject);
@@ -54,7 +83,7 @@ function activate(context) {
                     case 'getProjects':
                         try {
                             const projs = await callHttpApi('http://127.0.0.1:8765/api/projects', 'GET');
-                            webviewView.webview.postMessage({ type: 'projectsLoaded', projects: projs });
+                            safePostMessage(webviewView, { type: 'projectsLoaded', projects: projs });
                         } catch(e) {}
                         break;
                     case 'runSynthesis':
@@ -63,6 +92,12 @@ function activate(context) {
                     case 'runAll':
                         vscode.commands.executeCommand('silis.runAll');
                         break;
+                }
+            });
+
+            webviewView.onDidDispose(() => {
+                if (activeSidebarWebview === webviewView) {
+                    activeSidebarWebview = null;
                 }
             });
         }
@@ -111,6 +146,8 @@ function activate(context) {
     }
 
     function getOpenRoadGuiWebviewHtml(vncUrl, pName) {
+        const safeName = escapeHtml(pName || 'Active Design');
+        const safeUrlAttr = escapeHtml(vncUrl);
         return `<!DOCTYPE html>
 <html>
 <head>
@@ -179,30 +216,48 @@ function activate(context) {
 <body>
     <div id="vnc-toolbar">
         <div class="vnc-title">
-            <span>OpenROAD Native Layout: ${pName}</span>
+            <span>OpenROAD Native Layout: ${safeName}</span>
             <span class="vnc-badge">Display :1 / noVNC 6081</span>
         </div>
         <div class="vnc-actions">
-            <button class="btn-primary" onclick="vscode.postMessage({ command: 'openExternal', url: '${vncUrl}' })">
+            <button class="btn-primary" id="btn-open-tab">
                 Open in Dedicated Tab
             </button>
-            <button class="btn-secondary" onclick="vscode.postMessage({ command: 'restartOpenRoad' })">
+            <button class="btn-secondary" id="btn-restart-gui">
                 Restart OpenROAD GUI
             </button>
-            <button class="btn-secondary" onclick="const f=document.getElementById('vnc-frame'); if(f) f.src='${vncUrl}';">
+            <button class="btn-secondary" id="btn-reload-stream">
                 Reload Stream
             </button>
         </div>
     </div>
     <div id="ff-banner">
         <span>Firefox Note: If an embedding security notice appears below, click <strong>Open in Dedicated Tab</strong> to view the hardware-accelerated layout stream directly with full permissions.</span>
-        <button class="btn-secondary" onclick="document.getElementById('ff-banner').style.display='none';">Dismiss</button>
+        <button class="btn-secondary" id="btn-dismiss-banner">Dismiss</button>
     </div>
     <div class="vnc-frame-wrap">
-        <iframe id="vnc-frame" src="${vncUrl}" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-downloads allow-pointer-lock" allow="clipboard-read; clipboard-write; fullscreen;"></iframe>
+        <iframe id="vnc-frame" src="${safeUrlAttr}" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-downloads allow-pointer-lock" allow="clipboard-read; clipboard-write; fullscreen;"></iframe>
     </div>
     <script>
         const vscode = acquireVsCodeApi();
+        const VNC_URL = ${JSON.stringify(vncUrl)};
+        document.getElementById('btn-open-tab').addEventListener('click', () => {
+            vscode.postMessage({ command: 'openExternal', url: VNC_URL });
+        });
+        document.getElementById('btn-restart-gui').addEventListener('click', () => {
+            vscode.postMessage({ command: 'restartOpenRoad' });
+        });
+        document.getElementById('btn-reload-stream').addEventListener('click', () => {
+            const f = document.getElementById('vnc-frame');
+            if (f) f.src = VNC_URL;
+        });
+        const dismissBtn = document.getElementById('btn-dismiss-banner');
+        if (dismissBtn) {
+            dismissBtn.addEventListener('click', () => {
+                const b = document.getElementById('ff-banner');
+                if (b) b.style.display = 'none';
+            });
+        }
         if (navigator.userAgent.toLowerCase().includes('firefox')) {
             setTimeout(() => {
                 const b = document.getElementById('ff-banner');
@@ -248,9 +303,7 @@ function activate(context) {
                 const data = await callHttpApi(`http://127.0.0.1:8765/api/schematic?project=${encodeURIComponent(projDir)}`, 'GET');
                 if (data && (data.modules || Object.keys(data).length > 0)) {
                     setTimeout(() => {
-                        if (panel && panel.webview) {
-                            panel.webview.postMessage({ command: 'loadSchematic', netlist: data });
-                        }
+                        safePostMessage(panel, { command: 'loadSchematic', netlist: data });
                     }, 400);
                 }
             } catch (e) {
@@ -261,10 +314,20 @@ function activate(context) {
         panel.webview.onDidReceiveMessage(async (msg) => {
             const cadMsg = (msg && msg.fromSilisSchem && msg.data) ? msg.data : msg;
             if (cadMsg) {
-                if (cadMsg.type === 'contextAction') {
+                if (cadMsg.type === 'wireSelected' && (cadMsg.net || cadMsg.name)) {
+                    const netName = cadMsg.net || cadMsg.name;
+                    if (bottomDockWebview) {
+                        safePostMessage(bottomDockWebview, { type: 'addSignal', signal: netName, name: netName, signalName: netName });
+                    }
+                    vscode.commands.executeCommand('silis-bottom-dock.focus');
+                } else if (cadMsg.type === 'componentSelected' && cadMsg.name) {
+                    if (activeLayoutPanel) {
+                        safePostMessage(activeLayoutPanel, { type: 'highlightComponent', name: cadMsg.name });
+                    }
+                } else if (cadMsg.type === 'contextAction') {
                     if (cadMsg.action === 'addToWaveform' && cadMsg.leafName) {
                         if (bottomDockWebview) {
-                            bottomDockWebview.webview.postMessage({ type: 'addSignal', signalName: cadMsg.leafName });
+                            safePostMessage(bottomDockWebview, { type: 'addSignal', signal: cadMsg.leafName, name: cadMsg.leafName, signalName: cadMsg.leafName });
                         }
                         vscode.commands.executeCommand('silis-bottom-dock.focus');
                     } else if ((cadMsg.action === 'gotoSource' || cadMsg.action === 'gotoDefinition') && cadMsg.sourcePositions && cadMsg.sourcePositions.length > 0) {
@@ -294,11 +357,13 @@ function activate(context) {
                     }
                 }
             }
-        }, undefined, context.subscriptions);
+        });
 
         panel.onDidDispose(() => {
-            activeSchematicPanel = null;
-        }, null, context.subscriptions);
+            if (activeSchematicPanel === panel) {
+                activeSchematicPanel = null;
+            }
+        });
 
         return panel;
     }
@@ -338,13 +403,11 @@ function activate(context) {
 
             if (typeof vcdText === 'string' && vcdText.length > 0) {
                 setTimeout(() => {
-                    if (bottomDockWebview && bottomDockWebview.webview) {
-                        bottomDockWebview.webview.postMessage({
-                            command: 'loadVcd',
-                            text: vcdText,
-                            fileName: path.basename(fileOrProject || 'waveform.vcd')
-                        });
-                    }
+                    safePostMessage(bottomDockWebview, {
+                        command: 'loadVcd',
+                        text: vcdText,
+                        fileName: path.basename(fileOrProject || 'waveform.vcd')
+                    });
                 }, 500);
             }
         }
@@ -398,17 +461,45 @@ function activate(context) {
                                 const query = `project=${encodeURIComponent(getActiveProjectDir())}&time=${timePs}${sigs ? '&signals=' + encodeURIComponent(sigs) : ''}`;
                                 const res = await callHttpApi(`http://127.0.0.1:8765/api/waveform/values?${query}`, 'GET');
                                 if (Array.isArray(res) && activeSchematicPanel) {
-                                    activeSchematicPanel.webview.postMessage({ type: 'setValues', updates: res });
+                                    safePostMessage(activeSchematicPanel, { type: 'setValues', updates: res });
                                 }
                             } catch (e) {
                                 console.error('[Silis Cross-Probe] Failed to query waveform values:', e);
                             }
                         }, 25);
+                    } else if (rohdMsg.type === 'jumpToAssertion' && rohdMsg.file) {
+                        const wsFolders = vscode.workspace.workspaceFolders;
+                        if (wsFolders && wsFolders.length > 0) {
+                            let relPath = rohdMsg.file;
+                            if (!relPath.startsWith('projects/') && !relPath.startsWith('/')) {
+                                relPath = `projects/${activeProject}/${relPath}`;
+                            }
+                            const fileUri = relPath.startsWith('/')
+                                ? vscode.Uri.file(relPath)
+                                : vscode.Uri.joinPath(wsFolders[0].uri, relPath);
+                            const line = rohdMsg.line ? Math.max(0, rohdMsg.line - 1) : 0;
+                            try {
+                                const doc = await vscode.workspace.openTextDocument(fileUri);
+                                await vscode.window.showTextDocument(doc, {
+                                    viewColumn: vscode.ViewColumn.One,
+                                    selection: new vscode.Range(line, 0, line, 0),
+                                    preview: false
+                                });
+                            } catch (e) {
+                                console.error('[Silis Assertion] Failed to open source document:', e);
+                            }
+                        }
+                    } else if (rohdMsg.type === 'openWaveformFile') {
+                        vscode.commands.executeCommand('silis.openWaveforms');
                     }
                 }
             });
 
             webviewView.onDidDispose(() => {
+                if (_scrubTimer) {
+                    clearTimeout(_scrubTimer);
+                    _scrubTimer = null;
+                }
                 bottomDockWebview = null;
             });
         }
@@ -427,15 +518,38 @@ function activate(context) {
             };
             webviewPanel.webview.html = getWaveformsWebviewHtml(webviewPanel.webview, context.extensionUri);
             try {
-                const text = fs.readFileSync(document.fileName, 'utf8');
+                const text = document.getText();
                 setTimeout(() => {
-                    webviewPanel.webview.postMessage({
+                    safePostMessage(webviewPanel, {
                         command: 'loadVcd',
                         text: text,
                         fileName: path.basename(document.fileName)
                     });
                 }, 400);
             } catch (e) {}
+
+            let _docScrubTimer = null;
+            webviewPanel.webview.onDidReceiveMessage(async (msg) => {
+                if (msg && msg.fromSilisRohd && msg.data) {
+                    const rohdMsg = msg.data;
+                    if (rohdMsg.type === 'cursorMoved' && activeSchematicPanel) {
+                        if (_docScrubTimer) clearTimeout(_docScrubTimer);
+                        _docScrubTimer = setTimeout(async () => {
+                            _docScrubTimer = null;
+                            try {
+                                const query = `project=${encodeURIComponent(getActiveProjectDir())}&time=${rohdMsg.time || 0}`;
+                                const res = await callHttpApi(`http://127.0.0.1:8765/api/waveform/values?${query}`, 'GET');
+                                if (Array.isArray(res) && activeSchematicPanel) {
+                                    safePostMessage(activeSchematicPanel, { type: 'setValues', updates: res });
+                                }
+                            } catch (e) {}
+                        }, 25);
+                    }
+                }
+            });
+            webviewPanel.onDidDispose(() => {
+                if (_docScrubTimer) clearTimeout(_docScrubTimer);
+            });
         }
     };
     context.subscriptions.push(
@@ -451,13 +565,39 @@ function activate(context) {
                 localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'web')]
             };
             webviewPanel.webview.html = getSchematicWebviewHtml(webviewPanel.webview, context.extensionUri, activeProject);
+            activeSchematicPanel = webviewPanel;
+            webviewPanel.onDidDispose(() => {
+                if (activeSchematicPanel === webviewPanel) activeSchematicPanel = null;
+            });
             try {
-                const content = fs.readFileSync(document.fileName, 'utf8');
+                const content = document.getText();
                 const netlist = JSON.parse(content);
                 setTimeout(() => {
-                    webviewPanel.webview.postMessage({ command: 'loadSchematic', netlist: netlist });
+                    safePostMessage(webviewPanel, { command: 'loadSchematic', netlist: netlist });
                 }, 400);
             } catch (e) {}
+
+            webviewPanel.webview.onDidReceiveMessage(async (msg) => {
+                const cadMsg = (msg && msg.fromSilisSchem && msg.data) ? msg.data : msg;
+                if (cadMsg) {
+                    if (cadMsg.type === 'wireSelected' && (cadMsg.net || cadMsg.name)) {
+                        const netName = cadMsg.net || cadMsg.name;
+                        if (bottomDockWebview) {
+                            safePostMessage(bottomDockWebview, { type: 'addSignal', signal: netName, name: netName, signalName: netName });
+                        }
+                        vscode.commands.executeCommand('silis-bottom-dock.focus');
+                    } else if (cadMsg.type === 'componentSelected' && cadMsg.name) {
+                        if (activeLayoutPanel) {
+                            safePostMessage(activeLayoutPanel, { type: 'highlightComponent', name: cadMsg.name });
+                        }
+                    } else if (cadMsg.type === 'contextAction' && cadMsg.action === 'addToWaveform' && cadMsg.leafName) {
+                        if (bottomDockWebview) {
+                            safePostMessage(bottomDockWebview, { type: 'addSignal', signal: cadMsg.leafName, name: cadMsg.leafName, signalName: cadMsg.leafName });
+                        }
+                        vscode.commands.executeCommand('silis-bottom-dock.focus');
+                    }
+                }
+            });
         }
     };
     context.subscriptions.push(
@@ -474,11 +614,15 @@ function activate(context) {
             };
             const defPath = document.fileName;
             webviewPanel.webview.html = getPeekerWebviewHtml(webviewPanel.webview, context.extensionUri, activeProject);
+            activeLayoutPanel = webviewPanel;
+            webviewPanel.onDidDispose(() => {
+                if (activeLayoutPanel === webviewPanel) activeLayoutPanel = null;
+            });
             try {
                 const defData = await callHttpApi(`http://127.0.0.1:8765/api/def/parse?def=${encodeURIComponent(defPath)}`, 'GET');
                 if (defData) {
                     setTimeout(() => {
-                        webviewPanel.webview.postMessage({ type: 'loadDef', data: defData });
+                        safePostMessage(webviewPanel, { type: 'loadDef', data: defData });
                     }, 400);
                 }
             } catch (e) {}
@@ -492,7 +636,7 @@ function activate(context) {
     const gdsEditorProvider = {
         async resolveCustomTextEditor(document, webviewPanel) {
             webviewPanel.webview.options = { enableScripts: true };
-            const baseName = require('path').basename(document.fileName);
+            const baseName = escapeHtml(require('path').basename(document.fileName));
             webviewPanel.webview.html = `<!DOCTYPE html>
 <html>
 <head>
@@ -575,7 +719,7 @@ function activate(context) {
                     case 'getProjects':
                         try {
                             const projs = await callHttpApi('http://127.0.0.1:8765/api/projects', 'GET');
-                            dashboardPanel.webview.postMessage({ type: 'projectsLoaded', projects: projs });
+                            safePostMessage(dashboardPanel, { type: 'projectsLoaded', projects: projs });
                         } catch(e) {}
                         break;
                     case 'runSynthesis':
@@ -588,11 +732,11 @@ function activate(context) {
                         vscode.commands.executeCommand('silis.refreshReadme');
                         break;
                 }
-            }, undefined, context.subscriptions);
+            });
 
             dashboardPanel.onDidDispose(() => {
                 dashboardPanel = null;
-            }, null, context.subscriptions);
+            });
         })
     );
 
@@ -619,9 +763,9 @@ function activate(context) {
                 if (message.command === 'fetchPdks') {
                     try {
                         const pdks = await callHttpApi('http://127.0.0.1:8765/api/pdks', 'GET');
-                        panel.webview.postMessage({ type: 'pdksLoaded', pdks: pdks || [] });
+                        safePostMessage(panel, { type: 'pdksLoaded', pdks: pdks || [] });
                     } catch (e) {
-                        panel.webview.postMessage({ type: 'pdksLoaded', pdks: [] });
+                        safePostMessage(panel, { type: 'pdksLoaded', pdks: [] });
                     }
                     return;
                 }
@@ -630,9 +774,9 @@ function activate(context) {
                     try {
                         const pdk = message.pdk || 'sky130';
                         const macros = await callHttpApi(`http://127.0.0.1:8765/api/macros?pdk=${encodeURIComponent(pdk)}`, 'GET');
-                        panel.webview.postMessage({ type: 'macrosLoaded', macros: macros || [] });
+                        safePostMessage(panel, { type: 'macrosLoaded', macros: macros || [] });
                     } catch (e) {
-                        panel.webview.postMessage({ type: 'macrosLoaded', macros: [] });
+                        safePostMessage(panel, { type: 'macrosLoaded', macros: [] });
                     }
                     return;
                 }
@@ -647,7 +791,7 @@ function activate(context) {
                     };
                     const uris = await vscode.window.showOpenDialog(opts);
                     if (uris && uris.length > 0) {
-                        panel.webview.postMessage({
+                        safePostMessage(panel, {
                             type: 'filesSelected',
                             target: message.target,
                             files: uris.map(u => u.fsPath)
@@ -663,7 +807,7 @@ function activate(context) {
                         if (res && res.status === 'created') {
                             activeProject = payload.name;
                             await context.workspaceState.update('silis.activeProject', activeProject);
-                            panel.webview.postMessage({ type: 'created', name: payload.name, top_module: payload.top_module });
+                            safePostMessage(panel, { type: 'created', name: payload.name, top_module: payload.top_module });
 
                             vscode.window.showInformationMessage(`Silis Project "${activeProject}" created successfully.`);
 
@@ -676,10 +820,13 @@ function activate(context) {
                                 }
                             }
 
-                            // Refresh dynamic README and dashboard
+                            // Refresh dynamic README, dashboard, and sidebar
                             vscode.commands.executeCommand('silis.refreshReadme');
                             if (dashboardPanel) {
-                                dashboardPanel.webview.postMessage({ type: 'refresh' });
+                                safePostMessage(dashboardPanel, { type: 'refresh' });
+                            }
+                            if (activeSidebarWebview) {
+                                safePostMessage(activeSidebarWebview, { type: 'activeProjectChanged', active: activeProject });
                             }
 
                             // Auto-close wizard dialog (Desktop parity: QDialog.accept closes wizard on completion)
@@ -687,13 +834,13 @@ function activate(context) {
                                 try { panel.dispose(); } catch (e) {}
                             }, 600);
                         } else {
-                            panel.webview.postMessage({ type: 'error', message: (res && res.error) || 'Failed to initialize project.' });
+                            safePostMessage(panel, { type: 'error', message: (res && res.error) || 'Failed to initialize project.' });
                         }
                     } catch (err) {
-                        panel.webview.postMessage({ type: 'error', message: String(err) });
+                        safePostMessage(panel, { type: 'error', message: String(err) });
                     }
                 }
-            }, undefined, context.subscriptions);
+            });
         })
     );
 
@@ -813,7 +960,10 @@ function activate(context) {
                 vscode.window.showInformationMessage(`Active Project: ${activeProject}`);
 
                 if (dashboardPanel) {
-                    dashboardPanel.webview.postMessage({ type: 'refresh' });
+                    safePostMessage(dashboardPanel, { type: 'refresh' });
+                }
+                if (activeSidebarWebview) {
+                    safePostMessage(activeSidebarWebview, { type: 'activeProjectChanged', active: activeProject });
                 }
             }
         })
@@ -869,15 +1019,15 @@ function activate(context) {
                     const defData = await callHttpApi(`http://127.0.0.1:8765/api/def/parse?project=${encodeURIComponent(pName)}`, 'GET');
                     if (defData) {
                         setTimeout(() => {
-                            if (activeLayoutPanel && activeLayoutPanel.webview) {
-                                activeLayoutPanel.webview.postMessage({ type: 'loadDef', data: defData });
-                            }
+                            safePostMessage(activeLayoutPanel, { type: 'loadDef', data: defData });
                         }, 400);
                     }
                 } catch (e) {}
             })();
 
-            activeLayoutPanel.onDidDispose(() => { activeLayoutPanel = null; }, null, context.subscriptions);
+            activeLayoutPanel.onDidDispose(() => {
+                activeLayoutPanel = null;
+            });
         })
     );
 
@@ -919,9 +1069,7 @@ function activate(context) {
                 try {
                     const sessionData = JSON.parse(fs.readFileSync(sessionPath, 'utf8'));
                     setTimeout(() => {
-                        if (activeFloorplanPanel && activeFloorplanPanel.webview) {
-                            activeFloorplanPanel.webview.postMessage({ command: 'loadSession', session: sessionData });
-                        }
+                        safePostMessage(activeFloorplanPanel, { command: 'loadSession', session: sessionData });
                     }, 400);
                 } catch (e) {
                     console.error('Failed to parse existing .silis_fp_session.json', e);
@@ -937,12 +1085,12 @@ function activate(context) {
 
                     if (action === 'saveSession') {
                         const sessionPath = path.join(projDir, '.silis_fp_session.json');
-                        fs.writeFileSync(sessionPath, JSON.stringify(msg.state || {}, null, 2));
+                        atomicWriteFileSync(sessionPath, JSON.stringify(msg.state || {}, null, 2));
                         vscode.window.showInformationMessage(`Floorplan session saved to projects/${pName}/.silis_fp_session.json`);
                     } else if (action === 'exportTcl' || action === 'commitFlow') {
                         const tclPath = path.join(projDir, 'run_floorplan.tcl');
                         if (msg.tcl) {
-                            fs.writeFileSync(tclPath, msg.tcl);
+                            atomicWriteFileSync(tclPath, msg.tcl);
                         }
                         if (action === 'commitFlow') {
                             const term = getFlowTerminal();
@@ -961,9 +1109,11 @@ function activate(context) {
                         term.sendText(`python3 tools/flow.py --lint --project projects/${pName}`);
                     }
                 }
-            }, null, context.subscriptions);
+            });
 
-            activeFloorplanPanel.onDidDispose(() => { activeFloorplanPanel = null; }, null, context.subscriptions);
+            activeFloorplanPanel.onDidDispose(() => {
+                activeFloorplanPanel = null;
+            });
         })
     );
 
@@ -975,9 +1125,12 @@ function activate(context) {
             term.show();
             term.sendText(`python3 tools/flow.py --view-openroad --project projects/${pName}`);
 
-            const vncUrl = await resolveUrl('http://127.0.0.1:6081/vnc.html?autoconnect=true&resize=remote&reconnect=true');
+            const baseVnc = await resolveUrl('http://127.0.0.1:6081/');
+            const vncUrl = `${baseVnc.replace(/\/$/, '')}/vnc.html?autoconnect=true&resize=scale&reconnect=true&path=websockify`;
 
             if (activeOpenRoadPanel) {
+                activeOpenRoadPanel.title = `OpenROAD Layout: ${pName}`;
+                activeOpenRoadPanel.webview.html = getOpenRoadGuiWebviewHtml(vncUrl, pName);
                 activeOpenRoadPanel.reveal(vscode.ViewColumn.Active);
                 return;
             }
@@ -994,18 +1147,23 @@ function activate(context) {
 
             panel.webview.onDidReceiveMessage(async (msg) => {
                 if (msg.command === 'openExternal') {
-                    const targetUri = vscode.Uri.parse(msg.url || vncUrl);
-                    vscode.env.openExternal(targetUri);
+                    let targetUri = vscode.Uri.parse(msg.url || vncUrl);
+                    try {
+                        targetUri = await vscode.env.asExternalUri(targetUri);
+                    } catch (e) {}
+                    await vscode.env.openExternal(targetUri);
                 } else if (msg.command === 'restartOpenRoad') {
                     const t = getFlowTerminal();
                     t.show();
-                    t.sendText(`python3 tools/flow.py --view-openroad --project projects/${pName}`);
+                    t.sendText(`python3 tools/flow.py --view-openroad --project projects/${activeProject || pName}`);
                 }
-            }, null, context.subscriptions);
+            });
 
             panel.onDidDispose(() => {
-                activeOpenRoadPanel = null;
-            }, null, context.subscriptions);
+                if (activeOpenRoadPanel === panel) {
+                    activeOpenRoadPanel = null;
+                }
+            });
         })
     );
 
@@ -1110,8 +1268,13 @@ function activate(context) {
                 const wsFolders = vscode.workspace.workspaceFolders;
                 if (wsFolders && wsFolders.length > 0) {
                     const cp = require('child_process');
-                    const scriptPath = vscode.Uri.joinPath(wsFolders[0].uri, 'tools', 'gen_readme.py').fsPath;
-                    cp.execFile('python3', [scriptPath], { cwd: wsFolders[0].uri.fsPath });
+                    let scriptPath = vscode.Uri.joinPath(wsFolders[0].uri, 'tools', 'gen_readme.py').fsPath;
+                    if (!fs.existsSync(scriptPath)) {
+                        scriptPath = vscode.Uri.joinPath(wsFolders[0].uri, 'silis-cs-edition', 'tools', 'gen_readme.py').fsPath;
+                    }
+                    if (fs.existsSync(scriptPath)) {
+                        cp.execFile('python3', [scriptPath], { cwd: path.dirname(path.dirname(scriptPath)) });
+                    }
                 }
             } catch (e) {}
         })
@@ -1148,12 +1311,16 @@ function callHttpApi(urlString, method, bodyData) {
                 res.setEncoding('utf8');
                 res.on('data', (d) => { chunks += d; });
                 res.on('end', () => {
+                    if (res.statusCode && res.statusCode >= 400) {
+                        return reject(new Error(`HTTP ${res.statusCode}: ${chunks}`));
+                    }
                     try {
                         resolve(JSON.parse(chunks));
                     } catch (e) {
                         resolve(chunks);
                     }
                 });
+                res.on('error', (e) => reject(e));
             });
             req.on('error', (e) => reject(e));
             req.on('timeout', () => { req.destroy(); reject(new Error('Request timed out')); });
@@ -1197,7 +1364,8 @@ function getBottomDockIdleHtml() {
 }
 
 function getIframeHtml(url, title) {
-    const safeTitle = (title || 'Silis CAD Engine').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const safeTitle = escapeHtml(title || 'Silis CAD Engine');
+    const safeUrl = escapeHtml(url);
     return `<!DOCTYPE html>
 <html>
 <head>
@@ -1251,24 +1419,36 @@ function getIframeHtml(url, title) {
     <div id="silis-bar">
         <div class="bar-title">${safeTitle}</div>
         <div class="bar-links">
-            <button class="bar-btn" onclick="const f=document.getElementById('cad-frame'); if(f) f.src='${url}';">Reload</button>
-            <a class="bar-btn" href="${url}" target="_blank" rel="noopener noreferrer">Open in New Window</a>
+            <button class="bar-btn" id="btn-reload-frame">Reload</button>
+            <a class="bar-btn" href="${safeUrl}" target="_blank" rel="noopener noreferrer">Open in New Window</a>
         </div>
     </div>
     <div id="firefox-banner">
         <span>Firefox / Codespaces Notice: If a forwarded port authentication warning or blank frame appears, click <strong>Open in New Window</strong> to authorize once.</span>
-        <button class="bar-btn" onclick="document.getElementById('firefox-banner').style.display='none';">Dismiss</button>
+        <button class="bar-btn" id="btn-dismiss-ff">Dismiss</button>
     </div>
     <div class="frame-wrap">
-        <iframe id="cad-frame" name="silis-target:${encodeURIComponent(url)}" src="${url}" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads" allow="cross-origin-isolated; clipboard-read; clipboard-write;"></iframe>
+        <iframe id="cad-frame" name="silis-target:${encodeURIComponent(url)}" src="${safeUrl}" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads" allow="cross-origin-isolated; clipboard-read; clipboard-write;"></iframe>
     </div>
     <script>
         const vscode = acquireVsCodeApi();
-        const targetUrl = '${url}';
+        const targetUrl = ${JSON.stringify(url)};
         let redirected = false;
         let frameReady = false;
 
-        // Check if running in Firefox and show banner if frame takes long or gets blocked by cross-origin cookies
+        document.getElementById('btn-reload-frame').addEventListener('click', () => {
+            const f = document.getElementById('cad-frame');
+            if (f) f.src = targetUrl;
+        });
+
+        const ffDismiss = document.getElementById('btn-dismiss-ff');
+        if (ffDismiss) {
+            ffDismiss.addEventListener('click', () => {
+                const b = document.getElementById('firefox-banner');
+                if (b) b.style.display = 'none';
+            });
+        }
+
         if (navigator.userAgent.toLowerCase().includes('firefox')) {
             setTimeout(() => {
                 if (!frameReady) {
@@ -1283,7 +1463,6 @@ function getIframeHtml(url, title) {
             const b = document.getElementById('firefox-banner');
             if (b) b.style.display = 'none';
 
-            // Instant redirect when iframe lands on / from codespace port warning
             if (event.data && event.data.type === 'silisHubReady') {
                 const f = document.getElementById('cad-frame');
                 if (f && !redirected) {
@@ -1291,11 +1470,9 @@ function getIframeHtml(url, title) {
                     f.src = targetUrl;
                 }
             }
-            // Forward messages from inner iframe out to VS Code extension host
             if (event.data && (event.data.fromSilisSchem || event.data.fromSilisRohd || event.data.fromSilis)) {
                 vscode.postMessage(event.data);
             }
-            // Forward messages from VS Code extension host into inner iframe
             if (event.data && (event.data.type === 'setValues' || event.data.type === 'clearValues' || event.data.type === 'addSignal')) {
                 const f = document.getElementById('cad-frame');
                 if (f && f.contentWindow) {
@@ -1319,9 +1496,6 @@ function getIframeHtml(url, title) {
 </html>`;
 }
 
-// -----------------------------------------------------------------------------
-// Interactive ASIC Studio Dashboard HTML (Replaces broken Markdown Preview)
-// -----------------------------------------------------------------------------
 function getDashboardHtml(apiBaseUrl, currentActive) {
     return `<!DOCTYPE html>
 <html>
@@ -2058,6 +2232,9 @@ function getSidebarHtml(apiBaseUrl, currentActive) {
 
         window.addEventListener('message', event => {
             const msg = event.data;
+            if (msg && msg.type === 'activeProjectChanged' && msg.active) {
+                document.getElementById('active-label').textContent = msg.active;
+            }
             if (msg && msg.type === 'projectsLoaded' && Array.isArray(msg.projects)) {
                 renderSidebarProjects(msg.projects);
             }

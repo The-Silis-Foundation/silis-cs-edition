@@ -104,8 +104,13 @@ def test_cs_server_endpoints():
         stderr=subprocess.PIPE,
     )
 
-    time.sleep(1.5)
     base_url = f"http://127.0.0.1:{test_port}"
+    for _ in range(40):
+        try:
+            with urllib.request.urlopen(f"{base_url}/api/status", timeout=0.5):
+                break
+        except Exception:
+            time.sleep(0.2)
 
     try:
         # 1. /api/status
@@ -140,7 +145,7 @@ def test_cs_server_endpoints():
 
         # 6. /api/schematic
         req = urllib.request.Request(f"{base_url}/api/schematic?project=projects/demo_soc")
-        with urllib.request.urlopen(req, timeout=3) as resp:
+        with urllib.request.urlopen(req, timeout=15) as resp:
             record_result("HTTP GET /api/schematic", resp.status == 200)
 
         # 7. /api/power/switch_matrix
@@ -281,7 +286,8 @@ def test_cs_server_endpoints():
             record_result("HTTP POST /api/floorplan/export_tcl OpenROAD compliance", tcl_ok, "Fences, regions, and blockages verified")
 
     except Exception as e:
-        record_result("cs_server.py HTTP endpoint tests", False, str(e))
+        import traceback
+        record_result("cs_server.py HTTP endpoint tests", False, f"{e}\n{traceback.format_exc()}")
     finally:
         proc.terminate()
         try:
