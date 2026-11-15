@@ -735,6 +735,20 @@ function activate(context) {
         })
     );
 
+    // 10c. Open CAD Workbench Dock
+    context.subscriptions.push(
+        vscode.commands.registerCommand('silis.openWorkbench', async () => {
+            const uri = await resolveUrl('http://127.0.0.1:8765/workbench');
+            const panel = vscode.window.createWebviewPanel(
+                'silisWorkbench',
+                'Silis CAD Workbench',
+                vscode.ViewColumn.Active,
+                { enableScripts: true, retainContextWhenHidden: true }
+            );
+            panel.webview.html = getIframeHtml(uri, 'Silis CAD Workbench');
+        })
+    );
+
     function getFlowTerminal() {
         let term = vscode.window.terminals.find(t => t.name === 'Silis Flow');
         if (!term) {
@@ -945,6 +959,16 @@ function getIframeHtml(url, title) {
             align-items: center;
         }
         .bar-btn:hover { background: var(--vscode-list-hoverBackground); color: var(--vscode-foreground); }
+        #firefox-banner {
+            display: none;
+            padding: 6px 12px;
+            background: var(--vscode-statusBarItem-warningBackground, #855b00);
+            color: var(--vscode-statusBarItem-warningForeground, #ffffff);
+            font-size: 11px;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid var(--vscode-editorWidget-border);
+        }
         .frame-wrap { width: 100%; height: calc(100% - 28px); position: relative; }
         iframe { width: 100%; height: 100%; border: none; background: var(--vscode-editor-background); }
     </style>
@@ -957,15 +981,34 @@ function getIframeHtml(url, title) {
             <a class="bar-btn" href="${url}" target="_blank" rel="noopener noreferrer">Open in New Window</a>
         </div>
     </div>
+    <div id="firefox-banner">
+        <span>Firefox / Codespaces Notice: If a forwarded port authentication warning or blank frame appears, click <strong>Open in New Window</strong> to authorize once.</span>
+        <button class="bar-btn" onclick="document.getElementById('firefox-banner').style.display='none';">Dismiss</button>
+    </div>
     <div class="frame-wrap">
-        <iframe id="cad-frame" name="silis-target:${encodeURIComponent(url)}" src="${url}"></iframe>
+        <iframe id="cad-frame" name="silis-target:${encodeURIComponent(url)}" src="${url}" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads" allow="cross-origin-isolated; clipboard-read; clipboard-write;"></iframe>
     </div>
     <script>
         const vscode = acquireVsCodeApi();
         const targetUrl = '${url}';
         let redirected = false;
+        let frameReady = false;
+
+        // Check if running in Firefox and show banner if frame takes long or gets blocked by cross-origin cookies
+        if (navigator.userAgent.toLowerCase().includes('firefox')) {
+            setTimeout(() => {
+                if (!frameReady) {
+                    const b = document.getElementById('firefox-banner');
+                    if (b) b.style.display = 'flex';
+                }
+            }, 3500);
+        }
 
         window.addEventListener('message', function(event) {
+            frameReady = true;
+            const b = document.getElementById('firefox-banner');
+            if (b) b.style.display = 'none';
+
             // Instant redirect when iframe lands on / from codespace port warning
             if (event.data && event.data.type === 'silisHubReady') {
                 const f = document.getElementById('cad-frame');
