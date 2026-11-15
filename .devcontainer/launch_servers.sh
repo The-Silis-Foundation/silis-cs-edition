@@ -21,4 +21,9 @@ pkill -f "cs_server.py" 2>/dev/null || true
 nohup python3 "${WORKSPACE_DIR}/tools/cs_server.py" 8765 > /tmp/cs_cad_server.log 2>&1 &
 disown
 
+# Ensure port 8765 is marked public to prevent iframe authentication redirects in browser
+if command -v gh >/dev/null 2>&1 && [ -n "${CODESPACE_NAME:-}" ]; then
+    gh codespace ports visibility 8765:public -c "$CODESPACE_NAME" 2>/dev/null || true
+fi
+
 echo "Silis CS server started on port 8765. Logs at /tmp/cs_cad_server.log."
