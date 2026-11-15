@@ -538,13 +538,17 @@ window.addEventListener('mouseup', () => {
     const h = Math.abs(state.drawCurrent.y - state.drawStart.y);
     if (w > 20 && h > 20) {
       if (state.drawingMode === 'blockage') {
+        const cmbType = document.getElementById('cmb-block-type');
+        const spPct = document.getElementById('sp-block-pct');
+        const btype = cmbType ? cmbType.value : 'Hard';
+        const pct = spPct ? (parseFloat(spPct.value) || 100) : 100;
         state.blockages.push({
           x: snapCoordinate(x1, state.gridSnap),
           y: snapCoordinate(y1, state.siteHeight),
           w: snapCoordinate(w, state.gridSnap),
           h: snapCoordinate(h, state.siteHeight),
-          btype: 'Hard',
-          pct: 100
+          btype: btype,
+          pct: pct
         });
       } else if (state.drawingMode === 'region' || state.drawingMode === 'fence') {
         state.regions.push({
@@ -1704,20 +1708,42 @@ function regenerateTcl() {
     tcl += `set_macro_halo -inst ${m.inst} -halo { ${halo[0].toFixed(3)} ${halo[2].toFixed(3)} ${halo[1].toFixed(3)} ${halo[3].toFixed(3)} }\n`;
   }
 
-  // Hierarchical Regions & Fences (Desktop Parity)
+  // Hierarchical Regions & Fences (OpenROAD Compliant)
   if (state.regions && state.regions.length > 0) {
     tcl += `\n# Hierarchical Regions & Voltage Fences\n`;
     for (const r of state.regions) {
-      const cmd = r.is_fence ? 'create_voltage_fence' : 'set_region';
-      tcl += `${cmd} ${r.module_name} -area { ${r.x.toFixed(3)} ${r.y.toFixed(3)} ${(r.x + r.w).toFixed(3)} ${(r.y + r.h).toFixed(3)} }\n`;
+      const x1 = r.x.toFixed(3);
+      const y1 = r.y.toFixed(3);
+      const x2 = (r.x + r.w).toFixed(3);
+      const y2 = (r.y + r.h).toFixed(3);
+      const mod = r.module_name || 'u_region';
+      if (r.is_fence) {
+        tcl += `create_fence -module ${mod} -box { ${x1} ${y1} ${x2} ${y2} }\n`;
+      } else {
+        tcl += `create_region -module ${mod} -box { ${x1} ${y1} ${x2} ${y2} } -type inclusive\n`;
+      }
     }
   }
 
-  // Placement Blockages (Desktop Parity)
+  // Placement Blockages (OpenROAD Compliant)
   if (state.blockages && state.blockages.length > 0) {
     tcl += `\n# Placement Blockages\n`;
     for (const b of state.blockages) {
-      tcl += `create_placement_blockage -area { ${b.x.toFixed(3)} ${b.y.toFixed(3)} ${(b.x + b.w).toFixed(3)} ${(b.y + b.h).toFixed(3)} } -type ${(b.btype || 'hard').toLowerCase()}\n`;
+      const x1 = b.x.toFixed(3);
+      const y1 = b.y.toFixed(3);
+      const x2 = (b.x + b.w).toFixed(3);
+      const y2 = (b.y + b.h).toFixed(3);
+      const bt = (b.btype || 'Hard').toLowerCase();
+      if (bt === 'hard') {
+        tcl += `create_placement_blockage -area { ${x1} ${y1} ${x2} ${y2} } -type hard\n`;
+      } else if (bt === 'soft') {
+        tcl += `create_placement_blockage -area { ${x1} ${y1} ${x2} ${y2} } -type soft\n`;
+      } else if (bt === 'partial') {
+        const pct = b.pct !== undefined ? b.pct : 50;
+        tcl += `create_placement_blockage -area { ${x1} ${y1} ${x2} ${y2} } -type partial -density ${pct}\n`;
+      } else {
+        tcl += `create_placement_blockage -area { ${x1} ${y1} ${x2} ${y2} } -type hard\n`;
+      }
     }
   }
   tcl += `\n# PDN Ring & Straps\n`;

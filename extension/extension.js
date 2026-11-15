@@ -391,6 +391,16 @@ function activate(context) {
             panel.webview.html = getProjectWizardHtml(workspaceFiles);
 
             panel.webview.onDidReceiveMessage(async (message) => {
+                if (message.command === 'fetchPdks') {
+                    try {
+                        const pdks = await callHttpApi('http://127.0.0.1:8765/api/pdks', 'GET');
+                        panel.webview.postMessage({ type: 'pdksLoaded', pdks: pdks || [] });
+                    } catch (e) {
+                        panel.webview.postMessage({ type: 'pdksLoaded', pdks: [] });
+                    }
+                    return;
+                }
+
                 if (message.command === 'fetchMacros') {
                     try {
                         const pdk = message.pdk || 'sky130';
@@ -1193,9 +1203,10 @@ function getProjectWizardHtml(workspaceFiles) {
     <div class="stepper">
         <div class="step-item active" id="st-1"><span class="step-num">1</span>Project</div>
         <div class="step-item" id="st-2"><span class="step-num">2</span>RTL Sources</div>
-        <div class="step-item" id="st-3"><span class="step-num">3</span>Constraints</div>
-        <div class="step-item" id="st-4"><span class="step-num">4</span>Power &amp; IO</div>
-        <div class="step-item" id="st-5"><span class="step-num">5</span>Silicon Target</div>
+        <div class="step-item" id="st-3"><span class="step-num">3</span>Testbenches</div>
+        <div class="step-item" id="st-4"><span class="step-num">4</span>Constraints</div>
+        <div class="step-item" id="st-5"><span class="step-num">5</span>Power &amp; IO</div>
+        <div class="step-item" id="st-6"><span class="step-num">6</span>Silicon Target</div>
     </div>
 
     <!-- Step 1: Project Details (Page 1) -->
@@ -1233,8 +1244,34 @@ function getProjectWizardHtml(workspaceFiles) {
         </div>
     </div>
 
-    <!-- Step 3: Constraints (Page 3 - 100% Silis Desktop Parity) -->
+    <!-- Step 3: Testbench Sources (Page 3 - 6-Stage Wizard Parity) -->
     <div class="step-content" id="sp-3">
+        <h2>Add Testbench Sources</h2>
+        <div class="step-desc">Select testbench files (.v, .sv, .vhd, .vhdl) or directory from your system to verify the design.</div>
+
+        <div class="btn-row">
+            <button onclick="browseFiles('tb', false)">+ Add TB Files...</button>
+            <button onclick="browseFiles('tb', true)">+ Add TB Folder...</button>
+            <button onclick="createNewFile('tb')">+ Create New File...</button>
+        </div>
+
+        <label>Selected Testbench Sources:</label>
+        <div class="file-list" id="tb-list"><div style="color:var(--vscode-descriptionForeground); padding:8px;">No testbench files selected. Default testbench template matching top RTL module will be auto-generated.</div></div>
+
+        <label for="tb-top">Top Testbench Module Name</label>
+        <input id="tb-top" type="text" placeholder="e.g. tb or <project_name>_tb">
+        <div class="hint">Top-level verification testbench module identifier. Defaults to tb or &lt;project_name&gt;_tb.</div>
+
+        <div class="card-box">
+            <label style="font-weight:normal; display:flex; align-items:center; gap:8px; margin:0; cursor:pointer;">
+                <input type="checkbox" id="copy-tb-sources" checked style="width:auto; margin:0;">
+                <span>Copy testbench sources into project directory (tb/)</span>
+            </label>
+        </div>
+    </div>
+
+    <!-- Step 4: Constraints (Page 4 - 100% Silis Desktop Parity) -->
+    <div class="step-content" id="sp-4">
         <h2>Add Constraints</h2>
         <div class="step-desc">Add SDC timing constraints for synthesis and physical design.</div>
 
@@ -1250,8 +1287,8 @@ function getProjectWizardHtml(workspaceFiles) {
         <input id="c-period" type="number" value="10.0" min="0.5" max="1000.0" step="0.5">
     </div>
 
-    <!-- Step 4: Additional Design Intent (Page 4b - 100% Silis Desktop Parity) -->
-    <div class="step-content" id="sp-4">
+    <!-- Step 5: Additional Design Intent (Page 5 - 100% Silis Desktop Parity) -->
+    <div class="step-content" id="sp-5">
         <h2>Additional Design Intent</h2>
         <div class="step-desc">Configure power gating (UPF/CPF) and physical I/O pin ordering.</div>
 
@@ -1270,16 +1307,17 @@ function getProjectWizardHtml(workspaceFiles) {
         <div class="hint">If omitted, baseline perimeter edge ordering is generated automatically.</div>
     </div>
 
-    <!-- Step 5: Silicon Target (Page 5 - 100% Silis Desktop Parity) -->
-    <div class="step-content" id="sp-5">
+    <!-- Step 6: Silicon Target & Top Module (Page 6 - Multi-PDK Parity) -->
+    <div class="step-content" id="sp-6">
         <h2>Silicon Target &amp; Top Module</h2>
         <div class="step-desc">Select target semiconductor process kit, top module, and add macros from the IP Catalog.</div>
 
         <label for="p-pdk">Process Design Kit (PDK)</label>
         <select id="p-pdk" onchange="fetchMacrosForPdk()">
-            <option value="sky130_fd_sc_hd">SkyWater 130nm High-Density (sky130_fd_sc_hd) - Standard</option>
+            <option value="sky130A">SkyWater 130nm High-Density (sky130A / sky130_fd_sc_hd)</option>
             <option value="sky130B">SkyWater 130nm Production (sky130B)</option>
-            <option value="gf180mcu">GlobalFoundries 180nm MCU (gf180mcu)</option>
+            <option value="gf180mcu">GlobalFoundries 180nm MCU (gf180mcu / gf180mcuC)</option>
+            <option value="asap7">ASAP 7nm FinFET (asap7)</option>
         </select>
 
         <label for="p-top">Top Module Name</label>
@@ -1324,7 +1362,7 @@ function getProjectWizardHtml(workspaceFiles) {
     <script>
         const vscode = acquireVsCodeApi();
         let currentStep = 1;
-        const selectedFiles = { rtl: [], sdc: [] };
+        const selectedFiles = { rtl: [], tb: [], sdc: [] };
         let allMacros = [];
         let filteredMacros = [];
         let selectedMacro = null;
@@ -1336,10 +1374,20 @@ function getProjectWizardHtml(workspaceFiles) {
             if (!document.getElementById('p-top').value || document.getElementById('p-top').dataset.touched !== '1') {
                 document.getElementById('p-top').value = val;
             }
+            if (!document.getElementById('tb-top').value || document.getElementById('tb-top').dataset.touched !== '1') {
+                document.getElementById('tb-top').value = val ? (val + '_tb') : '';
+            }
         });
         document.getElementById('p-top').addEventListener('input', () => {
             document.getElementById('p-top').dataset.touched = '1';
         });
+        document.getElementById('tb-top').addEventListener('input', () => {
+            document.getElementById('tb-top').dataset.touched = '1';
+        });
+
+        function fetchAvailablePdks() {
+            vscode.postMessage({ command: 'fetchPdks' });
+        }
 
         function fetchMacrosForPdk() {
             const pdk = document.getElementById('p-pdk').value;
@@ -1460,6 +1508,7 @@ function getProjectWizardHtml(workspaceFiles) {
         }
 
         function browseFiles(target, isFolder) {
+            const isHDL = (target === 'rtl' || target === 'tb');
             vscode.postMessage({
                 command: 'browseFiles',
                 target: target,
@@ -1467,7 +1516,7 @@ function getProjectWizardHtml(workspaceFiles) {
                 canSelectFolders: isFolder,
                 canSelectMany: true,
                 title: isFolder ? 'Select Directory' : 'Select Source Files',
-                filters: target === 'rtl' ? { 'HDL Files': ['v', 'sv', 'vhd', 'vhdl'], 'All Files': ['*'] } : { 'SDC Files': ['sdc'], 'All Files': ['*'] }
+                filters: isHDL ? { 'HDL Files': ['v', 'sv', 'vhd', 'vhdl'], 'All Files': ['*'] } : { 'SDC Files': ['sdc'], 'All Files': ['*'] }
             });
         }
 
@@ -1484,11 +1533,12 @@ function getProjectWizardHtml(workspaceFiles) {
         }
 
         function createNewFile(target) {
-            const ext = target === 'rtl' ? '.v' : '.sdc';
-            const name = prompt('Enter filename (e.g. ' + (target === 'rtl' ? 'module.v' : 'timing.sdc') + '):');
+            const ext = (target === 'rtl' || target === 'tb') ? '.v' : '.sdc';
+            const promptName = target === 'rtl' ? 'module.v' : (target === 'tb' ? 'tb.v' : 'timing.sdc');
+            const name = prompt('Enter filename (e.g. ' + promptName + '):');
             if (name && name.trim()) {
                 let fname = name.trim();
-                if (!fname.endsWith(ext) && !fname.endsWith('.sv')) fname += ext;
+                if (!fname.endsWith(ext) && !fname.endsWith('.sv') && !fname.endsWith('.vhd') && !fname.endsWith('.vhdl')) fname += ext;
                 selectedFiles[target].push('[NEW] ' + fname);
                 renderFileList(target);
             }
@@ -1516,14 +1566,14 @@ function getProjectWizardHtml(workspaceFiles) {
 
         function showStep(s) {
             currentStep = s;
-            for (let i = 1; i <= 5; i++) {
+            for (let i = 1; i <= 6; i++) {
                 document.getElementById('sp-' + i).className = 'step-content' + (i === s ? ' active' : '');
                 document.getElementById('st-' + i).className = 'step-item' + (i === s ? ' active' : '');
             }
             document.getElementById('btn-prev').style.display = s > 1 ? 'inline-block' : 'none';
-            document.getElementById('btn-next').style.display = s < 5 ? 'inline-block' : 'none';
-            document.getElementById('btn-finish').style.display = s === 5 ? 'inline-block' : 'none';
-            if (s === 5 && allMacros.length === 0) {
+            document.getElementById('btn-next').style.display = s < 6 ? 'inline-block' : 'none';
+            document.getElementById('btn-finish').style.display = s === 6 ? 'inline-block' : 'none';
+            if (s === 6 && allMacros.length === 0) {
                 fetchMacrosForPdk();
             }
         }
@@ -1536,7 +1586,7 @@ function getProjectWizardHtml(workspaceFiles) {
                     return;
                 }
             }
-            if (currentStep < 5) showStep(currentStep + 1);
+            if (currentStep < 6) showStep(currentStep + 1);
         }
 
         function prevStep() {
@@ -1546,6 +1596,7 @@ function getProjectWizardHtml(workspaceFiles) {
         function submitProject() {
             const name = document.getElementById('p-name').value.trim();
             const top = document.getElementById('p-top').value.trim() || name;
+            const topTb = document.getElementById('tb-top').value.trim() || (top + '_tb');
             const pdk = document.getElementById('p-pdk').value;
             const period = parseFloat(document.getElementById('c-period').value) || 10.0;
             const upf = document.getElementById('p-upf').value.trim();
@@ -1560,9 +1611,11 @@ function getProjectWizardHtml(workspaceFiles) {
                 data: {
                     name: name,
                     top_module: top,
+                    top_tb: topTb,
                     pdk: pdk,
                     clock_period: period,
                     rtl_files: selectedFiles.rtl,
+                    tb_files: selectedFiles.tb,
                     sdc_files: selectedFiles.sdc,
                     upf_file: upf,
                     io_file: io,
@@ -1573,7 +1626,15 @@ function getProjectWizardHtml(workspaceFiles) {
 
         window.addEventListener('message', e => {
             const msg = e.data;
-            if (msg.type === 'macrosLoaded') {
+            if (msg.type === 'pdksLoaded' && Array.isArray(msg.pdks) && msg.pdks.length > 0) {
+                const sel = document.getElementById('p-pdk');
+                const curVal = sel.value;
+                sel.innerHTML = msg.pdks.map(p => {
+                    const isSel = (p.id === curVal) || (curVal === 'sky130_fd_sc_hd' && p.id === 'sky130A');
+                    const badge = (p.installed === false) ? ' (Available)' : '';
+                    return '<option value="' + p.id + '"' + (isSel ? ' selected' : '') + '>' + (p.display_name || p.name || p.id) + badge + '</option>';
+                }).join('');
+            } else if (msg.type === 'macrosLoaded') {
                 allMacros = msg.macros || [];
                 filterMacroList();
                 if (allMacros.length > 0 && !selectedMacro) {
@@ -1602,6 +1663,7 @@ function getProjectWizardHtml(workspaceFiles) {
                 el.textContent = 'Error: ' + msg.message;
             }
         });
+        fetchAvailablePdks();
         fetchMacrosForPdk();
     </script>
 </body>

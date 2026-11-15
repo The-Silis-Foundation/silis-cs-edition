@@ -181,6 +181,105 @@ def test_cs_server_endpoints():
             def_res = json.loads(resp.read().decode())
             record_result("HTTP POST /api/floorplan/export_def", resp.status == 200 and def_res.get("status") == "ok")
 
+        # 13. GET /api/pdks (Multi-PDK Catalog)
+        req = urllib.request.Request(f"{base_url}/api/pdks")
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            pdk_data = json.loads(resp.read().decode())
+            pdk_ids = [p.get("id") for p in pdk_data] if isinstance(pdk_data, list) else []
+            has_core_pdks = all(k in pdk_ids for k in ["sky130A", "sky130B", "gf180mcu", "asap7"])
+            record_result("HTTP GET /api/pdks (sky130A, sky130B, gf180mcu, asap7)", resp.status == 200 and has_core_pdks, f"PDKs: {pdk_ids}")
+
+        # 14. GET /api/macros (Dynamic Macro IP Catalog & Dual-Mode Stubs)
+        req = urllib.request.Request(f"{base_url}/api/macros?pdk=sky130A")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            macro_data = json.loads(resp.read().decode())
+            has_macros = isinstance(macro_data, list) and len(macro_data) > 0
+            stub_ok = False
+            if has_macros:
+                sample_stub = macro_data[0].get("stub", "")
+                stub_ok = ("`ifndef SYNTHESIS" in sample_stub and "`else" in sample_stub and "`endif" in sample_stub)
+            record_result("HTTP GET /api/macros dual-mode stubs", resp.status == 200 and has_macros and stub_ok, f"Count: {len(macro_data) if has_macros else 0}")
+
+        # 15. POST /api/projects/create (Testbench & Metadata Contract)
+        test_proj_name = "tb_verify_test_proj"
+        test_proj_dir = os.path.join(REPO_ROOT, "projects", test_proj_name)
+        if os.path.exists(test_proj_dir):
+            import shutil
+            shutil.rmtree(test_proj_dir, ignore_errors=True)
+
+        create_payload = json.dumps({
+            "name": test_proj_name,
+            "top_module": "dut_top",
+            "top_tb": "tb_dut_top",
+            "pdk": "sky130A"
+        }).encode("utf-8")
+        req = urllib.request.Request(f"{base_url}/api/projects/create", data=create_payload, headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            c_res = json.loads(resp.read().decode())
+            tb_folder = os.path.join(test_proj_dir, "tb")
+            tb_v = os.path.join(tb_folder, "tb.v")
+            proj_json = os.path.join(test_proj_dir, "project.json")
+            silis_json = os.path.join(test_proj_dir, ".silis_proj.json")
+            silisproj = os.path.join(test_proj_dir, "silis.silisproj")
+
+            tb_created = (
+                resp.status == 201 and
+                os.path.isdir(tb_folder) and
+                os.path.isfile(tb_v) and
+                os.path.isfile(proj_json) and
+                os.path.isfile(silis_json) and
+                os.path.isfile(silisproj)
+            )
+            # Verify contents of metadata files
+            meta_ok = False
+            if tb_created:
+                with open(proj_json, "r") as pf:
+                    pj_data = json.load(pf)
+                with open(silis_json, "r") as sf:
+                    sj_data = json.load(sf)
+                meta_ok = (pj_data.get("top_tb") == "tb_dut_top" and "tb/tb.v" in pj_data.get("tb_files", []) and
+                           sj_data.get("top_tb") == "tb_dut_top" and "tb/tb.v" in sj_data.get("tb_files", []))
+            record_result("HTTP POST /api/projects/create tb/ and metadata contracts", tb_created and meta_ok)
+
+        # Clean up test project
+        if os.path.exists(test_proj_dir):
+            import shutil
+            shutil.rmtree(test_proj_dir, ignore_errors=True)
+            gen_readme_script = os.path.join(REPO_ROOT, "tools", "gen_readme.py")
+            if os.path.isfile(gen_readme_script):
+                subprocess.run([sys.executable, gen_readme_script], cwd=REPO_ROOT, timeout=10)
+
+        # 16. POST /api/floorplan/export_tcl (OpenROAD Fences, Regions, and Blockages)
+        fp_payload = json.dumps({
+            "project": "demo_soc",
+            "session": {
+                "die": {"w": 3000, "h": 3000},
+                "core": {"border": 30},
+                "macros": [],
+                "regions": [
+                    {"module_name": "u_dsp", "x": 100, "y": 100, "w": 400, "h": 400, "is_fence": True},
+                    {"module_name": "u_alu", "x": 600, "y": 100, "w": 400, "h": 400, "is_fence": False}
+                ],
+                "blockages": [
+                    {"x": 1200, "y": 100, "w": 200, "h": 200, "btype": "Hard"},
+                    {"x": 1500, "y": 100, "w": 200, "h": 200, "btype": "Soft"},
+                    {"x": 1800, "y": 100, "w": 200, "h": 200, "btype": "Partial", "pct": 45}
+                ]
+            }
+        }).encode("utf-8")
+        req = urllib.request.Request(f"{base_url}/api/floorplan/export_tcl", data=fp_payload, headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            tcl_res = json.loads(resp.read().decode())
+            tcl_text = tcl_res.get("tcl", "")
+            has_fence = "create_fence -module u_dsp -box { 100.000 100.000 500.000 500.000 }" in tcl_text
+            has_region = "create_region -module u_alu -box { 600.000 100.000 1000.000 500.000 } -type inclusive" in tcl_text
+            has_hard = "create_placement_blockage -area { 1200.000 100.000 1400.000 300.000 } -type hard" in tcl_text
+            has_soft = "create_placement_blockage -area { 1500.000 100.000 1700.000 300.000 } -type soft" in tcl_text
+            has_part = "create_placement_blockage -area { 1800.000 100.000 2000.000 300.000 } -type partial -density 45" in tcl_text
+            no_invalid = ("create_voltage_fence" not in tcl_text and "set_region" not in tcl_text)
+            tcl_ok = has_fence and has_region and has_hard and has_soft and has_part and no_invalid
+            record_result("HTTP POST /api/floorplan/export_tcl OpenROAD compliance", tcl_ok, "Fences, regions, and blockages verified")
+
     except Exception as e:
         record_result("cs_server.py HTTP endpoint tests", False, str(e))
     finally:
