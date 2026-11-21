@@ -37,14 +37,18 @@ else
     (cd /opt/silis && sudo "$APPIMAGE" --appimage-extract && sudo mv squashfs-root runtime && sudo chmod -R a+rX /opt/silis)
 fi
 
-# 3. Install xvfb and x11vnc for headless CAD display bridge (zero daemon ports)
-if ! command -v Xvfb >/dev/null 2>&1 || ! command -v x11vnc >/dev/null 2>&1; then
+# 3. Install xvfb, x11vnc, iverilog, and yosys for simulation and CAD display bridges
+PACKAGES_TO_INSTALL=""
+if ! command -v Xvfb >/dev/null 2>&1; then PACKAGES_TO_INSTALL="$PACKAGES_TO_INSTALL xvfb"; fi
+if ! command -v x11vnc >/dev/null 2>&1; then PACKAGES_TO_INSTALL="$PACKAGES_TO_INSTALL x11vnc"; fi
+if ! command -v iverilog >/dev/null 2>&1; then PACKAGES_TO_INSTALL="$PACKAGES_TO_INSTALL iverilog"; fi
+if ! command -v yosys >/dev/null 2>&1; then PACKAGES_TO_INSTALL="$PACKAGES_TO_INSTALL yosys"; fi
+
+if [ -n "$PACKAGES_TO_INSTALL" ]; then
     if command -v apt-get >/dev/null 2>&1; then
-        echo "Installing xvfb and x11vnc for native CAD layout display bridge..."
-        sudo apt-get update -qq && sudo apt-get install -y -qq xvfb x11vnc 2>/dev/null || true
+        echo "Installing missing EDA tools ($PACKAGES_TO_INSTALL)..."
+        sudo apt-get update -qq && sudo apt-get install -y -qq $PACKAGES_TO_INSTALL 2>/dev/null || true
     fi
-else
-    echo "Xvfb and x11vnc already installed, skipping apt-get."
 fi
 
 # 4. DO NOT overwrite system /usr/bin/python3. Create /usr/local/bin/silis-python3 and export PATH in /etc/profile.d/silis_env.sh

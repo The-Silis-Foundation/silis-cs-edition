@@ -242,6 +242,35 @@ async function loadNativeProjectNetlist(pName) {
         }
     } catch (e) {}
 
+    // Fallback: On-demand Yosys schematic elaboration if JSON not yet generated
+    try {
+        const cp = require('child_process');
+        const projPath = projUri.fsPath;
+        const candidateDirs = ['source', 'rtl'];
+        const svFiles = [];
+        for (const dir of candidateDirs) {
+            const fullDir = path.join(projPath, dir);
+            if (fs.existsSync(fullDir)) {
+                fs.readdirSync(fullDir).forEach(f => {
+                    if ((f.endsWith('.sv') || f.endsWith('.v')) && !f.startsWith('tb_') && !f.startsWith('tb.')) {
+                        svFiles.push(path.join(dir, f));
+                    }
+                });
+            }
+        }
+        if (svFiles.length > 0) {
+            const resultsDir = path.join(projPath, 'results');
+            if (!fs.existsSync(resultsDir)) fs.mkdirSync(resultsDir, { recursive: true });
+            const outJson = path.join(resultsDir, `structural_${cleanName}.json`);
+            cp.execSync(`yosys -p "read_verilog -sv ${svFiles.join(' ')}; hierarchy -auto-top; proc; write_json ${outJson}"`, { cwd: projPath, timeout: 10000 });
+            if (fs.existsSync(outJson)) {
+                return JSON.parse(fs.readFileSync(outJson, 'utf8'));
+            }
+        }
+    } catch (e) {
+        console.warn('[Silis] On-demand Yosys schematic generation skipped:', e.message);
+    }
+
     return null;
 }
 
@@ -869,9 +898,13 @@ function activate(context) {
         return panel;
     }
 
+    let _pendingVcdFile = null;
+
     async function loadWaveformInBottomDock(fileOrProject) {
         let pDir = fileOrProject || getActiveProjectDir();
         let pName = typeof pDir === 'string' ? pDir.replace(/^projects\//, '').replace(/\/waveform\.vcd$/, '') : activeProject;
+        _pendingVcdFile = fileOrProject || pDir;
+
         if (bottomDockWebview) {
             bottomDockWebview.webview.html = getWaveformsWebviewHtml(bottomDockWebview.webview, context.extensionUri);
 
@@ -908,17 +941,21 @@ function activate(context) {
                 localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'web')]
             };
 
-            // Check if active project already has waveform.vcd; if so, load it immediately
-            const pDir = getActiveProjectDir();
+            // Check if pending VCD or active project already has waveform.vcd; if so, load it immediately
+            const pDir = _pendingVcdFile || getActiveProjectDir();
             let hasVcd = false;
             try {
-                const wsFolders = vscode.workspace.workspaceFolders;
-                if (wsFolders && wsFolders.length > 0) {
-                    const vcdUri = vscode.Uri.joinPath(wsFolders[0].uri, pDir, 'waveform.vcd');
-                    try {
-                        const st = await vscode.workspace.fs.stat(vcdUri);
-                        hasVcd = (st.size > 0);
-                    } catch (e) {}
+                if (typeof pDir === 'string' && pDir.endsWith('.vcd') && fs.existsSync(pDir)) {
+                    hasVcd = true;
+                } else {
+                    const wsFolders = vscode.workspace.workspaceFolders;
+                    if (wsFolders && wsFolders.length > 0) {
+                        const vcdUri = vscode.Uri.joinPath(wsFolders[0].uri, pDir, 'waveform.vcd');
+                        try {
+                            const st = await vscode.workspace.fs.stat(vcdUri);
+                            hasVcd = (st.size > 0);
+                        } catch (e) {}
+                    }
                 }
             } catch (e) {}
 
@@ -1649,16 +1686,35 @@ function activate(context) {
             // 1. Show terminal and execute simulation
             const term = getFlowTerminal();
             term.show();
-            term.sendText(`cd projects/${pName} && if [ -f tb/tb_${pName}.v ]; then iverilog -g2012 -o sim.vvp rtl/*.sv tb/*.v 2>/dev/null && vvp sim.vvp; elif [ -f source/tb_chip_top.v ]; then iverilog -g2012 -o sim.vvp source/*.sv source/*.v 2>/dev/null && vvp sim.vvp; fi`);
+            term.sendText(`cd projects/${pName} && echo "=== [Silis Simulation: ${pName}] ===" && if [ -f tb/tb_${pName}.v ]; then iverilog -g2012 -o sim.vvp rtl/*.sv tb/*.v && vvp sim.vvp; elif [ -f source/tb_chip_top.v ]; then iverilog -g2012 -o sim.vvp source/*.sv source/*.v && vvp sim.vvp; elif [ -f source/tb_${pName}.v ]; then iverilog -g2012 -o sim.vvp source/*.sv source/*.v && vvp sim.vvp; else TB=\$(find . -maxdepth 2 -name "tb_*.v" -o -name "*_tb.v" 2>/dev/null | head -n 1); if [ -n "\$TB" ]; then iverilog -g2012 -o sim.vvp source/*.sv source/*.v rtl/*.sv rtl/*.v "\$TB" && vvp sim.vvp; else echo "[Silis Error] No testbench found in projects/${pName}"; fi; fi`);
 
             // 2. Open schematic beside RTL (Native web render)
             await openSchematicPanel(pName, vscode.ViewColumn.Beside);
 
             // 3. Load waveform into bottom dock (Native web render)
+            await vscode.commands.executeCommand('silis-bottom-dock.focus');
             await loadWaveformInBottomDock(pName);
-            vscode.commands.executeCommand('silis-bottom-dock.focus');
+
+            // 4. Follow-up reload checks to display waveform as soon as vvp finishes dumping
+            for (const delay of [800, 1600, 3000]) {
+                setTimeout(async () => {
+                    await loadWaveformInBottomDock(pName);
+                }, delay);
+            }
         })
     );
+
+    // Watch for waveform.vcd generation or updates across the entire workspace
+    try {
+        const vcdWatcher = vscode.workspace.createFileSystemWatcher('**/waveform.vcd');
+        vcdWatcher.onDidChange(async (uri) => {
+            await loadWaveformInBottomDock(uri.fsPath);
+        });
+        vcdWatcher.onDidCreate(async (uri) => {
+            await loadWaveformInBottomDock(uri.fsPath);
+        });
+        context.subscriptions.push(vcdWatcher);
+    } catch (e) {}
 
     // 12. Run Verilator RTL Lint (Debug Button & Ctrl+L)
     context.subscriptions.push(
