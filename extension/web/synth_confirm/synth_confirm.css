@@ -1,0 +1,210 @@
+/* Silis Synthesis & Scan Confirmation - Pure VS Code / GitHub Primer Palette */
+:root {
+  --bg-dark: var(--vscode-editor-background, #0d1117);
+  --bg-panel: var(--vscode-sideBar-background, #161b22);
+  --bg-card: var(--vscode-editorWidget-background, #161b22);
+  --bg-input: var(--vscode-input-background, #0d1117);
+  --border: var(--vscode-editorWidget-border, #30363d);
+  --border-focus: var(--vscode-focusBorder, #58a6ff);
+  --text-main: var(--vscode-editor-foreground, #c9d1d9);
+  --text-muted: var(--vscode-descriptionForeground, #8b949e);
+  --accent: var(--vscode-button-background, #1f6feb);
+  --accent-hover: var(--vscode-button-hoverBackground, #388bfd);
+  --accent-fg: var(--vscode-button-foreground, #ffffff);
+  --danger: var(--vscode-errorForeground, #f85149);
+  --success: #3fb950;
+  --header-bg: var(--vscode-titleBar-activeBackground, #0d1117);
+  --font-gui: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif);
+  --font-mono: var(--vscode-editor-font-family, ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body, html {
+  width: 100%;
+  height: 100%;
+  background: var(--bg-dark);
+  color: var(--text-main);
+  font-family: var(--font-gui);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow: hidden;
+}
+
+#synth-confirm-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 16px 20px;
+  gap: 12px;
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+/* Header */
+.confirm-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 12px;
+}
+
+.confirm-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.confirm-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.badge-meta {
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(88, 166, 255, 0.12);
+  color: #58a6ff;
+  border: 1px solid rgba(88, 166, 255, 0.25);
+}
+
+/* Editor Section */
+.editor-section {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  gap: 6px;
+  min-height: 200px;
+}
+
+.section-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+#yosys-script-editor {
+  flex: 1;
+  width: 100%;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-main);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 12px;
+  outline: none;
+  resize: none;
+  white-space: pre;
+  overflow: auto;
+}
+
+#yosys-script-editor:focus {
+  border-color: var(--border-focus);
+}
+
+/* DFT Group */
+.dft-group {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dft-header {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #3fb950;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dft-fields {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.field-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.field-item label {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-gui);
+}
+
+.field-item input[type="text"] {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  color: var(--text-main);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  width: 75px;
+  outline: none;
+}
+
+.field-item input[type="text"]:focus {
+  border-color: var(--border-focus);
+}
+
+/* Action Bar */
+.action-bar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+button {
+  font-family: var(--font-gui);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: var(--accent);
+}
+
+.btn-primary:hover {
+  background: var(--accent-hover);
+}
+
+.btn-secondary {
+  background: var(--border);
+  color: var(--text-main);
+  border-color: var(--border);
+}
+
+.btn-secondary:hover {
+  background: #30363d;
+  color: #ffffff;
+}

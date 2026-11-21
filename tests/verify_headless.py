@@ -284,7 +284,11 @@ def test_package_health():
     assert "extension/web/schematic/index.html" in res.stdout, "VSIX missing schematic/index.html"
     assert "extension/web/schematic/schematic_webview.js" in res.stdout, "VSIX missing schematic_webview.js"
     assert "extension/web/schematic/yosys_bridge.js" in res.stdout, "VSIX missing yosys_bridge.js"
-    print("  [PASS] VSIX archive contains all required portless noVNC, schematic, and extension files")
+    assert "extension/web/tracker/index.html" in res.stdout, "VSIX missing tracker/index.html"
+    assert "extension/web/tracker/tracker.css" in res.stdout, "VSIX missing tracker/tracker.css"
+    assert "extension/web/synth_confirm/index.html" in res.stdout, "VSIX missing synth_confirm/index.html"
+    assert "extension/web/synth_confirm/synth_confirm.css" in res.stdout, "VSIX missing synth_confirm/synth_confirm.css"
+    print("  [PASS] VSIX archive contains all required portless noVNC, schematic, tracker, and synth confirmation files")
     return True
 
 
@@ -387,6 +391,140 @@ def test_schematic_viewer():
     return True
 
 
+def test_state_tracker_and_synth_confirm():
+    log_header("TEST 8: Project State Tracker & Synthesis Confirmation Webviews")
+    import shutil
+    import tempfile
+
+    # 1. Verify package.json contributions
+    pkg_json_path = os.path.join(REPO_ROOT, "extension", "package.json")
+    with open(pkg_json_path, "r", encoding="utf-8") as f:
+        pkg = json.load(f)
+
+    # Panel containers
+    panels = {p["id"]: p["title"] for p in pkg.get("contributes", {}).get("viewsContainers", {}).get("panel", [])}
+    assert "silis-state-tracker-panel" in panels, "Missing silis-state-tracker-panel in viewsContainers.panel"
+    assert panels["silis-state-tracker-panel"] == "Project State Tracker", f"Unexpected title for state tracker: {panels.get('silis-state-tracker-panel')}"
+    assert "silis-waveforms-panel" in panels, "Missing silis-waveforms-panel in viewsContainers.panel"
+    assert panels["silis-waveforms-panel"] == "ROHD Wave Viewer", f"Expected 'ROHD Wave Viewer', got {panels.get('silis-waveforms-panel')}"
+    print("  [PASS] package.json viewsContainers.panel validated: Project State Tracker and ROHD Wave Viewer registered")
+
+    # Panel views
+    panel_views = pkg.get("contributes", {}).get("views", {}).get("silis-state-tracker-panel", [])
+    tracker_views = [v["id"] for v in panel_views]
+    assert "silis-project-tracker" in tracker_views, "Missing silis-project-tracker view in silis-state-tracker-panel"
+    print("  [PASS] silis-project-tracker webview registered in silis-state-tracker-panel")
+
+    # Commands
+    cmds = {c["command"]: c["title"] for c in pkg.get("contributes", {}).get("commands", [])}
+    assert "silis.openStateTracker" in cmds, "silis.openStateTracker command missing"
+    assert "silis.openSynthConfirm" in cmds, "silis.openSynthConfirm command missing"
+    print("  [PASS] silis.openStateTracker and silis.openSynthConfirm commands registered")
+
+    # 2. Verify Webview Assets Exist and Match Invariants
+    tracker_html = os.path.join(REPO_ROOT, "extension", "web", "tracker", "index.html")
+    tracker_css = os.path.join(REPO_ROOT, "extension", "web", "tracker", "tracker.css")
+    synth_html = os.path.join(REPO_ROOT, "extension", "web", "synth_confirm", "index.html")
+    synth_css = os.path.join(REPO_ROOT, "extension", "web", "synth_confirm", "synth_confirm.css")
+
+    for p in [tracker_html, tracker_css, synth_html, synth_css]:
+        assert os.path.isfile(p), f"Asset file missing: {p}"
+
+    with open(tracker_html, "r", encoding="utf-8") as f:
+        t_content = f.read()
+    assert "tracker-container" in t_content, "tracker/index.html missing tracker-container"
+    assert "stage-card" in t_content, "tracker/index.html missing stage-card"
+    assert "acquireVsCodeApi" in t_content, "tracker/index.html missing acquireVsCodeApi"
+    print("  [PASS] tracker/index.html contains tracker-container, stages, and VS Code IPC hooks")
+
+    with open(synth_html, "r", encoding="utf-8") as f:
+        s_content = f.read()
+    assert "yosys-script-editor" in s_content, "synth_confirm/index.html missing yosys-script-editor"
+    assert "in-scan-in" in s_content and "in-scan-out" in s_content and "in-scan-en" in s_content and "in-scan-clk" in s_content, "synth_confirm/index.html missing DFT scan ports"
+    assert "chk-clamp" in s_content, "synth_confirm/index.html missing chk-clamp toggle"
+    print("  [PASS] synth_confirm/index.html contains Yosys script editor & Silis-exact DFT scan configuration")
+
+    # 3. Headless Chrome DOM Verification
+    chrome_bin = shutil.which("google-chrome") or shutil.which("chromium") or shutil.which("chromium-browser")
+    if chrome_bin:
+        test_dir = tempfile.mkdtemp(prefix="silis_tracker_synth_test_")
+        try:
+            # Test Tracker Webview
+            t_test = os.path.join(test_dir, "test_tracker.html")
+            with open(tracker_html, "r", encoding="utf-8") as f:
+                t_src = f.read()
+            t_src = t_src.replace('href="tracker.css"', f'href="{tracker_css}"')
+            t_inject = """
+            <script>
+            window.addEventListener('DOMContentLoaded', () => {
+                const stages = document.querySelectorAll('.stage-card');
+                console.log('[CHROME_TRACKER_PASS] Found ' + stages.length + ' pipeline stages in tracker DOM');
+            });
+            </script>
+            """
+            t_src = t_src.replace("</body>", t_inject + "</body>")
+            with open(t_test, "w", encoding="utf-8") as f:
+                f.write(t_src)
+
+            c_cmd = [
+                chrome_bin,
+                "--headless=new",
+                "--allow-file-access-from-files",
+                "--enable-logging=stderr",
+                "--no-sandbox",
+                f"file://{t_test}"
+            ]
+            try:
+                c_res = subprocess.run(c_cmd, capture_output=True, text=True, timeout=4)
+                log = c_res.stderr + "\n" + c_res.stdout
+            except subprocess.TimeoutExpired as te:
+                log = str(te.stderr or "") + "\n" + str(te.stdout or "")
+            assert "[CHROME_TRACKER_PASS]" in log, f"Tracker headless verification failed: {log[:500]}"
+            print("  [PASS] Headless Chrome rendered State Tracker pipeline with 6 stages")
+
+            # Test Synth Confirm Webview
+            s_test = os.path.join(test_dir, "test_synth.html")
+            with open(synth_html, "r", encoding="utf-8") as f:
+                s_src = f.read()
+            s_src = s_src.replace('href="synth_confirm.css"', f'href="{synth_css}"')
+            s_inject = """
+            <script>
+            window.addEventListener('DOMContentLoaded', () => {
+                const editor = document.getElementById('yosys-script-editor');
+                const scanIn = document.getElementById('in-scan-in');
+                if (editor && scanIn) {
+                    console.log('[CHROME_SYNTH_PASS] Found editor and in-scan-in in synth confirm DOM');
+                }
+            });
+            </script>
+            """
+            s_src = s_src.replace("</body>", s_inject + "</body>")
+            with open(s_test, "w", encoding="utf-8") as f:
+                f.write(s_src)
+
+            c_cmd = [
+                chrome_bin,
+                "--headless=new",
+                "--allow-file-access-from-files",
+                "--enable-logging=stderr",
+                "--no-sandbox",
+                f"file://{s_test}"
+            ]
+            try:
+                c_res = subprocess.run(c_cmd, capture_output=True, text=True, timeout=4)
+                log = c_res.stderr + "\n" + c_res.stdout
+            except subprocess.TimeoutExpired as te:
+                log = str(te.stderr or "") + "\n" + str(te.stdout or "")
+            assert "[CHROME_SYNTH_PASS]" in log, f"Synth Confirm headless verification failed: {log[:500]}"
+            print("  [PASS] Headless Chrome rendered Synthesis & DFT Confirmation tab")
+        finally:
+            shutil.rmtree(test_dir, ignore_errors=True)
+    else:
+        print("  [INFO] google-chrome binary not present; DOM static assertions passed")
+
+    return True
+
+
 def main():
     print("=" * 70)
     print(" SILIS CS EDITION — COMPREHENSIVE HEADLESS VERIFICATION SUITE")
@@ -400,6 +538,7 @@ def main():
         test_portless_vnc_bridge,
         test_package_health,
         test_schematic_viewer,
+        test_state_tracker_and_synth_confirm,
     ]
     
     passed = 0

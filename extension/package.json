@@ -21,6 +21,7 @@
     "onStartupFinished",
     "onView:silis-cad-sidebar",
     "onView:silis-bottom-dock",
+    "onView:silis-project-tracker",
     "onCommand:silis.openDashboard",
     "onCommand:silis.newProject",
     "onCommand:silis.openProject",
@@ -51,8 +52,13 @@
       ],
       "panel": [
         {
+          "id": "silis-state-tracker-panel",
+          "title": "Project State Tracker",
+          "icon": "web/circuit-board.svg"
+        },
+        {
           "id": "silis-waveforms-panel",
-          "title": "Silis Waveforms",
+          "title": "ROHD Wave Viewer",
           "icon": "web/pulse.svg"
         }
       ]
@@ -63,6 +69,13 @@
           "type": "webview",
           "id": "silis-cad-sidebar",
           "name": "CAD Tools & Flow"
+        }
+      ],
+      "silis-state-tracker-panel": [
+        {
+          "type": "webview",
+          "id": "silis-project-tracker",
+          "name": "Physical Design Flow Pipeline"
         }
       ],
       "silis-waveforms-panel": [
@@ -199,6 +212,18 @@
         "title": "Silis: Lint RTL (Ctrl+L)",
         "category": "Silis",
         "icon": "$(bug)"
+      },
+      {
+        "command": "silis.openStateTracker",
+        "title": "Silis: Open Project State Tracker",
+        "category": "Silis",
+        "icon": "$(circuit-board)"
+      },
+      {
+        "command": "silis.openSynthConfirm",
+        "title": "Silis: Configure & Confirm Synthesis (Yosys)",
+        "category": "Silis",
+        "icon": "$(gear)"
       },
       {
         "command": "silis.runSynthesis",

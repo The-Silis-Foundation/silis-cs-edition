@@ -539,6 +539,24 @@ function activate(context) {
     }
     const getPeekerWebviewHtml = getNativeLayoutWebviewHtml;
 
+    function getTrackerWebviewHtml(webview, extensionUri) {
+        const trackerDir = vscode.Uri.joinPath(extensionUri, 'web', 'tracker');
+        const cssUri = webview.asWebviewUri(vscode.Uri.joinPath(trackerDir, 'tracker.css'));
+        const htmlPath = path.join(extensionUri.fsPath, 'web', 'tracker', 'index.html');
+        let html = fs.readFileSync(htmlPath, 'utf8');
+        html = html.replace('href="tracker.css"', `href="${cssUri}"`);
+        return html;
+    }
+
+    function getSynthConfirmWebviewHtml(webview, extensionUri) {
+        const confirmDir = vscode.Uri.joinPath(extensionUri, 'web', 'synth_confirm');
+        const cssUri = webview.asWebviewUri(vscode.Uri.joinPath(confirmDir, 'synth_confirm.css'));
+        const htmlPath = path.join(extensionUri.fsPath, 'web', 'synth_confirm', 'index.html');
+        let html = fs.readFileSync(htmlPath, 'utf8');
+        html = html.replace('href="synth_confirm.css"', `href="${cssUri}"`);
+        return html;
+    }
+
     async function checkTcpPort(port, host = '127.0.0.1', timeoutMs = 300) {
         return new Promise((resolve) => {
             const sock = new net.Socket();
@@ -1034,6 +1052,120 @@ function activate(context) {
     };
     context.subscriptions.push(
         vscode.window.registerWebviewViewProvider('silis-bottom-dock', bottomDockProvider)
+    );
+
+    // 1c. Project State Tracker Webview View Provider (Option A: First-Class Tab beside Terminal)
+    let stateTrackerWebview = null;
+
+    async function getProjectFlowState(pName) {
+        const cleanName = (pName || activeProject || 'demo_soc').replace(/^projects\//, '');
+        const wsFolders = vscode.workspace.workspaceFolders;
+        const rootPath = wsFolders ? wsFolders[0].uri.fsPath : '';
+        const projDir = path.join(rootPath, 'projects', cleanName);
+
+        const vcdPath = path.join(projDir, 'waveform.vcd');
+        const hasVcd = fs.existsSync(vcdPath) && fs.statSync(vcdPath).size > 0;
+
+        const netlistCandidates = [
+            path.join(projDir, 'results', `structural_${cleanName}.json`),
+            path.join(projDir, 'results', 'structural_chip_top.json'),
+            path.join(projDir, 'build', 'structural_synth.json'),
+            path.join(projDir, 'build', `structural_${cleanName}.json`)
+        ];
+        const hasNetlist = netlistCandidates.some(f => fs.existsSync(f) && fs.statSync(f).size > 0);
+
+        const hasFloorplan = fs.existsSync(path.join(projDir, 'run_floorplan.tcl')) || fs.existsSync(path.join(projDir, '.silis_fp_session.json'));
+
+        const defCandidates = [
+            path.join(projDir, 'results', `${cleanName}_filled.def`),
+            path.join(projDir, 'results', 'chip_top_filled.def'),
+            path.join(projDir, 'results', 'design.gds')
+        ];
+        const hasDef = defCandidates.some(f => fs.existsSync(f) && fs.statSync(f).size > 0);
+
+        return {
+            projectName: cleanName,
+            topModule: cleanName === 'demo_soc' ? 'chip_top' : cleanName,
+            pdk: 'sky130_fd_sc_hd',
+            hasVcd,
+            hasNetlist,
+            hasFloorplan,
+            hasDef
+        };
+    }
+
+    async function syncStateTracker() {
+        if (!stateTrackerWebview) return;
+        try {
+            const state = await getProjectFlowState(activeProject);
+            safePostMessage(stateTrackerWebview, { command: 'updateState', state });
+        } catch (e) {}
+    }
+
+    const stateTrackerProvider = {
+        async resolveWebviewView(webviewView) {
+            stateTrackerWebview = webviewView;
+            webviewView.webview.options = {
+                enableScripts: true,
+                retainContextWhenHidden: true,
+                localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'web')]
+            };
+            webviewView.webview.html = getTrackerWebviewHtml(webviewView.webview, context.extensionUri);
+
+            setTimeout(syncStateTracker, 200);
+
+            webviewView.webview.onDidReceiveMessage(async (msg) => {
+                if (!msg) return;
+                if (msg.command === 'trackerReady' || msg.command === 'refreshState') {
+                    syncStateTracker();
+                    return;
+                }
+                if (msg.command === 'trackerAction') {
+                    const action = msg.action;
+                    if (action === 'runLint') {
+                        vscode.commands.executeCommand('silis.runLint');
+                    } else if (action === 'runSimulation') {
+                        vscode.commands.executeCommand('silis.runSimulation');
+                    } else if (action === 'openWaveforms') {
+                        vscode.commands.executeCommand('silis.openWaveformInBottomDock');
+                    } else if (action === 'openSynthConfirm') {
+                        vscode.commands.executeCommand('silis.openSynthConfirm');
+                    } else if (action === 'openSchematic') {
+                        await openSchematicPanel(activeProject, vscode.ViewColumn.Beside);
+                    } else if (action === 'openFloorplanner') {
+                        vscode.commands.executeCommand('silis.openFloorplanner');
+                    } else if (action === 'runPlacement') {
+                        const term = getFlowTerminal();
+                        term.show();
+                        term.sendText(`cd projects/${activeProject} && if [ -f run_place.tcl ]; then openroad run_place.tcl; else echo "Run floorplan commit first."; fi`);
+                    } else if (action === 'openLayout') {
+                        vscode.commands.executeCommand('silis.openLayout');
+                    } else if (action === 'runTapeout') {
+                        vscode.commands.executeCommand('silis.runAll');
+                    } else if (action === 'openFile' && msg.path) {
+                        const wsFolders = vscode.workspace.workspaceFolders;
+                        if (wsFolders && wsFolders.length > 0) {
+                            let p = msg.path;
+                            if (!p.startsWith('projects/') && !p.startsWith('/')) {
+                                p = `projects/${activeProject}/${p}`;
+                            }
+                            const fileUri = p.startsWith('/') ? vscode.Uri.file(p) : vscode.Uri.joinPath(wsFolders[0].uri, p);
+                            try {
+                                const doc = await vscode.workspace.openTextDocument(fileUri);
+                                await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.One, preview: false });
+                            } catch (e) {}
+                        }
+                    }
+                }
+            });
+
+            webviewView.onDidDispose(() => {
+                stateTrackerWebview = null;
+            });
+        }
+    };
+    context.subscriptions.push(
+        vscode.window.registerWebviewViewProvider('silis-project-tracker', stateTrackerProvider)
     );
 
     // 2. Custom Editor Provider for VCD / Waveforms
@@ -1751,16 +1883,28 @@ function activate(context) {
         })
     );
 
-    // Watch for waveform.vcd generation or updates across the entire workspace
+    // Watch for waveform.vcd, structural_*.json, and DEF updates across workspace to sync State Tracker & Waveforms
     try {
         const vcdWatcher = vscode.workspace.createFileSystemWatcher('**/waveform.vcd');
         vcdWatcher.onDidChange(async (uri) => {
             await loadWaveformInBottomDock(uri.fsPath);
+            syncStateTracker();
         });
         vcdWatcher.onDidCreate(async (uri) => {
             await loadWaveformInBottomDock(uri.fsPath);
+            syncStateTracker();
         });
         context.subscriptions.push(vcdWatcher);
+
+        const netlistWatcher = vscode.workspace.createFileSystemWatcher('**/results/structural_*.json');
+        netlistWatcher.onDidChange(() => syncStateTracker());
+        netlistWatcher.onDidCreate(() => syncStateTracker());
+        context.subscriptions.push(netlistWatcher);
+
+        const defWatcher = vscode.workspace.createFileSystemWatcher('**/results/*_filled.def');
+        defWatcher.onDidChange(() => syncStateTracker());
+        defWatcher.onDidCreate(() => syncStateTracker());
+        context.subscriptions.push(defWatcher);
     } catch (e) {}
 
     // 12. Run Verilator RTL Lint (Debug Button & Ctrl+L)
@@ -1775,23 +1919,137 @@ function activate(context) {
             term.show();
             term.sendText(`verilator --lint-only -sv -Wall -Wno-fatal -Iprojects/${pName}/rtl -Iprojects/${pName}/source projects/${pName}/rtl/*.sv projects/${pName}/rtl/*.v projects/${pName}/source/*.sv projects/${pName}/source/*.v 2>/dev/null || true`);
             outputChan.appendLine(`[LINT] Executed Verilator in Silis Flow terminal for projects/${pName}`);
+            setTimeout(syncStateTracker, 1500);
         })
     );
 
-    // 13. Flow Execution
+    // 12b. Project State Tracker Focus
     context.subscriptions.push(
-        vscode.commands.registerCommand('silis.runSynthesis', () => {
-            const pName = activeProject || 'demo_soc';
-            const term = getFlowTerminal();
-            term.show();
-            const wsFolders = vscode.workspace.workspaceFolders;
-            const rootPath = wsFolders ? wsFolders[0].uri.fsPath : '';
-            const synthYs = path.join(rootPath, 'projects', pName, 'synth.ys');
-            if (fs.existsSync(synthYs)) {
-                term.sendText(`cd projects/${pName} && yosys -s synth.ys`);
-            } else {
-                term.sendText(`cd projects/${pName} && yosys -p "read_verilog -sv rtl/*.sv; synth -top ${pName}; write_json results/structural_${pName}.json"`);
+        vscode.commands.registerCommand('silis.openStateTracker', async () => {
+            await vscode.commands.executeCommand('silis-project-tracker.focus');
+            syncStateTracker();
+        })
+    );
+
+    // 12c. Synthesis & Scan Confirmation Tab (100% Silis Parity)
+    let synthConfirmPanel = null;
+
+    async function openSynthConfirmPanel(projectName) {
+        const pName = (projectName || activeProject || 'demo_soc').replace(/^projects\//, '');
+        const wsFolders = vscode.workspace.workspaceFolders;
+        const rootPath = wsFolders ? wsFolders[0].uri.fsPath : '';
+        const projDir = path.join(rootPath, 'projects', pName);
+        const synthYsPath = path.join(projDir, 'synth.ys');
+
+        let scriptText = '';
+        if (fs.existsSync(synthYsPath)) {
+            try { scriptText = fs.readFileSync(synthYsPath, 'utf8'); } catch (e) {}
+        }
+        if (!scriptText.trim()) {
+            scriptText = `# Silis CS Edition - Project Synthesis Script (${pName})\nread_verilog -sv source/chip_top.sv source/simple_alu.v 2>/dev/null || read_verilog -sv rtl/*.sv 2>/dev/null;\nhierarchy -top ${pName === 'demo_soc' ? 'chip_top' : pName};\nsynth -top ${pName === 'demo_soc' ? 'chip_top' : pName};\ntee -o reports/area.rpt stat;\nwrite_json results/structural_${pName}.json;\nwrite_verilog -noattr netlist/${pName}_netlist.v;\n`;
+        }
+
+        let dftConfig = { enabled: false, scan_in: 'scan_in', scan_out: 'scan_out', scan_en: 'scan_en', scan_clk: 'clk', clamp: true };
+        const dftCfgPath = path.join(projDir, 'dft_config.json');
+        if (fs.existsSync(dftCfgPath)) {
+            try { dftConfig = JSON.parse(fs.readFileSync(dftCfgPath, 'utf8')); } catch (e) {}
+        }
+
+        if (synthConfirmPanel) {
+            synthConfirmPanel.reveal(vscode.ViewColumn.One);
+            safePostMessage(synthConfirmPanel, {
+                command: 'loadConfig',
+                projectName: pName,
+                topModule: pName === 'demo_soc' ? 'chip_top' : pName,
+                pdk: 'sky130',
+                script: scriptText,
+                dft: dftConfig
+            });
+            return synthConfirmPanel;
+        }
+
+        synthConfirmPanel = vscode.window.createWebviewPanel(
+            'silisSynthConfirm',
+            `Confirm Synthesis: ${pName}`,
+            vscode.ViewColumn.One,
+            { enableScripts: true, retainContextWhenHidden: true }
+        );
+
+        synthConfirmPanel.webview.html = getSynthConfirmWebviewHtml(synthConfirmPanel.webview, context.extensionUri);
+
+        const sendConfig = () => {
+            safePostMessage(synthConfirmPanel, {
+                command: 'loadConfig',
+                projectName: pName,
+                topModule: pName === 'demo_soc' ? 'chip_top' : pName,
+                pdk: 'sky130',
+                script: scriptText,
+                dft: dftConfig
+            });
+        };
+        setTimeout(sendConfig, 300);
+
+        synthConfirmPanel.webview.onDidReceiveMessage(async (msg) => {
+            if (!msg) return;
+            if (msg.command === 'synthConfirmReady') {
+                sendConfig();
+                return;
             }
+            if (msg.command === 'cancelSynthesis') {
+                if (synthConfirmPanel) {
+                    synthConfirmPanel.dispose();
+                    synthConfirmPanel = null;
+                }
+                return;
+            }
+            if (msg.command === 'confirmSynthesis') {
+                try {
+                    if (msg.script) {
+                        atomicWriteFileSync(synthYsPath, msg.script);
+                    }
+                    if (msg.dft) {
+                        atomicWriteFileSync(dftCfgPath, JSON.stringify(msg.dft, null, 2));
+                    }
+
+                    if (synthConfirmPanel) {
+                        synthConfirmPanel.dispose();
+                        synthConfirmPanel = null;
+                    }
+
+                    const term = getFlowTerminal();
+                    term.show();
+                    term.sendText(`cd projects/${pName} && echo "=== [Silis Synthesis & Scan Flow: ${pName}] ===" && yosys -s synth.ys`);
+
+                    if (msg.dft && msg.dft.enabled) {
+                        term.sendText(`python3 -c "import os, sys; sys.path.insert(0, '.'); sys.path.insert(0, 'silis'); sys.path.insert(0, 'silis/core'); from dft.dft_engine import DFTEngine; e = DFTEngine('netlist/${pName}_netlist.v', '${pName === 'demo_soc' ? 'chip_top' : pName}', 'sky130', '${msg.dft.scan_in}', '${msg.dft.scan_out}', '${msg.dft.scan_en}', '${msg.dft.scan_clk}', ${msg.dft.clamp ? 'True' : 'False'}); e.stitch_scan_chain('netlist/${pName}_scan.v', 'results/design.scandef')" 2>/dev/null || true`);
+                    }
+
+                    vscode.window.showInformationMessage(`Synthesis flow started for projects/${pName}`);
+                    setTimeout(syncStateTracker, 1000);
+                    setTimeout(syncStateTracker, 3000);
+                } catch (err) {
+                    vscode.window.showErrorMessage(`Failed to initiate synthesis: ${err.message}`);
+                }
+            }
+        });
+
+        synthConfirmPanel.onDidDispose(() => {
+            synthConfirmPanel = null;
+        });
+
+        return synthConfirmPanel;
+    }
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('silis.openSynthConfirm', (projectName) => {
+            openSynthConfirmPanel(projectName);
+        })
+    );
+
+    // 13. Flow Execution (Synthesize directs to Confirm dialog)
+    context.subscriptions.push(
+        vscode.commands.registerCommand('silis.runSynthesis', (projectName) => {
+            openSynthConfirmPanel(projectName);
         })
     );
 

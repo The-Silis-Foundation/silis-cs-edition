@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Silis Project State Tracker</title>
+  <link rel="stylesheet" href="tracker.css">
+</head>
+<body>
+  <div id="tracker-container">
+    <!-- Header Banner -->
+    <header class="tracker-header">
+      <div class="project-meta">
+        <span class="project-title">
+          <span>SILIS ASIC PIPELINE</span>
+          <span id="proj-name" style="color:var(--border-focus); font-weight:bold;">demo_soc</span>
+        </span>
+        <span class="badge badge-top" id="badge-top">Top: chip_top</span>
+        <span class="badge badge-pdk" id="badge-pdk">PDK: sky130_fd_sc_hd</span>
+      </div>
+      <div>
+        <button class="btn-secondary" onclick="requestStateRefresh()">↻ Refresh Pipeline</button>
+      </div>
+    </header>
+
+    <!-- 6-Stage Pipeline Grid -->
+    <main class="pipeline-grid">
+      <!-- Stage 1: RTL Lint -->
+      <div class="stage-card" id="card-stage-1">
+        <div class="stage-top">
+          <div>
+            <div class="stage-name">1. RTL Spec & Lint</div>
+            <div class="stage-engine">Verilator (--lint-only)</div>
+          </div>
+          <span class="status-pill status-passed" id="pill-stage-1">CLEAN</span>
+        </div>
+        <div class="stage-artifact">
+          <span>Source:</span>
+          <span class="artifact-link" onclick="openFile('source/chip_top.sv')">chip_top.sv</span>
+        </div>
+        <div class="stage-actions">
+          <button class="btn-primary" onclick="action('runLint')">Run Lint (Ctrl+L)</button>
+        </div>
+      </div>
+
+      <!-- Stage 2: Simulation -->
+      <div class="stage-card" id="card-stage-2">
+        <div class="stage-top">
+          <div>
+            <div class="stage-name">2. Simulation & VCD</div>
+            <div class="stage-engine">Icarus Verilog (vvp)</div>
+          </div>
+          <span class="status-pill status-passed" id="pill-stage-2">VCD DUMPED</span>
+        </div>
+        <div class="stage-artifact">
+          <span>Waveform:</span>
+          <span class="artifact-link" onclick="openFile('waveform.vcd')">waveform.vcd</span>
+        </div>
+        <div class="stage-actions">
+          <button class="btn-primary" onclick="action('runSimulation')">▶ Play</button>
+          <button class="btn-secondary" onclick="action('openWaveforms')">ROHD Wave</button>
+        </div>
+      </div>
+
+      <!-- Stage 3: Synthesis & Scan -->
+      <div class="stage-card" id="card-stage-3">
+        <div class="stage-top">
+          <div>
+            <div class="stage-name">3. Synthesis & Scan</div>
+            <div class="stage-engine">Yosys + Silis DFT Engine</div>
+          </div>
+          <span class="status-pill status-passed" id="pill-stage-3">NETLIST READY</span>
+        </div>
+        <div class="stage-artifact">
+          <span>Netlist:</span>
+          <span class="artifact-link" onclick="openFile('results/structural_chip_top.json')">structural_chip_top.json</span>
+        </div>
+        <div class="stage-actions">
+          <button class="btn-primary" onclick="action('openSynthConfirm')">Configure & Synth...</button>
+          <button class="btn-secondary" onclick="action('openSchematic')">Schematic</button>
+        </div>
+      </div>
+
+      <!-- Stage 4: Floorplan & Power -->
+      <div class="stage-card" id="card-stage-4">
+        <div class="stage-top">
+          <div>
+            <div class="stage-name">4. Floorplan Studio (FPS)</div>
+            <div class="stage-engine">Silis 2D CAD Canvas & UPF</div>
+          </div>
+          <span class="status-pill status-passed" id="pill-stage-4">SESSION READY</span>
+        </div>
+        <div class="stage-artifact">
+          <span>TCL:</span>
+          <span class="artifact-link" onclick="openFile('run_floorplan.tcl')">run_floorplan.tcl</span>
+        </div>
+        <div class="stage-actions">
+          <button class="btn-primary" onclick="action('openFloorplanner')">Launch Floorplan Studio</button>
+        </div>
+      </div>
+
+      <!-- Stage 5: Placement & PDN -->
+      <div class="stage-card" id="card-stage-5">
+        <div class="stage-top">
+          <div>
+            <div class="stage-name">5. Placement & PDN</div>
+            <div class="stage-engine">OpenROAD (Global/Detail)</div>
+          </div>
+          <span class="status-pill status-pending" id="pill-stage-5">READY</span>
+        </div>
+        <div class="stage-artifact">
+          <span>PDN Script:</span>
+          <span class="artifact-link" onclick="openFile('run_pdn.tcl')">run_pdn.tcl</span>
+        </div>
+        <div class="stage-actions">
+          <button class="btn-secondary" onclick="action('runPlacement')">Run Placement & PDN</button>
+        </div>
+      </div>
+
+      <!-- Stage 6: Physical Tapeout -->
+      <div class="stage-card" id="card-stage-6">
+        <div class="stage-top">
+          <div>
+            <div class="stage-name">6. Routing & Tapeout</div>
+            <div class="stage-engine">OpenROAD + KLayout GDS</div>
+          </div>
+          <span class="status-pill status-passed" id="pill-stage-6">DEF & GDS READY</span>
+        </div>
+        <div class="stage-artifact">
+          <span>DEF/GDS:</span>
+          <span class="artifact-link" onclick="openFile('results/chip_top_filled.def')">chip_top_filled.def</span>
+        </div>
+        <div class="stage-actions">
+          <button class="btn-secondary" onclick="action('openLayout')">Layout Peeker</button>
+          <button class="btn-primary" onclick="action('runTapeout')">Tapeout Flow</button>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const _vscode = (typeof acquireVsCodeApi === 'function') ? acquireVsCodeApi() : {
+      postMessage: function(msg) { console.log('TRACKER_MSG:', msg); }
+    };
+
+    function action(cmd, payload) {
+      _vscode.postMessage({ command: 'trackerAction', action: cmd, ...(payload || {}) });
+    }
+
+    function openFile(relPath) {
+      _vscode.postMessage({ command: 'trackerAction', action: 'openFile', path: relPath });
+    }
+
+    function requestStateRefresh() {
+      _vscode.postMessage({ command: 'refreshState' });
+    }
+
+    window.addEventListener('message', function(event) {
+      const msg = event.data;
+      if (!msg) return;
+      if (msg.command === 'updateState' && msg.state) {
+        const s = msg.state;
+        if (s.projectName) document.getElementById('proj-name').textContent = s.projectName;
+        if (s.topModule) document.getElementById('badge-top').textContent = 'Top: ' + s.topModule;
+        if (s.pdk) document.getElementById('badge-pdk').textContent = 'PDK: ' + s.pdk;
+
+        // Stage 2: VCD
+        const pill2 = document.getElementById('pill-stage-2');
+        if (s.hasVcd) {
+          pill2.textContent = 'VCD DUMPED';
+          pill2.className = 'status-pill status-passed';
+        } else {
+          pill2.textContent = 'NEEDS RUN';
+          pill2.className = 'status-pill status-pending';
+        }
+
+        // Stage 3: Netlist
+        const pill3 = document.getElementById('pill-stage-3');
+        if (s.hasNetlist) {
+          pill3.textContent = 'NETLIST READY';
+          pill3.className = 'status-pill status-passed';
+        } else {
+          pill3.textContent = 'NEEDS RUN';
+          pill3.className = 'status-pill status-pending';
+        }
+
+        // Stage 4: Floorplan
+        const pill4 = document.getElementById('pill-stage-4');
+        if (s.hasFloorplan) {
+          pill4.textContent = 'SESSION READY';
+          pill4.className = 'status-pill status-passed';
+        } else {
+          pill4.textContent = 'DEFAULT';
+          pill4.className = 'status-pill status-pending';
+        }
+
+        // Stage 6: Def
+        const pill6 = document.getElementById('pill-stage-6');
+        if (s.hasDef) {
+          pill6.textContent = 'DEF & GDS READY';
+          pill6.className = 'status-pill status-passed';
+        } else {
+          pill6.textContent = 'PENDING';
+          pill6.className = 'status-pill status-pending';
+        }
+      }
+    });
+
+    // Notify ready
+    _vscode.postMessage({ command: 'trackerReady' });
+  </script>
+</body>
+</html>

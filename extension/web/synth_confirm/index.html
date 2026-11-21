@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Confirm Synthesis Script & Flow Configuration</title>
+  <link rel="stylesheet" href="synth_confirm.css">
+</head>
+<body>
+  <div id="synth-confirm-container">
+    <!-- Header -->
+    <header class="confirm-header">
+      <div class="confirm-title">Confirm Synthesis Script & Flow Configuration</div>
+      <div class="confirm-meta">
+        <span class="badge-meta" id="lbl-project">Project: demo_soc</span>
+        <span class="badge-meta" id="lbl-top">Top: chip_top</span>
+        <span class="badge-meta" id="lbl-pdk">PDK: sky130</span>
+      </div>
+    </header>
+
+    <!-- Editor Section -->
+    <section class="editor-section">
+      <label class="section-label" for="yosys-script-editor">
+        <strong>Yosys Synthesis Commands:</strong> (Uncomment 'flatten' to extract complete hierarchy)
+      </label>
+      <textarea id="yosys-script-editor" spellcheck="false"># Silis CS Edition - Project Synthesis Script (demo_soc)
+read_verilog -sv source/chip_top.sv source/simple_alu.v;
+hierarchy -top chip_top;
+synth -top chip_top;
+tee -o reports/area.rpt stat;
+write_json results/structural_chip_top.json;
+write_verilog -noattr netlist/chip_top_netlist.v;
+</textarea>
+    </section>
+
+    <!-- DFT & Scan Insertion Panel (100% Silis Parity) -->
+    <section class="dft-group">
+      <div class="dft-header">
+        <label><input type="checkbox" id="chk-dft-en"> <strong>Enable Scan Insertion (DFT)</strong></label>
+      </div>
+      <div class="dft-fields">
+        <div class="field-item">
+          <label for="in-scan-in">In:</label>
+          <input type="text" id="in-scan-in" value="scan_in" placeholder="Scan In">
+        </div>
+        <div class="field-item">
+          <label for="in-scan-out">Out:</label>
+          <input type="text" id="in-scan-out" value="scan_out" placeholder="Scan Out">
+        </div>
+        <div class="field-item">
+          <label for="in-scan-en">En:</label>
+          <input type="text" id="in-scan-en" value="scan_en" placeholder="Scan En">
+        </div>
+        <div class="field-item">
+          <label for="in-scan-clk">Clk:</label>
+          <input type="text" id="in-scan-clk" value="clk" placeholder="Scan Clk" style="width:60px;">
+        </div>
+        <div class="field-item">
+          <label><input type="checkbox" id="chk-clamp" checked> Clamp Macros</label>
+        </div>
+      </div>
+    </section>
+
+    <!-- Footer Action Bar -->
+    <footer class="action-bar">
+      <button class="btn-secondary" onclick="cancel()">Cancel</button>
+      <button class="btn-primary" onclick="confirmFlow()">Run Flow / OK (Ctrl+Enter)</button>
+    </footer>
+  </div>
+
+  <script>
+    const _vscode = (typeof acquireVsCodeApi === 'function') ? acquireVsCodeApi() : {
+      postMessage: function(msg) { console.log('SYNTH_CONFIRM_MSG:', msg); }
+    };
+
+    function cancel() {
+      _vscode.postMessage({ command: 'cancelSynthesis' });
+    }
+
+    function confirmFlow() {
+      const scriptText = document.getElementById('yosys-script-editor').value;
+      const dftEnabled = document.getElementById('chk-dft-en').checked;
+      const scanIn = document.getElementById('in-scan-in').value.trim() || 'scan_in';
+      const scanOut = document.getElementById('in-scan-out').value.trim() || 'scan_out';
+      const scanEn = document.getElementById('in-scan-en').value.trim() || 'scan_en';
+      const scanClk = document.getElementById('in-scan-clk').value.trim() || 'clk';
+      const clampMacros = document.getElementById('chk-clamp').checked;
+
+      _vscode.postMessage({
+        command: 'confirmSynthesis',
+        script: scriptText,
+        dft: {
+          enabled: dftEnabled,
+          scan_in: scanIn,
+          scan_out: scanOut,
+          scan_en: scanEn,
+          scan_clk: scanClk,
+          clamp: clampMacros
+        }
+      });
+    }
+
+    // Ctrl+Enter shortcut (100% Silis Parity)
+    window.addEventListener('keydown', function(e) {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        confirmFlow();
+      }
+    });
+
+    window.addEventListener('message', function(event) {
+      const msg = event.data;
+      if (!msg) return;
+      if (msg.command === 'loadConfig') {
+        if (msg.projectName) document.getElementById('lbl-project').textContent = 'Project: ' + msg.projectName;
+        if (msg.topModule) document.getElementById('lbl-top').textContent = 'Top: ' + msg.topModule;
+        if (msg.pdk) document.getElementById('lbl-pdk').textContent = 'PDK: ' + msg.pdk;
+        if (msg.script) document.getElementById('yosys-script-editor').value = msg.script;
+        if (msg.dft) {
+          if (typeof msg.dft.enabled === 'boolean') document.getElementById('chk-dft-en').checked = msg.dft.enabled;
+          if (msg.dft.scan_in) document.getElementById('in-scan-in').value = msg.dft.scan_in;
+          if (msg.dft.scan_out) document.getElementById('in-scan-out').value = msg.dft.scan_out;
+          if (msg.dft.scan_en) document.getElementById('in-scan-en').value = msg.dft.scan_en;
+          if (msg.dft.scan_clk) document.getElementById('in-scan-clk').value = msg.dft.scan_clk;
+          if (typeof msg.dft.clamp === 'boolean') document.getElementById('chk-clamp').checked = msg.dft.clamp;
+        }
+      }
+    });
+
+    // Notify host ready
+    _vscode.postMessage({ command: 'synthConfirmReady' });
+  </script>
+</body>
+</html>
