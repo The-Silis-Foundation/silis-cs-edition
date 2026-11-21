@@ -1,0 +1,477 @@
+{
+  "creator": "Yosys 0.33 (git sha1 2584903a060)",
+  "modules": {
+    "chip_top": {
+      "attributes": {
+        "top": "00000000000000000000000000000001",
+        "src": "source/chip_top.sv:5.1-51.10"
+      },
+      "ports": {
+        "clk_pad": {
+          "direction": "input",
+          "bits": [ 2 ]
+        },
+        "rst_n_pad": {
+          "direction": "input",
+          "bits": [ 3 ]
+        },
+        "a_pad": {
+          "direction": "input",
+          "bits": [ 4 ]
+        },
+        "b_pad": {
+          "direction": "input",
+          "bits": [ 5 ]
+        },
+        "op_pad": {
+          "direction": "input",
+          "bits": [ 6 ]
+        },
+        "res_pad": {
+          "direction": "output",
+          "bits": [ 7 ]
+        },
+        "zero_pad": {
+          "direction": "output",
+          "bits": [ 8 ]
+        },
+        "status_leds": {
+          "direction": "output",
+          "bits": [ 9, 10, 11, 12 ]
+        }
+      },
+      "cells": {
+        "$add$source/chip_top.sv:35$3": {
+          "hide_name": 1,
+          "type": "$add",
+          "parameters": {
+            "A_SIGNED": "00000000000000000000000000000000",
+            "A_WIDTH": "00000000000000000000000000000100",
+            "B_SIGNED": "00000000000000000000000000000000",
+            "B_WIDTH": "00000000000000000000000000000001",
+            "Y_WIDTH": "00000000000000000000000000000100"
+          },
+          "attributes": {
+            "src": "source/chip_top.sv:35.28-35.42"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 13, 14, 15, 16 ],
+            "B": [ "1" ],
+            "Y": [ 17, 18, 19, 20 ]
+          }
+        },
+        "$procdff$10": {
+          "hide_name": 1,
+          "type": "$adff",
+          "parameters": {
+            "ARST_POLARITY": "0",
+            "ARST_VALUE": "0000",
+            "CLK_POLARITY": "1",
+            "WIDTH": "00000000000000000000000000000100"
+          },
+          "attributes": {
+            "always_ff": "00000000000000000000000000000001",
+            "src": "source/chip_top.sv:20.5-38.8"
+          },
+          "port_directions": {
+            "ARST": "input",
+            "CLK": "input",
+            "D": "input",
+            "Q": "output"
+          },
+          "connections": {
+            "ARST": [ 3 ],
+            "CLK": [ 2 ],
+            "D": [ 17, 18, 19, 20 ],
+            "Q": [ 13, 14, 15, 16 ]
+          }
+        },
+        "$procdff$4": {
+          "hide_name": 1,
+          "type": "$adff",
+          "parameters": {
+            "ARST_POLARITY": "0",
+            "ARST_VALUE": "0",
+            "CLK_POLARITY": "1",
+            "WIDTH": "00000000000000000000000000000001"
+          },
+          "attributes": {
+            "always_ff": "00000000000000000000000000000001",
+            "src": "source/chip_top.sv:20.5-38.8"
+          },
+          "port_directions": {
+            "ARST": "input",
+            "CLK": "input",
+            "D": "input",
+            "Q": "output"
+          },
+          "connections": {
+            "ARST": [ 3 ],
+            "CLK": [ 2 ],
+            "D": [ 21 ],
+            "Q": [ 7 ]
+          }
+        },
+        "$procdff$5": {
+          "hide_name": 1,
+          "type": "$adff",
+          "parameters": {
+            "ARST_POLARITY": "0",
+            "ARST_VALUE": "0",
+            "CLK_POLARITY": "1",
+            "WIDTH": "00000000000000000000000000000001"
+          },
+          "attributes": {
+            "always_ff": "00000000000000000000000000000001",
+            "src": "source/chip_top.sv:20.5-38.8"
+          },
+          "port_directions": {
+            "ARST": "input",
+            "CLK": "input",
+            "D": "input",
+            "Q": "output"
+          },
+          "connections": {
+            "ARST": [ 3 ],
+            "CLK": [ 2 ],
+            "D": [ 22 ],
+            "Q": [ 8 ]
+          }
+        },
+        "$procdff$6": {
+          "hide_name": 1,
+          "type": "$adff",
+          "parameters": {
+            "ARST_POLARITY": "0",
+            "ARST_VALUE": "0000",
+            "CLK_POLARITY": "1",
+            "WIDTH": "00000000000000000000000000000100"
+          },
+          "attributes": {
+            "always_ff": "00000000000000000000000000000001",
+            "src": "source/chip_top.sv:20.5-38.8"
+          },
+          "port_directions": {
+            "ARST": "input",
+            "CLK": "input",
+            "D": "input",
+            "Q": "output"
+          },
+          "connections": {
+            "ARST": [ 3 ],
+            "CLK": [ 2 ],
+            "D": [ 13, 14, 15, 16 ],
+            "Q": [ 9, 10, 11, 12 ]
+          }
+        },
+        "$procdff$7": {
+          "hide_name": 1,
+          "type": "$adff",
+          "parameters": {
+            "ARST_POLARITY": "0",
+            "ARST_VALUE": "0",
+            "CLK_POLARITY": "1",
+            "WIDTH": "00000000000000000000000000000001"
+          },
+          "attributes": {
+            "always_ff": "00000000000000000000000000000001",
+            "src": "source/chip_top.sv:20.5-38.8"
+          },
+          "port_directions": {
+            "ARST": "input",
+            "CLK": "input",
+            "D": "input",
+            "Q": "output"
+          },
+          "connections": {
+            "ARST": [ 3 ],
+            "CLK": [ 2 ],
+            "D": [ 4 ],
+            "Q": [ 23 ]
+          }
+        },
+        "$procdff$8": {
+          "hide_name": 1,
+          "type": "$adff",
+          "parameters": {
+            "ARST_POLARITY": "0",
+            "ARST_VALUE": "0",
+            "CLK_POLARITY": "1",
+            "WIDTH": "00000000000000000000000000000001"
+          },
+          "attributes": {
+            "always_ff": "00000000000000000000000000000001",
+            "src": "source/chip_top.sv:20.5-38.8"
+          },
+          "port_directions": {
+            "ARST": "input",
+            "CLK": "input",
+            "D": "input",
+            "Q": "output"
+          },
+          "connections": {
+            "ARST": [ 3 ],
+            "CLK": [ 2 ],
+            "D": [ 5 ],
+            "Q": [ 24 ]
+          }
+        },
+        "$procdff$9": {
+          "hide_name": 1,
+          "type": "$adff",
+          "parameters": {
+            "ARST_POLARITY": "0",
+            "ARST_VALUE": "0",
+            "CLK_POLARITY": "1",
+            "WIDTH": "00000000000000000000000000000001"
+          },
+          "attributes": {
+            "always_ff": "00000000000000000000000000000001",
+            "src": "source/chip_top.sv:20.5-38.8"
+          },
+          "port_directions": {
+            "ARST": "input",
+            "CLK": "input",
+            "D": "input",
+            "Q": "output"
+          },
+          "connections": {
+            "ARST": [ 3 ],
+            "CLK": [ 2 ],
+            "D": [ 6 ],
+            "Q": [ 25 ]
+          }
+        },
+        "u_alu_core": {
+          "hide_name": 0,
+          "type": "simple_alu",
+          "parameters": {
+          },
+          "attributes": {
+            "module_not_derived": "00000000000000000000000000000001",
+            "src": "source/chip_top.sv:41.16-49.6"
+          },
+          "port_directions": {
+            "a_in": "input",
+            "b_in": "input",
+            "clk": "input",
+            "flag_zero": "output",
+            "op_sel": "input",
+            "res_out": "output",
+            "rst_n": "input"
+          },
+          "connections": {
+            "a_in": [ 23 ],
+            "b_in": [ 24 ],
+            "clk": [ 2 ],
+            "flag_zero": [ 22 ],
+            "op_sel": [ 25 ],
+            "res_out": [ 21 ],
+            "rst_n": [ 3 ]
+          }
+        }
+      },
+      "netnames": {
+        "$0\\counter[3:0]": {
+          "hide_name": 1,
+          "bits": [ 17, 18, 19, 20 ],
+          "attributes": {
+            "src": "source/chip_top.sv:20.5-38.8"
+          }
+        },
+        "a_pad": {
+          "hide_name": 0,
+          "bits": [ 4 ],
+          "attributes": {
+            "src": "source/chip_top.sv:8.18-8.23"
+          }
+        },
+        "alu_res": {
+          "hide_name": 0,
+          "bits": [ 21 ],
+          "attributes": {
+            "src": "source/chip_top.sv:17.11-17.18"
+          }
+        },
+        "alu_zero": {
+          "hide_name": 0,
+          "bits": [ 22 ],
+          "attributes": {
+            "src": "source/chip_top.sv:17.20-17.28"
+          }
+        },
+        "b_pad": {
+          "hide_name": 0,
+          "bits": [ 5 ],
+          "attributes": {
+            "src": "source/chip_top.sv:9.18-9.23"
+          }
+        },
+        "clk_pad": {
+          "hide_name": 0,
+          "bits": [ 2 ],
+          "attributes": {
+            "src": "source/chip_top.sv:6.18-6.25"
+          }
+        },
+        "counter": {
+          "hide_name": 0,
+          "bits": [ 13, 14, 15, 16 ],
+          "attributes": {
+            "src": "source/chip_top.sv:18.17-18.24"
+          }
+        },
+        "op_pad": {
+          "hide_name": 0,
+          "bits": [ 6 ],
+          "attributes": {
+            "src": "source/chip_top.sv:10.18-10.24"
+          }
+        },
+        "reg_a": {
+          "hide_name": 0,
+          "bits": [ 23 ],
+          "attributes": {
+            "src": "source/chip_top.sv:16.11-16.16"
+          }
+        },
+        "reg_b": {
+          "hide_name": 0,
+          "bits": [ 24 ],
+          "attributes": {
+            "src": "source/chip_top.sv:16.18-16.23"
+          }
+        },
+        "reg_op": {
+          "hide_name": 0,
+          "bits": [ 25 ],
+          "attributes": {
+            "src": "source/chip_top.sv:16.25-16.31"
+          }
+        },
+        "res_pad": {
+          "hide_name": 0,
+          "bits": [ 7 ],
+          "attributes": {
+            "src": "source/chip_top.sv:11.18-11.25"
+          }
+        },
+        "rst_n_pad": {
+          "hide_name": 0,
+          "bits": [ 3 ],
+          "attributes": {
+            "src": "source/chip_top.sv:7.18-7.27"
+          }
+        },
+        "status_leds": {
+          "hide_name": 0,
+          "bits": [ 9, 10, 11, 12 ],
+          "attributes": {
+            "src": "source/chip_top.sv:13.24-13.35"
+          }
+        },
+        "zero_pad": {
+          "hide_name": 0,
+          "bits": [ 8 ],
+          "attributes": {
+            "src": "source/chip_top.sv:12.18-12.26"
+          }
+        }
+      }
+    },
+    "simple_alu": {
+      "attributes": {
+        "blackbox": "00000000000000000000000000000001",
+        "src": "source/simple_alu.v:2.1-11.10"
+      },
+      "ports": {
+        "clk": {
+          "direction": "input",
+          "bits": [ 2 ]
+        },
+        "rst_n": {
+          "direction": "input",
+          "bits": [ 3 ]
+        },
+        "a_in": {
+          "direction": "input",
+          "bits": [ 4 ]
+        },
+        "b_in": {
+          "direction": "input",
+          "bits": [ 5 ]
+        },
+        "op_sel": {
+          "direction": "input",
+          "bits": [ 6 ]
+        },
+        "res_out": {
+          "direction": "output",
+          "bits": [ 7 ]
+        },
+        "flag_zero": {
+          "direction": "output",
+          "bits": [ 8 ]
+        }
+      },
+      "cells": {
+      },
+      "netnames": {
+        "a_in": {
+          "hide_name": 0,
+          "bits": [ 4 ],
+          "attributes": {
+            "src": "source/simple_alu.v:5.17-5.21"
+          }
+        },
+        "b_in": {
+          "hide_name": 0,
+          "bits": [ 5 ],
+          "attributes": {
+            "src": "source/simple_alu.v:6.17-6.21"
+          }
+        },
+        "clk": {
+          "hide_name": 0,
+          "bits": [ 2 ],
+          "attributes": {
+            "src": "source/simple_alu.v:3.15-3.18"
+          }
+        },
+        "flag_zero": {
+          "hide_name": 0,
+          "bits": [ 8 ],
+          "attributes": {
+            "src": "source/simple_alu.v:9.18-9.27"
+          }
+        },
+        "op_sel": {
+          "hide_name": 0,
+          "bits": [ 6 ],
+          "attributes": {
+            "src": "source/simple_alu.v:7.17-7.23"
+          }
+        },
+        "res_out": {
+          "hide_name": 0,
+          "bits": [ 7 ],
+          "attributes": {
+            "src": "source/simple_alu.v:8.18-8.25"
+          }
+        },
+        "rst_n": {
+          "hide_name": 0,
+          "bits": [ 3 ],
+          "attributes": {
+            "src": "source/simple_alu.v:4.17-4.22"
+          }
+        }
+      }
+    }
+  }
+}

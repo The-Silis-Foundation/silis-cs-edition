@@ -5,6 +5,9 @@
 # Temporary EDA outputs & run logs
 results/
 reports/
+!projects/demo_soc/results/
+!projects/demo_soc/results/*
+!projects/demo_soc/results/temp.def
 *.log
 *.rpt
 *.vcd
