@@ -1,8 +1,9 @@
 FROM mcr.microsoft.com/devcontainers/base:ubuntu-24.04
 
-# 1. Pre-install xvfb, x11vnc, Python 3, Node.js, and X11/GL libraries for native CAD layout viewers
+# 1. Pre-install openssh-server, xvfb, x11vnc, Python 3, Node.js, and X11/GL libraries for native CAD layout viewers
 RUN apt-get update -qq && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+        openssh-server \
         xvfb \
         x11vnc \
         nodejs \
