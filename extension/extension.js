@@ -828,22 +828,30 @@ function activate(context) {
         panel.webview.html = getSchematicWebviewHtml(panel.webview, context.extensionUri, pName);
 
         // Load synthesized netlist natively from workspace
-        (async () => {
+        const sendNetlistToPanel = async () => {
             try {
                 const data = await loadNativeProjectNetlist(pName);
                 if (data && (data.modules || Object.keys(data).length > 0)) {
-                    setTimeout(() => {
-                        safePostMessage(panel, { command: 'loadSchematic', netlist: data });
-                    }, 400);
+                    safePostMessage(panel, { command: 'loadSchematic', netlist: data });
                 }
             } catch (e) {
                 console.error('[Silis Native Schem] Failed to fetch schematic data:', e);
             }
-        })();
+        };
+
+        // Send netlist immediately and with staggered delays
+        sendNetlistToPanel();
+        setTimeout(sendNetlistToPanel, 300);
+        setTimeout(sendNetlistToPanel, 800);
+        setTimeout(sendNetlistToPanel, 1500);
 
         panel.webview.onDidReceiveMessage(async (msg) => {
             const cadMsg = (msg && msg.fromSilisSchem && msg.data) ? msg.data : msg;
             if (cadMsg) {
+                if (cadMsg.command === 'schematicReady' || cadMsg.type === 'schematicReady' || cadMsg.type === 'ready') {
+                    sendNetlistToPanel();
+                    return;
+                }
                 if (cadMsg.type === 'wireSelected' && (cadMsg.net || cadMsg.name)) {
                     const netName = cadMsg.net || cadMsg.name;
                     if (bottomDockWebview) {

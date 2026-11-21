@@ -112,23 +112,36 @@
 <div id="paper-container"><div id="paper"></div></div>
 <div id="status"><span id="sv-taskbar"></span><span id="status-text"></span></div>
     <script>
-        // Use real VS Code webview API if available, fallback for standalone
+        // Polyfill and cache acquireVsCodeApi globally before other scripts load
         let _silisMsgSeq = 0;
-        const _vscode = (typeof acquireVsCodeApi === 'function') ? acquireVsCodeApi() : {
-            postMessage: function(msg) {
-                if (msg) {
-                    try {
-                        const serialized = JSON.stringify(msg);
-                        document.title = "SILIS_SCHEM_MSG:" + serialized + "#" + (_silisMsgSeq++);
-                    } catch (e) {
-                        console.error("Failed to stringify message for Qt title bridge:", e);
-                    }
-                    console.log("SILIS_SCHEM_MSG:" + JSON.stringify(msg));
-                }
-            },
-            getState: function() { return {}; },
-            setState: function(state) {}
-        };
+        (function() {
+            if (typeof window.acquireVsCodeApi === 'function') {
+                const _origAcquire = window.acquireVsCodeApi;
+                let _instance = null;
+                window.acquireVsCodeApi = function() {
+                    if (!_instance) _instance = _origAcquire();
+                    return _instance;
+                };
+            } else {
+                const _fallback = {
+                    postMessage: function(msg) {
+                        if (msg) {
+                            try {
+                                const serialized = JSON.stringify(msg);
+                                document.title = "SILIS_SCHEM_MSG:" + serialized + "#" + (_silisMsgSeq++);
+                            } catch (e) {}
+                            console.log("SILIS_SCHEM_MSG:" + JSON.stringify(msg));
+                        }
+                    },
+                    getState: function() { return {}; },
+                    setState: function(state) {}
+                };
+                window.acquireVsCodeApi = function() {
+                    return _fallback;
+                };
+            }
+        })();
+        const _vscode = window.acquireVsCodeApi();
     </script>
     <script src="yosys_bridge.js"></script>
     <script src="schematic_webview.js"></script>
@@ -185,10 +198,34 @@
         window._silusTheme = null;
         window._onThemeApply = null;
 
-        function loadSchematic(b64str) {
+        function loadSchematic(input) {
             try {
-                const jsonStr = decodeURIComponent(escape(window.atob(b64str)));
-                const yosysData = JSON.parse(jsonStr);
+                if (!input) return;
+                let yosysData = input;
+                if (typeof input === 'string') {
+                    const trimmed = input.trim();
+                    if (trimmed.startsWith('{')) {
+                        yosysData = JSON.parse(trimmed);
+                    } else {
+                        try {
+                            const jsonStr = decodeURIComponent(escape(window.atob(trimmed)));
+                            yosysData = JSON.parse(jsonStr);
+                        } catch (b64Err) {
+                            yosysData = JSON.parse(trimmed);
+                        }
+                    }
+                }
+                
+                if (!yosysData || !yosysData.modules) {
+                    console.error("[Silis Schematic] Invalid Yosys netlist object received:", yosysData);
+                    return;
+                }
+
+                if (typeof window.processYosys !== 'function') {
+                    console.warn("[Silis Schematic] window.processYosys not ready yet, caching netlist...");
+                    window.__pendingNetlist = yosysData;
+                    return;
+                }
                 
                 const digitaljsData = window.processYosys(yosysData, {});
                 // Detect top module by looking for Yosys attribute "top": 1 / "000...1"
@@ -416,10 +453,23 @@
             if (msg.command === 'loadNetlist' || msg.command === 'loadSchematic') {
                 const netlist = msg.netlist || msg.data;
                 if (netlist) {
-                    window.postMessage({ type: 'loadSchematic', netlist: netlist, backend: 'yosys' }, '*');
+                    loadSchematic(netlist);
                 }
             }
         });
+
+        // Notify parent VS Code webview host that schematic webview is loaded and ready
+        try {
+            if (_vscode && typeof _vscode.postMessage === 'function') {
+                _vscode.postMessage({ fromSilisSchem: true, data: { command: 'schematicReady' } });
+            }
+            if (window.__pendingNetlist) {
+                setTimeout(function() {
+                    loadSchematic(window.__pendingNetlist);
+                    window.__pendingNetlist = null;
+                }, 100);
+            }
+        } catch(e) {}
 
         // Bi-Directional Schematic Cross-Probe Dispatch (Iteration 94)
         document.addEventListener('click', function(e) {

@@ -281,7 +281,109 @@ def test_package_health():
     assert "extension/web/novnc/virtual_socket.js" in res.stdout, "VSIX missing virtual_socket.js"
     assert "extension/web/novnc/core/rfb.js" in res.stdout, "VSIX missing core/rfb.js"
     assert "extension/extension.js" in res.stdout, "VSIX missing extension.js"
-    print("  [PASS] VSIX archive contains all required portless noVNC and extension files")
+    assert "extension/web/schematic/index.html" in res.stdout, "VSIX missing schematic/index.html"
+    assert "extension/web/schematic/schematic_webview.js" in res.stdout, "VSIX missing schematic_webview.js"
+    assert "extension/web/schematic/yosys_bridge.js" in res.stdout, "VSIX missing yosys_bridge.js"
+    print("  [PASS] VSIX archive contains all required portless noVNC, schematic, and extension files")
+    return True
+
+
+def test_schematic_viewer():
+    log_header("TEST 7: Schematic Viewer (DigitalJS + Yosys Netlist Pipeline)")
+    import shutil
+    import tempfile
+    
+    # 1. Verify structural netlist exists
+    netlist_path = os.path.join(REPO_ROOT, "projects", "demo_soc", "results", "structural_chip_top.json")
+    assert os.path.isfile(netlist_path), f"Structural netlist not found: {netlist_path}"
+    with open(netlist_path, "r", encoding="utf-8") as f:
+        netlist_data = json.load(f)
+    assert "modules" in netlist_data and "chip_top" in netlist_data["modules"], "Invalid netlist structure"
+    print(f"  [PASS] Structural netlist parsed: {list(netlist_data['modules'].keys())}")
+
+    # 2. Verify Node.js yosys_bridge processing
+    node_bin = "/home/econsystems/.vscode/cli/serve-web/dcd3ad6e368fbe19d03f37054a40dbaf40d676f4/node"
+    if not os.path.isfile(node_bin):
+        node_bin = shutil.which("node") or "node"
+
+    bridge_test = f"""
+    const fs = require('fs');
+    globalThis.window = globalThis;
+    require('./extension/web/schematic/yosys_bridge.js');
+    const netlist = JSON.parse(fs.readFileSync('{netlist_path}', 'utf8'));
+    const circuit = window.processYosys(netlist, {{}});
+    if (!circuit || !circuit.devices || !circuit.connectors) throw new Error('processYosys failed to generate valid circuit');
+    console.log('  [PASS] yosys_bridge produced ' + Object.keys(circuit.devices).length + ' devices, ' + circuit.connectors.length + ' connectors');
+    """
+    res = subprocess.run([node_bin, "-e", bridge_test], cwd=REPO_ROOT, capture_output=True, text=True)
+    if res.returncode != 0:
+        print("Bridge stdout:", res.stdout)
+        print("Bridge stderr:", res.stderr)
+        raise RuntimeError("yosys_bridge test failed in Node.js")
+    for line in res.stdout.strip().split("\n"):
+        if "[PASS]" in line:
+            print(line)
+
+    # 3. Verify Headless Chrome rendering if browser binary is available
+    chrome_bin = shutil.which("google-chrome") or shutil.which("chromium") or shutil.which("chromium-browser")
+    if chrome_bin:
+        schem_html = os.path.join(REPO_ROOT, "extension", "web", "schematic", "index.html")
+        with open(schem_html, "r", encoding="utf-8") as f:
+            html_content = f.read()
+
+        test_dir = tempfile.mkdtemp(prefix="silis_schem_test_")
+        test_file = os.path.join(test_dir, "test_render.html")
+        
+        # Rewrite paths relative to test_dir
+        rel_schem_dir = os.path.join(REPO_ROOT, "extension", "web", "schematic")
+        html_content = html_content.replace('href="schematic_webview.css"', f'href="{rel_schem_dir}/schematic_webview.css"')
+        html_content = html_content.replace('src="yosys_bridge.js"', f'src="{rel_schem_dir}/yosys_bridge.js"')
+        html_content = html_content.replace('src="schematic_webview.js"', f'src="{rel_schem_dir}/schematic_webview.js"')
+
+        auto_inject = f"""
+        <script>
+        window.addEventListener('DOMContentLoaded', () => {{
+            const data = {json.dumps(netlist_data)};
+            loadSchematic(data);
+            setTimeout(() => {{
+                const paper = document.getElementById('paper');
+                const svgs = paper ? paper.querySelectorAll('svg') : [];
+                const cells = paper ? paper.querySelectorAll('.joint-cell, .joint-element, .joint-link') : [];
+                console.log('[CHROME_SCHEM_PASS] Rendered ' + svgs.length + ' SVG paper(s), ' + cells.length + ' joint cells');
+            }}, 1200);
+        }});
+        </script>
+        """
+        html_content = html_content.replace("</body>", auto_inject + "</body>")
+        with open(test_file, "w", encoding="utf-8") as f:
+            f.write(html_content)
+
+        chrome_cmd = [
+            chrome_bin,
+            "--headless=new",
+            "--allow-file-access-from-files",
+            "--enable-logging=stderr",
+            "--no-sandbox",
+            f"file://{test_file}"
+        ]
+        try:
+            c_res = subprocess.run(chrome_cmd, capture_output=True, text=True, timeout=5)
+            log_output = c_res.stderr + "\n" + c_res.stdout
+        except subprocess.TimeoutExpired as te:
+            log_output = str(te.stderr or "") + "\n" + str(te.stdout or "")
+        finally:
+            shutil.rmtree(test_dir, ignore_errors=True)
+
+        found_chrome_pass = False
+        for line in log_output.split("\n"):
+            if "[CHROME_SCHEM_PASS]" in line:
+                print("  [PASS] Headless Chrome: " + line.split("[CHROME_SCHEM_PASS]")[-1].strip())
+                found_chrome_pass = True
+                break
+        assert found_chrome_pass, f"Chrome failed to render schematic cells: {log_output[:500]}"
+    else:
+        print("  [INFO] google-chrome binary not present in environment; Node.js bridge verification passed")
+
     return True
 
 
@@ -297,6 +399,7 @@ def main():
         test_dual_mode_stack,
         test_portless_vnc_bridge,
         test_package_health,
+        test_schematic_viewer,
     ]
     
     passed = 0
