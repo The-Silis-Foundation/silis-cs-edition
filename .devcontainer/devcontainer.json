@@ -1,7 +1,8 @@
 {
   "name": "Silis CS Edition",
   "build": {
-    "dockerfile": "Dockerfile"
+    "dockerfile": "Dockerfile",
+    "context": ".."
   },
   "features": {
     "ghcr.io/devcontainers/features/sshd:1": {

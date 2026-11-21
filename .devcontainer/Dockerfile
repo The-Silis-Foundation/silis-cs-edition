@@ -31,10 +31,10 @@ RUN apt-get update -qq && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# 2. Pre-stage Silis Python Qt runtime in /opt/silis/runtime for zero-wait boot
-RUN mkdir -p /opt/silis && \
-    curl -sL --retry 3 "https://github.com/The-Silis-Foundation/silis-cs-edition/releases/download/v1.0.0-runtime/silis-python-qt-x86_64.AppImage" -o /tmp/silis-runtime.AppImage && \
-    chmod +x /tmp/silis-runtime.AppImage && \
+# 2. Pre-stage Silis Python Qt runtime in /opt/silis/runtime from repo assets via Git LFS (zero network fetch)
+COPY assets/silis-python-qt-x86_64.AppImage /tmp/silis-runtime.AppImage
+RUN chmod +x /tmp/silis-runtime.AppImage && \
+    mkdir -p /opt/silis && \
     cd /opt/silis && \
     /tmp/silis-runtime.AppImage --appimage-extract && \
     mv squashfs-root runtime && \

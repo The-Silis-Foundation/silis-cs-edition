@@ -4,8 +4,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# 1. Check and init git submodule silis
-git -C "$WORKSPACE_DIR" submodule update --init silis 2>/dev/null || true
+# 1. Check and init git submodule silis (shallow single-depth clone for fast boot)
+git -C "$WORKSPACE_DIR" submodule update --init --depth 1 silis 2>/dev/null || true
 
 # 1b. Stage precompiled native C++ viewer libraries into submodule
 if [ -d "${WORKSPACE_DIR}/assets/lib" ]; then
@@ -18,21 +18,14 @@ if [ -d "${WORKSPACE_DIR}/assets/lib" ]; then
     cp -f "${WORKSPACE_DIR}/assets/lib/fast_layout_viewer"*.so "${WORKSPACE_DIR}/silis/core/backendflow/fast_viewer/" 2>/dev/null || true
 fi
 
-# 2. Extract AppImage runtime into /opt/silis/runtime if not present
+# 2. Extract AppImage runtime into /opt/silis/runtime from repo LFS asset if not present
 OPT_DIR="/opt/silis/runtime"
 APPIMAGE="${WORKSPACE_DIR}/assets/silis-python-qt-x86_64.AppImage"
-EXPECTED_SIZE=305945080
 if [ -d "$OPT_DIR" ]; then
-    echo "Silis runtime already present at ${OPT_DIR}, skipping download."
-else
-    sudo mkdir -p /opt/silis "${WORKSPACE_DIR}/assets"
-    CURRENT_SIZE="$(stat -c %s "$APPIMAGE" 2>/dev/null || echo 0)"
-    if [ "$CURRENT_SIZE" -ne "$EXPECTED_SIZE" ]; then
-        echo "Fetching silis runtime AppImage (expected size: $EXPECTED_SIZE bytes)..."
-        rm -f "$APPIMAGE"
-        curl -sL --retry 3 "https://github.com/The-Silis-Foundation/silis-cs-edition/releases/download/v1.0.0-runtime/silis-python-qt-x86_64.AppImage" \
-            -o "$APPIMAGE"
-    fi
+    echo "Silis runtime already present at ${OPT_DIR}, skipping extraction."
+elif [ -f "$APPIMAGE" ]; then
+    echo "Extracting Silis runtime from local repo LFS asset..."
+    sudo mkdir -p /opt/silis
     chmod +x "$APPIMAGE"
     (cd /opt/silis && sudo "$APPIMAGE" --appimage-extract && sudo mv squashfs-root runtime && sudo chmod -R a+rX /opt/silis)
 fi
