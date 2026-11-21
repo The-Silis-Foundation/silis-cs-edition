@@ -4,6 +4,7 @@ FROM mcr.microsoft.com/devcontainers/base:ubuntu-24.04
 RUN apt-get update -qq && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
         openssh-server \
+        git-lfs \
         xvfb \
         x11vnc \
         nodejs \

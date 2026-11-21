@@ -24,6 +24,13 @@ APPIMAGE="${WORKSPACE_DIR}/assets/silis-python-qt-x86_64.AppImage"
 if [ -d "$OPT_DIR" ]; then
     echo "Silis runtime already present at ${OPT_DIR}, skipping extraction."
 elif [ -f "$APPIMAGE" ]; then
+    # Ensure LFS pointer is resolved to actual binary if not already pulled
+    if [ "$(stat -c %s "$APPIMAGE" 2>/dev/null || echo 0)" -lt 1000 ]; then
+        if ! command -v git-lfs >/dev/null 2>&1; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq git-lfs 2>/dev/null || true
+        fi
+        git -C "$WORKSPACE_DIR" lfs pull --include="assets/silis-python-qt-x86_64.AppImage" 2>/dev/null || true
+    fi
     echo "Extracting Silis runtime from local repo LFS asset..."
     sudo mkdir -p /opt/silis
     chmod +x "$APPIMAGE"
