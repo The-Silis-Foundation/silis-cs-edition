@@ -30,6 +30,11 @@ elif [ -f "$APPIMAGE" ]; then
             sudo apt-get update -qq && sudo apt-get install -y -qq git-lfs 2>/dev/null || true
         fi
         git -C "$WORKSPACE_DIR" lfs pull --include="assets/silis-python-qt-x86_64.AppImage" 2>/dev/null || true
+        # If LFS pull didn't resolve binary, fetch directly from GitHub release
+        if [ "$(stat -c %s "$APPIMAGE" 2>/dev/null || echo 0)" -lt 1000 ]; then
+            echo "Fetching Silis runtime AppImage from GitHub release..."
+            curl -sL --retry 3 "https://github.com/The-Silis-Foundation/silis-cs-edition/releases/download/v1.0.0-runtime/silis-python-qt-x86_64.AppImage" -o "$APPIMAGE"
+        fi
     fi
     echo "Extracting Silis runtime from local repo LFS asset..."
     sudo mkdir -p /opt/silis
