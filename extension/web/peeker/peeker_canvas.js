@@ -63,29 +63,8 @@ function resizeCanvas() {
   requestAnimationFrame(render);
 }
 
-// URL Parameter Handling & Fetching DEF Geometry
+// Native Layout Initialization
 async function parseUrlAndLoadData() {
-  const params = new URLSearchParams(window.location.search);
-  const defPath = params.get('def');
-  const project = params.get('project');
-
-  if (defPath || project) {
-    try {
-      const endpoint = defPath ? `/api/def/parse?def=${encodeURIComponent(defPath)}` : `/api/def/parse?project=${encodeURIComponent(project)}`;
-      const response = await fetch(endpoint);
-      if (response.ok) {
-        const data = await response.json();
-        if (data.die) state.die = data.die;
-        if (data.core) state.core = data.core;
-        if (data.components) state.macros = data.components;
-        if (data.macros) state.macros = data.macros;
-        if (data.pins) state.pins = data.pins;
-      }
-    } catch (err) {
-      console.warn('Backend server offline or unreachable. Using robust built-in layout mock data.');
-    }
-  }
-
   updateComponentCount();
   canvasZoomFit();
 }

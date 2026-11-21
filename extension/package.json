@@ -31,7 +31,6 @@
     "onCommand:silis.openWaveformInBottomDock",
     "onCommand:silis.openLayout",
     "onCommand:silis.openFloorplanner",
-    "onCommand:silis.openOpenRoadGui",
     "onCommand:silis.runSimulation",
     "onCommand:silis.runLint",
     "onCommand:silis.runSynthesis",
@@ -103,7 +102,7 @@
       },
       {
         "viewType": "silis.defViewer",
-        "displayName": "Silis 2D Layout Peeker (DEF)",
+        "displayName": "Silis Native Layout Viewer (DEF)",
         "selector": [
           {
             "filenamePattern": "*.def"
@@ -173,7 +172,13 @@
       },
       {
         "command": "silis.openLayout",
-        "title": "Silis: Open 2D Layout Canvas",
+        "title": "Silis: Open Native Layout Viewer",
+        "category": "Silis",
+        "icon": "$(layers)"
+      },
+      {
+        "command": "silis.openNativeLayout",
+        "title": "Silis: Open Native Layout Viewer (FastSiliconPeeker / LayerViewerPanel)",
         "category": "Silis",
         "icon": "$(layers)"
       },
@@ -182,12 +187,6 @@
         "title": "Silis: Open Floorplan & Power Studio",
         "category": "Silis",
         "icon": "$(layout)"
-      },
-      {
-        "command": "silis.openOpenRoadGui",
-        "title": "Silis: OpenROAD Native GUI (Physical Layout)",
-        "category": "Silis",
-        "icon": "$(layout-sidebar-right)"
       },
       {
         "command": "silis.runSimulation",

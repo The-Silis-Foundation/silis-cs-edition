@@ -1,20 +1,20 @@
-/* Silis Floorplan & Power Studio (FPS) - Pure Native EDA Stylesheet */
+/* Silis Floorplan & Power Studio (FPS) - Pure VS Code / GitHub Primer Palette */
 :root {
-  --bg-dark: #181825;
-  --bg-panel: #1e1e2e;
-  --bg-card: #252538;
-  --bg-input: #11111b;
-  --border: #313244;
-  --border-focus: #89b4fa;
-  --text-main: #cdd6f4;
-  --text-muted: #a6adc8;
-  --accent: #89b4fa;
-  --accent-hover: #b4befe;
-  --accent-active: #74c7ec;
-  --danger: #f38ba8;
-  --success: #a6e3a1;
-  --warning: #f9e2af;
-  --header-bg: #11111b;
+  --bg-dark: var(--vscode-editor-background, #0d1117);
+  --bg-panel: var(--vscode-sideBar-background, #161b22);
+  --bg-card: var(--vscode-editorWidget-background, #161b22);
+  --bg-input: var(--vscode-input-background, #0d1117);
+  --border: var(--vscode-editorWidget-border, #30363d);
+  --border-focus: var(--vscode-focusBorder, #58a6ff);
+  --text-main: var(--vscode-editor-foreground, #c9d1d9);
+  --text-muted: var(--vscode-descriptionForeground, #8b949e);
+  --accent: var(--vscode-button-background, #1f6feb);
+  --accent-hover: var(--vscode-button-hoverBackground, #388bfd);
+  --accent-active: #58a6ff;
+  --danger: var(--vscode-errorForeground, #f85149);
+  --success: #3fb950;
+  --warning: #d29922;
+  --header-bg: var(--vscode-titleBar-activeBackground, #0d1117);
 }
 
 * {

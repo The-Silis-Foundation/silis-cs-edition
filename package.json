@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Silis ASIC CAD CS Edition",
   "scripts": {
-    "compile": "echo 'Silis CS Edition: Zero compile step required (Pure JS Extension & Python Tools)'",
-    "test": "python3 tools/verify_cs_edition.py"
+    "compile": "echo 'Silis CS Edition: Zero compile step required (Pure JS Extension)'",
+    "test": "python3 tests/verify_headless.py"
   }
 }

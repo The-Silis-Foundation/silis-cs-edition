@@ -7,15 +7,6 @@ WORKSPACE_DIR="/workspaces/silis-cs-edition"
 # 1. Check and init git submodule silis
 git -C "$WORKSPACE_DIR" submodule update --init silis 2>/dev/null || true
 
-# 1b. Ensure Xvfb, x11vnc, novnc, and websockify for OpenROAD GUI VNC
-if ! command -v Xvfb >/dev/null 2>&1 || ! command -v x11vnc >/dev/null 2>&1 || ! command -v websockify >/dev/null 2>&1; then
-    echo "Installing Xvfb, x11vnc, websockify, and novnc for native OpenROAD GUI..."
-    sudo apt-get update -qq && sudo apt-get install -y -qq xvfb x11vnc websockify novnc 2>/dev/null || true
-fi
-if [ -f "/usr/share/novnc/vnc.html" ] && [ ! -f "/usr/share/novnc/index.html" ]; then
-    sudo ln -sf /usr/share/novnc/vnc.html /usr/share/novnc/index.html 2>/dev/null || true
-fi
-
 # 2. Extract AppImage runtime into /opt/silis/runtime if not present
 OPT_DIR="/opt/silis/runtime"
 APPIMAGE="${WORKSPACE_DIR}/assets/silis-python-qt-x86_64.AppImage"
@@ -33,19 +24,26 @@ if [ ! -d "$OPT_DIR" ]; then
     (cd /opt/silis && sudo "$APPIMAGE" --appimage-extract && sudo mv squashfs-root runtime && sudo chmod -R a+rX /opt/silis)
 fi
 
-# 3. DO NOT overwrite system /usr/bin/python3. Create /usr/local/bin/silis-python3 and export PATH in /etc/profile.d/silis_env.sh
+# 3. Install xvfb and x11vnc for headless CAD display bridge (zero daemon ports)
+if command -v apt-get >/dev/null 2>&1; then
+    echo "Installing xvfb and x11vnc for native CAD layout display bridge..."
+    sudo apt-get update -qq && sudo apt-get install -y -qq xvfb x11vnc 2>/dev/null || true
+fi
+
+# 4. DO NOT overwrite system /usr/bin/python3. Create /usr/local/bin/silis-python3 and export PATH in /etc/profile.d/silis_env.sh
 sudo ln -sf /opt/silis/runtime/opt/python/bin/python3 /usr/local/bin/silis-python3 2>/dev/null || true
 sudo ln -sf "${WORKSPACE_DIR}/assets/bin/silis" /usr/local/bin/silis 2>/dev/null || true
 
-cat << 'EOF' | sudo tee /etc/profile.d/silis_env.sh > /dev/null
-export PATH="/opt/silis/runtime/opt/python/bin:/workspaces/silis-cs-edition/assets/bin:$PATH"
-export PYTHONPATH="/workspaces/silis-cs-edition:/workspaces/silis-cs-edition/silis:/workspaces/silis-cs-edition/silis/core:$PYTHONPATH"
-export LD_LIBRARY_PATH="/opt/silis/runtime/usr/lib/x86_64-linux-gnu:/opt/silis/runtime/opt/python/lib:$LD_LIBRARY_PATH"
+cat << EOF | sudo tee /etc/profile.d/silis_env.sh > /dev/null
+export PATH="/opt/silis/runtime/opt/python/bin:${WORKSPACE_DIR}/assets/bin:\$PATH"
+export PYTHONPATH="${WORKSPACE_DIR}:${WORKSPACE_DIR}/silis:${WORKSPACE_DIR}/silis/core:\$PYTHONPATH"
+export LD_LIBRARY_PATH="/opt/silis/runtime/usr/lib/x86_64-linux-gnu:/opt/silis/runtime/opt/python/lib:\$LD_LIBRARY_PATH"
 export LIBGL_ALWAYS_SOFTWARE=1
 export QT_QPA_PLATFORM=xcb
+export DISPLAY=:1
 EOF
 
-# 4. Install and register the Silis CAD Workbench extension
+# 5. Install and register the Silis CAD Workbench extension
 VSIX_PATH="${WORKSPACE_DIR}/extension/silis-cad-workbench-1.0.0.vsix"
 if command -v code >/dev/null 2>&1 && [ -f "$VSIX_PATH" ]; then
     code --install-extension "$VSIX_PATH" --force 2>/dev/null || true

@@ -28,5 +28,5 @@ if [ "$1" = "--gui" ] && [ -f "${SCRIPT_DIR}/silis/silis.py" ]; then
     shift
     exec "$PYTHON_EXEC" "${SCRIPT_DIR}/silis/silis.py" "$@"
 else
-    exec "$PYTHON_EXEC" "${SCRIPT_DIR}/tools/flow.py" "$@"
+    exec "$PYTHON_EXEC" -m core.cli.main "$@"
 fi

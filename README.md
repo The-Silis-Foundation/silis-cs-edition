@@ -95,9 +95,9 @@ Silis CS Edition delivers four interactive engineering visualizers directly insi
 
 ## Architectural Principles
 
-### 1. Zero-Install Cloud Workbench
-- **VS Code Web Integration**: All CAD tools run natively in your browser using Webview panels, HTML5 Canvas, and WebAssembly. No desktop X11 forwarding or heavy VNC bandwidth is required for everyday RTL synthesis, simulation, and floorplanning.
-- **Port 8765 Native Web Hub**: A lightweight Python ASGI/HTTP server (`tools/cs_server.py`) provides fast bidirectional REST endpoints, layout parsing, and cross-probing event routing.
+### 1. Zero-Install Cloud Workbench & Portless IPC
+- **VS Code Web Integration**: All CAD tools run natively in your editor using Webview panels, HTML5 Canvas, and WebAssembly. No desktop X11 forwarding or heavy VNC network bandwidth is required for everyday RTL synthesis, simulation, and floorplanning.
+- **Portless Webview IPC Tunnel**: Native layout inspection (FastSiliconPeeker, LayerViewerPanel, OpenROAD GUI) uses an in-editor Node.js $\leftrightarrow$ Webview `postMessage` binary bridge to `x11vnc` (`127.0.0.1:5901`). Zero external daemon ports are forwarded, completely bypassing GitHub Codespaces cookie drops (`X-Frame-Options: DENY`) and anti-phishing interstitial gates.
 
 ### 2. Full Parity with Desktop Silis Core
 - **Identical Physical Invariants**: All geometric quantization (0.005 µm manufacturing grid), site-row snapping, halo clearance rules, and UPF power intent emission strictly mirror the desktop Qt6 engine (`silis.core.sdk`).
@@ -112,14 +112,14 @@ Silis CS Edition bundles stripped, production-grade Linux x86-64 EDA binaries an
 
 ---
 
-## Port and Service Matrix
+## Port and Service Architecture
 
-| Port | Service | Protocol | Visibility | Purpose |
+| Subsystem | Transport / Protocol | Access Point | Visibility | Purpose |
 | :--- | :--- | :--- | :--- | :--- |
-| `8765` | **Silis CAD Web Hub** | HTTP / WebSocket | Forwarded / Public | Serves Workbench, DigitalJS schematics, ROHD waveforms, FastSiliconPeeker layout, and REST APIs. |
-| `6081` | *FastSiliconPeeker (X11 Fallback)* | HTTP (noVNC) | Local / Optional | Virtual framebuffer `:1` for standalone headless X11 layout viewer binaries. |
-| `6082` | *Frontend Studio (X11 Fallback)* | HTTP (noVNC) | Local / Optional | Virtual framebuffer `:2` for standalone headless X11 waveform viewer binaries. |
-| `6084` | *Silis FPS (X11 Fallback)* | HTTP (noVNC) | Local / Optional | Virtual framebuffer `:4` for standalone headless X11 Qt6 floorplanner instances. |
+| **Native Layout Viewer** | VS Code Webview IPC (RFB over `postMessage`) | `Silis: Open Native Layout Viewer` / `*.def` | In-Editor / Portless | 60 FPS FastSiliconPeeker & LayerViewerPanel layout inspection (zero daemon ports). |
+| **ROHD Waveforms** | WebAssembly / CanvasKit Webview | `Silis: Open ROHD Waveforms` / `*.vcd` | In-Editor / Client | Intel ROHD digital waveform inspector tab. |
+| **DigitalJS Schematic** | Webview SVG / JSON | `Silis: Open Schematic Viewer` | In-Editor / Client | Interactive RTL & gate-level schematic viewer. |
+| **Headless Display Bridge** | TCP Loopback (`127.0.0.1:5901`) | Internal Extension Host Bridge | Container Loopback | Local Xvfb & x11vnc bridge for headless CAD rendering. |
 
 ---
 

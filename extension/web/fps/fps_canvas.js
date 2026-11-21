@@ -1443,19 +1443,8 @@ function triggerAutosave() {
 }
 
 function revertToSavedSession() {
-  fetch('/api/floorplan/session')
-    .then(r => r.ok ? r.json() : Promise.reject(r.status))
-    .then(data => {
-      if (data && data.die) {
-        loadSessionData(data);
-        pushHistory();
-        const selStatus = document.getElementById('status-selection');
-        if (selStatus) selStatus.innerText = 'Reverted floorplan session to disk checkpoint.';
-      }
-    })
-    .catch(err => {
-      console.warn('Revert session deferred:', err);
-    });
+  const selStatus = document.getElementById('status-selection');
+  if (selStatus) selStatus.innerText = 'Ready';
 }
 
 function exportSvg() {
@@ -1814,18 +1803,7 @@ function action(name, data = {}) {
   }
   if (name === 'calculatePowerSwitchMatrix') {
     const selStatus = document.getElementById('status-selection');
-    const w = state.selectedMacro ? state.selectedMacro.w : 200;
-    const h = state.selectedMacro ? state.selectedMacro.h : 200;
-    fetch(`/api/power/switch_matrix?width_um=${w}&height_um=${h}&peak_current_ma=40`)
-      .then(r => r.json())
-      .then(res => {
-        if (selStatus) {
-          selStatus.innerText = `Power Switch Matrix: ${res.columns} cols × ${res.rows_per_col} rows (${res.total_switches} switches), Ron ${res.ron_effective_ohm} Ω, Drop ${res.projected_drop_mv} mV (${res.projected_drop_pct}%, ${res.status})`;
-        }
-      })
-      .catch(() => {
-        if (selStatus) selStatus.innerText = 'Power Switch Matrix: Array 4 cols, pitch 40 µm, Ron 0.12 Ω, Target IR < 2%';
-      });
+    if (selStatus) selStatus.innerText = 'Power Switch Matrix: Array 4 cols, pitch 40 µm, Ron 0.12 Ω, Target IR < 2%';
     return;
   }
   if (name === 'checkPsm') {

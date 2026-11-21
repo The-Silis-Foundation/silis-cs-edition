@@ -72,27 +72,6 @@
       }
     });
 
-    // Auto-fetch VCD waveform if URL parameters (?project=... or ?file=...) are provided
-    (function autoLoadWaveform() {
-      try {
-        const params = new URLSearchParams(window.location.search);
-        const proj = params.get('project');
-        const file = params.get('file');
-        if (proj || file) {
-          const query = proj ? `project=${encodeURIComponent(proj)}` : `file=${encodeURIComponent(file)}`;
-          fetch(`/api/waveform?${query}`)
-            .then(r => r.ok ? r.text() : Promise.reject(r.status))
-            .then(vcdText => {
-              if (vcdText && vcdText.length > 0) {
-                const fname = file ? file.split('/').pop() : 'waveform.vcd';
-                window.loadVcdContent(vcdText, fname);
-              }
-            })
-            .catch(err => console.log('Notice: Auto VCD fetch deferred:', err));
-        }
-      } catch (e) {}
-    })();
-
     // Dynamic Signal Addition function
     window.addRohdSignal = function(signalName) {
       if (!signalName) return;
@@ -153,7 +132,7 @@
         el.style.cssText = 'position:absolute; top:2px; width:14px; height:18px; cursor:pointer; pointer-events:auto; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:bold; color:white; border-radius:3px; box-shadow:0 1px 4px rgba(0,0,0,0.6);';
         
         var isFatal = m.severity === 'fatal' || m.severity === 'error';
-        el.style.backgroundColor = isFatal ? '#e06c75' : '#e5c07b';
+        el.style.backgroundColor = isFatal ? '#f85149' : '#d29922';
         el.style.left = (m.rel_x ? (m.rel_x * 100) : 50) + '%';
         el.textContent = isFatal ? '!' : '?';
         el.title = (m.severity ? m.severity.toUpperCase() + ': ' : '') + (m.msg || 'Assertion') + ' at ' + (m.file || '') + ':' + (m.line || '');
