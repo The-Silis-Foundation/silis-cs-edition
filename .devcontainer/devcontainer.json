@@ -1,6 +1,8 @@
 {
   "name": "Silis CS Edition",
-  "image": "mcr.microsoft.com/devcontainers/universal:2",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
   "containerEnv": {
     "DISPLAY": ":1",
     "LIBGL_ALWAYS_SOFTWARE": "1",

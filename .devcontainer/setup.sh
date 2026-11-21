@@ -22,7 +22,9 @@ fi
 OPT_DIR="/opt/silis/runtime"
 APPIMAGE="${WORKSPACE_DIR}/assets/silis-python-qt-x86_64.AppImage"
 EXPECTED_SIZE=305945080
-if [ ! -d "$OPT_DIR" ]; then
+if [ -d "$OPT_DIR" ]; then
+    echo "Silis runtime already present at ${OPT_DIR}, skipping download."
+else
     sudo mkdir -p /opt/silis "${WORKSPACE_DIR}/assets"
     CURRENT_SIZE="$(stat -c %s "$APPIMAGE" 2>/dev/null || echo 0)"
     if [ "$CURRENT_SIZE" -ne "$EXPECTED_SIZE" ]; then
@@ -36,9 +38,13 @@ if [ ! -d "$OPT_DIR" ]; then
 fi
 
 # 3. Install xvfb and x11vnc for headless CAD display bridge (zero daemon ports)
-if command -v apt-get >/dev/null 2>&1; then
-    echo "Installing xvfb and x11vnc for native CAD layout display bridge..."
-    sudo apt-get update -qq && sudo apt-get install -y -qq xvfb x11vnc 2>/dev/null || true
+if ! command -v Xvfb >/dev/null 2>&1 || ! command -v x11vnc >/dev/null 2>&1; then
+    if command -v apt-get >/dev/null 2>&1; then
+        echo "Installing xvfb and x11vnc for native CAD layout display bridge..."
+        sudo apt-get update -qq && sudo apt-get install -y -qq xvfb x11vnc 2>/dev/null || true
+    fi
+else
+    echo "Xvfb and x11vnc already installed, skipping apt-get."
 fi
 
 # 4. DO NOT overwrite system /usr/bin/python3. Create /usr/local/bin/silis-python3 and export PATH in /etc/profile.d/silis_env.sh
