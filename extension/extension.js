@@ -630,10 +630,14 @@ function activate(context) {
             pythonBin = '/usr/local/bin/silis-python3';
         }
 
+        const runtimeLd = '/opt/silis/runtime/usr/lib/x86_64-linux-gnu:/opt/silis/runtime/opt/python/lib';
+        const currentLd = process.env.LD_LIBRARY_PATH || '';
+        const ldLibPath = currentLd ? `${runtimeLd}:${currentLd}` : runtimeLd;
         const env = Object.assign({}, process.env, {
             DISPLAY: ':1',
             LIBGL_ALWAYS_SOFTWARE: '1',
             QT_QPA_PLATFORM: 'xcb',
+            LD_LIBRARY_PATH: ldLibPath,
             PYTHONPATH: `${rootPath}:${rootPath}/silis:${rootPath}/silis/core:${process.env.PYTHONPATH || ''}`,
         });
 

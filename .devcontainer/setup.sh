@@ -1,11 +1,22 @@
 #!/usr/bin/env bash
 set -e
 
-WORKSPACE_DIR="/workspaces/silis-cs-edition"
-[ -d "$WORKSPACE_DIR" ] || WORKSPACE_DIR="$(pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WORKSPACE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # 1. Check and init git submodule silis
 git -C "$WORKSPACE_DIR" submodule update --init silis 2>/dev/null || true
+
+# 1b. Stage precompiled native C++ viewer libraries into submodule
+if [ -d "${WORKSPACE_DIR}/assets/lib" ]; then
+    mkdir -p "${WORKSPACE_DIR}/silis/core/layer_viewer" \
+             "${WORKSPACE_DIR}/silis/core/backendflow/siliconpeeker" \
+             "${WORKSPACE_DIR}/silis/core/backendflow/fast_viewer/build"
+    cp -f "${WORKSPACE_DIR}/assets/lib/silis_layer_viewer"*.so "${WORKSPACE_DIR}/silis/core/layer_viewer/" 2>/dev/null || true
+    cp -f "${WORKSPACE_DIR}/assets/lib/fast_layout_viewer"*.so "${WORKSPACE_DIR}/silis/core/backendflow/siliconpeeker/" 2>/dev/null || true
+    cp -f "${WORKSPACE_DIR}/assets/lib/fast_layout_viewer"*.so "${WORKSPACE_DIR}/silis/core/backendflow/fast_viewer/build/" 2>/dev/null || true
+    cp -f "${WORKSPACE_DIR}/assets/lib/fast_layout_viewer"*.so "${WORKSPACE_DIR}/silis/core/backendflow/fast_viewer/" 2>/dev/null || true
+fi
 
 # 2. Extract AppImage runtime into /opt/silis/runtime if not present
 OPT_DIR="/opt/silis/runtime"
@@ -42,6 +53,11 @@ export LIBGL_ALWAYS_SOFTWARE=1
 export QT_QPA_PLATFORM=xcb
 export DISPLAY=:1
 EOF
+
+# Ensure interactive terminals source environment
+if [ -f /etc/bash.bashrc ] && ! grep -q "silis_env.sh" /etc/bash.bashrc 2>/dev/null; then
+    echo "[ -f /etc/profile.d/silis_env.sh ] && . /etc/profile.d/silis_env.sh" | sudo tee -a /etc/bash.bashrc >/dev/null || true
+fi
 
 # 5. Install and register the Silis CAD Workbench extension
 VSIX_PATH="${WORKSPACE_DIR}/extension/silis-cad-workbench-1.0.0.vsix"

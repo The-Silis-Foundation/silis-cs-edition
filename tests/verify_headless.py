@@ -98,6 +98,10 @@ def test_fast_silicon_peeker():
     QCoreApplication.processEvents()
     print("  [PASS] Routing congestion heatmap mode activated")
     
+    if hasattr(peeker, '_load_worker') and peeker._load_worker and peeker._load_worker.isRunning():
+        peeker._load_worker.quit()
+        peeker._load_worker.wait(2000)
+
     win.close()
     QCoreApplication.processEvents()
     return True

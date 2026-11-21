@@ -18,6 +18,9 @@ fi
 export PYTHONPATH="${SCRIPT_DIR}:${SCRIPT_DIR}/silis:${SCRIPT_DIR}/silis/core:${SCRIPT_DIR}/core:${PYTHONPATH:-}"
 export PATH="${SCRIPT_DIR}/assets/bin:${SCRIPT_DIR}/silis/third-party/bin:${SCRIPT_DIR}/third-party/bin:${PATH}"
 export LIBGL_ALWAYS_SOFTWARE=1
+if [ -d "/opt/silis/runtime/usr/lib/x86_64-linux-gnu" ]; then
+    export LD_LIBRARY_PATH="/opt/silis/runtime/usr/lib/x86_64-linux-gnu:/opt/silis/runtime/opt/python/lib:${LD_LIBRARY_PATH:-}"
+fi
 
 # Iteration 45: Fallback display for native GUI / OpenROAD viewer in containers
 if [ -z "$DISPLAY" ] && [ -z "$WAYLAND_DISPLAY" ]; then

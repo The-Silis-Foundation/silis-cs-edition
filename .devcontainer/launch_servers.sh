@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 
-WORKSPACE_DIR="/workspaces/silis-cs-edition"
-if [ ! -d "$WORKSPACE_DIR" ]; then
-    WORKSPACE_DIR="$(pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WORKSPACE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+if [ -d "/opt/silis/runtime/usr/lib/x86_64-linux-gnu" ]; then
+    export LD_LIBRARY_PATH="/opt/silis/runtime/usr/lib/x86_64-linux-gnu:/opt/silis/runtime/opt/python/lib:${LD_LIBRARY_PATH:-}"
+    export PATH="/opt/silis/runtime/opt/python/bin:$PATH"
 fi
 
 export PATH="${WORKSPACE_DIR}/assets/bin:${WORKSPACE_DIR}/silis/third-party/bin:$PATH"

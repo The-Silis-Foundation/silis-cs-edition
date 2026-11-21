@@ -1,6 +1,13 @@
 {
   "name": "Silis CS Edition",
   "image": "mcr.microsoft.com/devcontainers/universal:2",
+  "containerEnv": {
+    "DISPLAY": ":1",
+    "LIBGL_ALWAYS_SOFTWARE": "1",
+    "QT_QPA_PLATFORM": "xcb",
+    "PYTHONPATH": "${containerWorkspaceFolder}:${containerWorkspaceFolder}/silis:${containerWorkspaceFolder}/silis/core",
+    "LD_LIBRARY_PATH": "/opt/silis/runtime/usr/lib/x86_64-linux-gnu:/opt/silis/runtime/opt/python/lib"
+  },
   "customizations": {
     "vscode": {
       "settings": {
@@ -14,7 +21,7 @@
         }
       },
       "extensions": [
-        "${containerWorkspaceFolder}/extension/silis-cad-workbench-1.0.0.vsix",
+        "../extension/silis-cad-workbench-1.0.0.vsix",
         "mshr-h.VerilogHDL"
       ]
     }
