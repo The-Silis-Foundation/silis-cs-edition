@@ -1599,20 +1599,29 @@ function activate(context) {
     context.subscriptions.push(
         vscode.commands.registerCommand('silis.openFloorplanner', async (projectName) => {
             const pName = projectName || activeProject || 'demo_soc';
+
+            // Minimize/dispose split schematic panel so FPS has the full main editor workspace
+            if (activeSchematicPanel) {
+                try {
+                    activeSchematicPanel.dispose();
+                } catch (e) {}
+                activeSchematicPanel = null;
+            }
+
             if (activeFloorplanPanel) {
-                activeFloorplanPanel.reveal(vscode.ViewColumn.Active);
+                activeFloorplanPanel.reveal(vscode.ViewColumn.One);
                 return;
             }
             activeFloorplanPanel = vscode.window.createWebviewPanel(
                 'silisFPS',
                 `Floorplan & Power Studio: ${pName}`,
-                vscode.ViewColumn.Active,
+                vscode.ViewColumn.One,
                 { enableScripts: true, retainContextWhenHidden: true }
             );
 
             activeFloorplanPanel.webview.html = getFpsWebviewHtml(activeFloorplanPanel.webview, context.extensionUri, pName);
 
-            // Hydrate existing floorplan session state from .silis_fp_session.json
+            // Hydrate existing floorplan session state from .silis_fp_session.json or netlist defaults
             const wsFolders = vscode.workspace.workspaceFolders;
             const rootPath = wsFolders ? wsFolders[0].uri.fsPath : '';
             const sessionPath = path.join(rootPath, 'projects', pName, '.silis_fp_session.json');
@@ -1625,6 +1634,36 @@ function activate(context) {
                 } catch (e) {
                     console.error('Failed to parse existing .silis_fp_session.json', e);
                 }
+            } else {
+                // Initialize default demo session with macros if structural netlist is available
+                setTimeout(async () => {
+                    try {
+                        const netlist = await loadNativeProjectNetlist(pName);
+                        const pins = [];
+                        const macros = [];
+                        if (netlist && netlist.modules) {
+                            for (const [mname, mdata] of Object.entries(netlist.modules)) {
+                                if (mdata.ports) {
+                                    for (const [pname, pdata] of Object.entries(mdata.ports)) {
+                                        pins.push({ name: pname, dir: pdata.direction || 'input', edge: 'bottom', pos: pins.length * 20 + 20 });
+                                    }
+                                }
+                                if (mdata.cells) {
+                                    for (const [cname, cdata] of Object.entries(mdata.cells)) {
+                                        macros.push({ inst: cname, master: cdata.type, x: 80 + macros.length * 120, y: 80, w: 100, h: 80, orient: 'R0' });
+                                    }
+                                }
+                            }
+                        }
+                        const initSession = {
+                            die: { w: 180, h: 180, ml: 15, mr: 15, mt: 15, mb: 15 },
+                            core: { border: 15, w: 150, h: 150 },
+                            macros: macros.length > 0 ? macros : [{ inst: 'u_alu_core', master: 'simple_alu', x: 40, y: 40, w: 80, h: 60, orient: 'R0' }],
+                            pins: pins.length > 0 ? pins.slice(0, 16) : [{ name: 'clk', edge: 'bottom', pos: 30, dir: 'input' }, { name: 'rst_n', edge: 'bottom', pos: 60, dir: 'input' }]
+                        };
+                        safePostMessage(activeFloorplanPanel, { command: 'loadSession', session: initSession });
+                    } catch (e) {}
+                }, 400);
             }
 
             activeFloorplanPanel.webview.onDidReceiveMessage(async (msg) => {

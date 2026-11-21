@@ -8,6 +8,8 @@ RUN apt-get update -qq && \
         x11vnc \
         nodejs \
         iverilog \
+        vvp \
+        verilator \
         yosys \
         python3 \
         python3-pip \

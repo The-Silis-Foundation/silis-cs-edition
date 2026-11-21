@@ -10,11 +10,13 @@
   --text-muted: var(--vscode-descriptionForeground, #8b949e);
   --accent: var(--vscode-button-background, #1f6feb);
   --accent-hover: var(--vscode-button-hoverBackground, #388bfd);
-  --accent-active: #58a6ff;
+  --accent-fg: var(--vscode-button-foreground, #ffffff);
   --danger: var(--vscode-errorForeground, #f85149);
   --success: #3fb950;
   --warning: #d29922;
   --header-bg: var(--vscode-titleBar-activeBackground, #0d1117);
+  --font-gui: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif);
+  --font-mono: var(--vscode-editor-font-family, ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace);
 }
 
 * {
@@ -30,12 +32,13 @@ body, html {
   overflow: hidden;
   background: var(--bg-dark);
   color: var(--text-main);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-family: var(--font-gui);
   font-size: 12px;
+  line-height: 1.4;
 }
 
 input, select, textarea, button {
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
 }
 
@@ -52,10 +55,12 @@ input, select, textarea, button {
   display: flex;
   background: var(--header-bg);
   border-bottom: 1px solid var(--border);
-  padding: 2px 6px;
-  gap: 2px;
+  padding: 2px 8px;
+  gap: 4px;
   flex-shrink: 0;
   z-index: 100;
+  height: 32px;
+  align-items: center;
 }
 
 .menu-item {
@@ -67,8 +72,9 @@ input, select, textarea, button {
   padding: 4px 8px;
   color: var(--text-main);
   cursor: pointer;
-  border-radius: 3px;
+  border-radius: 4px;
   font-size: 12px;
+  font-family: var(--font-gui);
 }
 
 .menu-title:hover {
@@ -82,9 +88,9 @@ input, select, textarea, button {
   left: 0;
   background: var(--bg-panel);
   border: 1px solid var(--border);
-  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
-  border-radius: 4px;
-  min-width: 220px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+  border-radius: 6px;
+  min-width: 230px;
   z-index: 200;
   padding: 4px 0;
 }
@@ -96,24 +102,27 @@ input, select, textarea, button {
 .menu-entry {
   display: flex;
   justify-content: space-between;
-  padding: 5px 12px;
+  padding: 6px 12px;
   color: var(--text-main);
   cursor: pointer;
-  font-size: 11px;
+  font-size: 12px;
+  font-family: var(--font-gui);
 }
 
 .menu-entry:hover {
   background: var(--accent);
-  color: #11111b;
+  color: var(--accent-fg);
 }
 
 .menu-shortcut {
   color: var(--text-muted);
-  font-family: monospace;
+  font-family: var(--font-mono);
+  font-size: 11px;
 }
 
 .menu-entry:hover .menu-shortcut {
-  color: #11111b;
+  color: var(--accent-fg);
+  opacity: 0.85;
 }
 
 .menu-divider {
@@ -141,14 +150,14 @@ input, select, textarea, button {
 }
 
 #splitter-divider {
-  width: 5px;
+  width: 4px;
   cursor: col-resize;
   background: var(--border);
   transition: background 0.15s;
 }
 
 #splitter-divider:hover {
-  background: var(--accent);
+  background: var(--border-focus);
 }
 
 #inspector-container {
@@ -163,13 +172,13 @@ input, select, textarea, button {
 
 /* Left: Live Weight Tuner HUD (Physics Engine) */
 #live-tuner-hud {
-  background: rgba(30, 30, 46, 0.95);
+  background: var(--bg-panel);
   border-bottom: 1px solid var(--border);
   padding: 8px 12px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  font-family: monospace;
+  gap: 8px;
+  font-family: var(--font-mono);
 }
 
 .hud-row {
@@ -183,25 +192,29 @@ input, select, textarea, button {
   background: var(--border);
   color: var(--text-main);
   border: 1px solid var(--border);
-  border-radius: 3px;
-  padding: 3px 8px;
+  border-radius: 4px;
+  padding: 4px 10px;
   cursor: pointer;
+  font-family: var(--font-gui);
+  font-size: 11px;
 }
 
 .hud-btn:hover {
   background: var(--accent);
-  color: #11111b;
+  color: var(--accent-fg);
+  border-color: var(--accent);
 }
 
 .hud-slider-group {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
 }
 
 .hud-slider-group label {
   color: var(--text-muted);
   font-size: 11px;
+  font-family: var(--font-gui);
 }
 
 .hud-slider-group input[type="range"] {
@@ -214,8 +227,8 @@ input, select, textarea, button {
   background: var(--bg-input);
   border: 1px solid var(--border);
   color: var(--text-main);
-  padding: 2px 4px;
-  border-radius: 3px;
+  padding: 3px 6px;
+  border-radius: 4px;
 }
 
 /* CAD Canvas */
@@ -223,7 +236,7 @@ input, select, textarea, button {
   flex: 1;
   position: relative;
   overflow: hidden;
-  background: #0f0f17;
+  background: var(--bg-dark);
 }
 
 #fps-canvas {
@@ -233,14 +246,14 @@ input, select, textarea, button {
 }
 
 #canvas-status-bar {
-  height: 24px;
+  height: 26px;
   background: var(--header-bg);
   border-top: 1px solid var(--border);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 10px;
-  font-family: monospace;
+  padding: 0 12px;
+  font-family: var(--font-mono);
   font-size: 11px;
   color: var(--text-muted);
 }
@@ -251,30 +264,32 @@ input, select, textarea, button {
   background: var(--header-bg);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
+  height: 35px;
 }
 
 .tab-btn {
   flex: 1;
-  padding: 8px 4px;
+  padding: 8px 6px;
   background: transparent;
   color: var(--text-muted);
   border: none;
   border-bottom: 2px solid transparent;
   cursor: pointer;
   text-align: center;
-  font-size: 11px;
+  font-size: 12px;
+  font-family: var(--font-gui);
   font-weight: 500;
   transition: all 0.15s;
 }
 
 .tab-btn:hover {
   color: var(--text-main);
-  background: rgba(255, 255, 255, 0.02);
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .tab-btn.active {
-  color: var(--accent);
-  border-bottom-color: var(--accent);
+  color: var(--border-focus);
+  border-bottom-color: var(--border-focus);
   background: var(--bg-panel);
 }
 
@@ -298,8 +313,8 @@ input, select, textarea, button {
 .card {
   background: var(--bg-card);
   border: 1px solid var(--border);
-  border-radius: 5px;
-  padding: 10px;
+  border-radius: 6px;
+  padding: 12px;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -307,11 +322,12 @@ input, select, textarea, button {
 
 .card-title {
   font-size: 11px;
-  font-weight: bold;
+  font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  color: var(--accent);
-  margin-bottom: 2px;
+  color: var(--border-focus);
+  font-family: var(--font-gui);
+  margin-bottom: 4px;
 }
 
 /* Form Rows & Inputs */
@@ -324,14 +340,15 @@ input, select, textarea, button {
 
 .form-row label {
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: 12px;
+  font-family: var(--font-gui);
   flex: 1;
 }
 
 .form-inputs {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   flex: 2;
 }
 
@@ -339,9 +356,10 @@ input[type="number"], input[type="text"], select {
   background: var(--bg-input);
   border: 1px solid var(--border);
   color: var(--text-main);
-  padding: 4px 6px;
-  border-radius: 3px;
+  padding: 4px 8px;
+  border-radius: 4px;
   outline: none;
+  font-family: var(--font-mono);
 }
 
 input[type="number"]:focus, input[type="text"]:focus, select:focus {
@@ -350,12 +368,13 @@ input[type="number"]:focus, input[type="text"]:focus, select:focus {
 
 .btn-primary {
   background: var(--accent);
-  color: #11111b;
-  border: none;
-  padding: 6px 12px;
+  color: var(--accent-fg);
+  border: 1px solid var(--border);
+  padding: 6px 14px;
   border-radius: 4px;
   cursor: pointer;
   font-weight: 600;
+  font-family: var(--font-gui);
 }
 
 .btn-primary:hover {
@@ -366,43 +385,46 @@ input[type="number"]:focus, input[type="text"]:focus, select:focus {
   background: var(--border);
   color: var(--text-main);
   border: 1px solid var(--border);
-  padding: 5px 10px;
+  padding: 6px 12px;
   border-radius: 4px;
   cursor: pointer;
+  font-family: var(--font-gui);
 }
 
 .btn-secondary:hover {
-  background: #45475a;
+  background: #30363d;
+  color: var(--text-main);
 }
 
 /* Tables */
 .eda-table {
   width: 100%;
   border-collapse: collapse;
-  font-family: monospace;
-  font-size: 10.5px;
+  font-family: var(--font-mono);
+  font-size: 11px;
   background: var(--bg-input);
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: 4px;
 }
 
 .eda-table th {
-  background: #11111b;
+  background: var(--bg-panel);
   color: var(--text-muted);
   font-weight: 600;
   text-align: left;
-  padding: 5px 8px;
+  padding: 6px 10px;
   border-bottom: 1px solid var(--border);
+  font-family: var(--font-gui);
 }
 
 .eda-table td {
-  padding: 4px 8px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  padding: 5px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
   color: var(--text-main);
 }
 
 .eda-table tr:hover {
-  background: rgba(137, 180, 250, 0.08);
+  background: rgba(56, 139, 253, 0.1);
 }
 
 /* Monospace Live TCL Viewer */
@@ -411,12 +433,13 @@ input[type="number"]:focus, input[type="text"]:focus, select:focus {
   height: 380px;
   background: var(--bg-input);
   border: 1px solid var(--border);
-  color: #a6e3a1;
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  color: var(--text-main);
+  font-family: var(--font-mono);
   font-size: 11px;
-  padding: 8px;
+  padding: 10px;
   border-radius: 4px;
   resize: vertical;
   white-space: pre;
   overflow: auto;
+  line-height: 1.5;
 }

@@ -37,11 +37,12 @@ else
     (cd /opt/silis && sudo "$APPIMAGE" --appimage-extract && sudo mv squashfs-root runtime && sudo chmod -R a+rX /opt/silis)
 fi
 
-# 3. Install xvfb, x11vnc, iverilog, and yosys for simulation and CAD display bridges
+# 3. Install xvfb, x11vnc, iverilog, verilator, and yosys for simulation and CAD display bridges
 PACKAGES_TO_INSTALL=""
 if ! command -v Xvfb >/dev/null 2>&1; then PACKAGES_TO_INSTALL="$PACKAGES_TO_INSTALL xvfb"; fi
 if ! command -v x11vnc >/dev/null 2>&1; then PACKAGES_TO_INSTALL="$PACKAGES_TO_INSTALL x11vnc"; fi
 if ! command -v iverilog >/dev/null 2>&1; then PACKAGES_TO_INSTALL="$PACKAGES_TO_INSTALL iverilog"; fi
+if ! command -v verilator >/dev/null 2>&1; then PACKAGES_TO_INSTALL="$PACKAGES_TO_INSTALL verilator"; fi
 if ! command -v yosys >/dev/null 2>&1; then PACKAGES_TO_INSTALL="$PACKAGES_TO_INSTALL yosys"; fi
 
 if [ -n "$PACKAGES_TO_INSTALL" ]; then

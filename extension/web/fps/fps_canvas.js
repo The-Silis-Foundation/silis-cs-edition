@@ -346,9 +346,9 @@ function render() {
     ctx.fillText(`DRC ALERT: ${state.collisions.length} COLLISIONS DETECTED`, 24, badgeY + 16);
     badgeY += 32;
   }
-  const coreW = state.die.w - state.core.border * 2;
-  const coreH = state.die.h - state.core.border * 2;
-  const ar = coreW > 0 ? (coreH / coreW) : 1.0;
+  const dieCoreW = state.die.w - state.core.border * 2;
+  const dieCoreH = state.die.h - state.core.border * 2;
+  const ar = dieCoreW > 0 ? (dieCoreH / dieCoreW) : 1.0;
   if (ar < 0.5 || ar > 2.0) {
     ctx.fillStyle = 'rgba(249, 226, 175, 0.9)';
     ctx.fillRect(16, badgeY, 280, 24);
