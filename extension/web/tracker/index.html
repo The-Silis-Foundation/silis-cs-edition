@@ -72,7 +72,7 @@
         </div>
         <div class="stage-artifact">
           <span>Netlist:</span>
-          <span class="artifact-link" onclick="openFile('results/structural_chip_top.json')">structural_chip_top.json</span>
+          <span class="artifact-link" id="link-stage-3" onclick="openFile('netlist/chip_top_netlist.v')">chip_top_netlist.v</span>
         </div>
         <div class="stage-actions">
           <button class="btn-primary" onclick="action('openSynthConfirm')">Configure & Synth...</button>
@@ -138,9 +138,9 @@
   </div>
 
   <script>
-    const _vscode = (typeof acquireVsCodeApi === 'function') ? acquireVsCodeApi() : {
+    const _vscode = window.__vscodeApi || (typeof acquireVsCodeApi === 'function' ? (window.__vscodeApi = acquireVsCodeApi()) : {
       postMessage: function(msg) { console.log('TRACKER_MSG:', msg); }
-    };
+    });
 
     function action(cmd, payload) {
       _vscode.postMessage({ command: 'trackerAction', action: cmd, ...(payload || {}) });
@@ -163,9 +163,12 @@
         if (s.topModule) document.getElementById('badge-top').textContent = 'Top: ' + s.topModule;
         if (s.pdk) document.getElementById('badge-pdk').textContent = 'PDK: ' + s.pdk;
 
-        // Stage 2: VCD
+        // Stage 2: VCD / Simulation
         const pill2 = document.getElementById('pill-stage-2');
-        if (s.hasVcd) {
+        if (s.isSimRunning) {
+          pill2.textContent = 'SIMULATING...';
+          pill2.className = 'status-pill status-running';
+        } else if (s.hasVcd) {
           pill2.textContent = 'VCD DUMPED';
           pill2.className = 'status-pill status-passed';
         } else {
@@ -173,14 +176,35 @@
           pill2.className = 'status-pill status-pending';
         }
 
-        // Stage 3: Netlist
+        // Stage 3: Netlist / Synthesis
         const pill3 = document.getElementById('pill-stage-3');
-        if (s.hasNetlist) {
+        const link3 = document.getElementById('link-stage-3');
+        const topMod = s.topModule || (s.projectName === 'demo_soc' ? 'chip_top' : s.projectName) || 'chip_top';
+
+        if (s.isSynthRunning) {
+          pill3.textContent = 'SYNTHESIZING...';
+          pill3.className = 'status-pill status-running';
+        } else if (s.hasNetlist) {
           pill3.textContent = 'NETLIST READY';
           pill3.className = 'status-pill status-passed';
-        } else {
-          pill3.textContent = 'NEEDS RUN';
+          if (link3) {
+            link3.textContent = `${topMod}_netlist.v`;
+            link3.onclick = () => openFile(`netlist/${topMod}_netlist.v`);
+          }
+        } else if (s.hasSchematic) {
+          pill3.textContent = 'SCHEMATIC READY';
           pill3.className = 'status-pill status-pending';
+          if (link3) {
+            link3.textContent = `structural_${topMod}.json (Pre-Synth AST)`;
+            link3.onclick = () => openFile(`results/structural_${topMod}.json`);
+          }
+        } else {
+          pill3.textContent = 'NEEDS SYNTH';
+          pill3.className = 'status-pill status-pending';
+          if (link3) {
+            link3.textContent = `${topMod}_netlist.v (pending)`;
+            link3.onclick = () => action('openSynthConfirm');
+          }
         }
 
         // Stage 4: Floorplan

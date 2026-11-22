@@ -35,9 +35,19 @@ body, html {
   font-family: var(--font-gui);
   font-size: 12px;
   line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
 }
 
-input, select, textarea, button {
+button {
+  font-family: var(--font-gui);
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.12s ease-in-out;
+}
+
+input, select, textarea {
   font-family: var(--font-mono);
   font-size: 11px;
 }
@@ -425,6 +435,15 @@ input[type="number"]:focus, input[type="text"]:focus, select:focus {
 
 .eda-table tr:hover {
   background: rgba(56, 139, 253, 0.1);
+}
+
+.eda-table tr.pad-row-selected {
+  background: rgba(88, 166, 255, 0.22) !important;
+}
+
+.eda-table tr.pad-row-selected td {
+  color: #58a6ff;
+  font-weight: 600;
 }
 
 /* Monospace Live TCL Viewer */

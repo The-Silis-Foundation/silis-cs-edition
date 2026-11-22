@@ -18,7 +18,10 @@ const state = {
   showHud: true,
   selectedMacro: null,
   activeEdge: 'bottom',
+  selectedMacro: null,
+  selectedPad: null,
   isDragging: false,
+  isDraggingPad: false,
   isPanning: false,
   dragStart: { x: 0, y: 0 },
   panStart: { x: 0, y: 0 },
@@ -410,10 +413,20 @@ function renderPadRings() {
     ctx.lineWidth = strokeWidth;
     ctx.strokeRect(sp.x - 3.5, sp.y - 3.5, 7, 7);
 
-    if (state.zoom > 0.08) {
-      ctx.fillStyle = '#cdd6f4';
-      ctx.font = '8px ui-monospace, monospace';
-      ctx.fillText(pad.name, sp.x + 5, sp.y + 3);
+    // Selected Pad Halo Highlight & Label
+    const isSelected = (state.selectedPad === pad);
+    if (isSelected) {
+      ctx.strokeStyle = '#58a6ff';
+      ctx.lineWidth = 2.0;
+      ctx.strokeRect(sp.x - 7.5, sp.y - 7.5, 15, 15);
+      ctx.fillStyle = 'rgba(88, 166, 255, 0.28)';
+      ctx.fillRect(sp.x - 7.5, sp.y - 7.5, 15, 15);
+    }
+
+    if (state.zoom > 0.08 || isSelected) {
+      ctx.fillStyle = isSelected ? '#58a6ff' : '#cdd6f4';
+      ctx.font = isSelected ? 'bold 10px ui-monospace, monospace' : '8px ui-monospace, monospace';
+      ctx.fillText(pad.name, sp.x + 6, sp.y + 3);
     }
   }
 }
@@ -458,9 +471,40 @@ canvas.addEventListener('mousedown', (e) => {
     return;
   }
 
-  // Left button: Select or Drag Macro
+  // Left button: Select or Drag Pad or Macro
   if (e.button === 0) {
     const world = screenToWorld(mx, my);
+
+    // 1. Pad Hit-Testing along die edges (14px screen radius)
+    let hitPad = null;
+    if (Array.isArray(state.pads)) {
+      for (let i = state.pads.length - 1; i >= 0; i--) {
+        const pad = state.pads[i];
+        let px = 0, py = 0;
+        if (pad.edge === 'bottom') { px = pad.pos; py = 0; }
+        else if (pad.edge === 'top') { px = pad.pos; py = state.die.h; }
+        else if (pad.edge === 'left') { px = 0; py = pad.pos; }
+        else if (pad.edge === 'right') { px = state.die.w; py = pad.pos; }
+
+        const sp = worldToScreen(px, py);
+        if (Math.hypot(mx - sp.x, my - sp.y) <= 14) {
+          hitPad = pad;
+          break;
+        }
+      }
+    }
+
+    if (hitPad) {
+      state.selectedPad = hitPad;
+      state.selectedMacro = null;
+      state.isDraggingPad = true;
+      state.isDragging = false;
+      selectPadInGui(hitPad);
+      requestAnimationFrame(render);
+      return;
+    }
+
+    // 2. Macro Hit-Testing
     let hit = null;
     for (let i = state.macros.length - 1; i >= 0; i--) {
       const m = state.macros[i];
@@ -471,14 +515,17 @@ canvas.addEventListener('mousedown', (e) => {
     }
 
     state.selectedMacro = hit;
+    state.selectedPad = null;
     if (hit) {
       state.isDragging = true;
+      state.isDraggingPad = false;
       state.dragStart = { x: world.x - hit.x, y: world.y - hit.y };
       syncSelectedMacroCard(hit);
     } else {
       document.getElementById('status-selection').innerText = 'Selected: None';
       document.getElementById('lbl-sel-name').innerText = 'None';
     }
+    refreshPadsTable();
     requestAnimationFrame(render);
   }
 });
@@ -501,6 +548,43 @@ canvas.addEventListener('mousemove', (e) => {
   if (state.isPanning) {
     state.panX = mx - state.panStart.x;
     state.panY = state.panStart.y - my;
+    requestAnimationFrame(render);
+    return;
+  }
+
+  // Interactive Pad Dragging along edges
+  if (state.isDraggingPad && state.selectedPad) {
+    const pad = state.selectedPad;
+    const distBottom = Math.abs(world.y);
+    const distTop = Math.abs(world.y - state.die.h);
+    const distLeft = Math.abs(world.x);
+    const distRight = Math.abs(world.x - state.die.w);
+    const minDist = Math.min(distBottom, distTop, distLeft, distRight);
+
+    if (minDist === distBottom) {
+      pad.edge = 'bottom';
+      pad.pos = Math.max(0, Math.min(state.die.w, snapCoordinate(world.x, state.gridSnap)));
+    } else if (minDist === distTop) {
+      pad.edge = 'top';
+      pad.pos = Math.max(0, Math.min(state.die.w, snapCoordinate(world.x, state.gridSnap)));
+    } else if (minDist === distLeft) {
+      pad.edge = 'left';
+      pad.pos = Math.max(0, Math.min(state.die.h, snapCoordinate(world.y, state.gridSnap)));
+    } else if (minDist === distRight) {
+      pad.edge = 'right';
+      pad.pos = Math.max(0, Math.min(state.die.h, snapCoordinate(world.y, state.gridSnap)));
+    }
+
+    state.activeEdge = pad.edge;
+    const selStatus = document.getElementById('status-selection');
+    if (selStatus) {
+      selStatus.innerText = `Selected Pad: ${pad.name} (${pad.edge} @ ${Number(pad.pos).toFixed(3)} µm)`;
+    }
+    const edgeLbl = document.getElementById('lbl-active-edge');
+    if (edgeLbl) {
+      edgeLbl.innerText = `Active Edge: ${pad.edge.toUpperCase()} (Pad: ${pad.name})`;
+    }
+    refreshPadsTable();
     requestAnimationFrame(render);
     return;
   }
@@ -569,6 +653,13 @@ window.addEventListener('mouseup', () => {
     state.drawCurrent = null;
     requestAnimationFrame(render);
     return;
+  }
+
+  if (state.isDraggingPad) {
+    state.isDraggingPad = false;
+    pushHistory();
+    regenerateTcl();
+    refreshPadsTable();
   }
 
   if (state.isDragging) {
@@ -992,12 +1083,35 @@ function autoDistributeAllPads() {
   requestAnimationFrame(render);
 }
 
+function selectPadInGui(pad) {
+  if (!pad) return;
+  state.selectedPad = pad;
+  state.activeEdge = pad.edge;
+  const selStatus = document.getElementById('status-selection');
+  if (selStatus) {
+    selStatus.innerText = `Selected Pad: ${pad.name} (${pad.edge} @ ${Number(pad.pos).toFixed(3)} µm)`;
+  }
+  const edgeLbl = document.getElementById('lbl-active-edge');
+  if (edgeLbl) {
+    edgeLbl.innerText = `Active Edge: ${pad.edge.toUpperCase()} (Pad: ${pad.name})`;
+  }
+  refreshPadsTable();
+}
+
 function refreshPadsTable() {
   const tbody = document.getElementById('pads-table-body');
   if (!tbody) return;
   let html = '';
-  for (const p of state.pads) {
-    html += `<tr><td>${p.name}</td><td>${p.dir || 'input'}</td><td>${p.edge}</td><td>${Number(p.pos).toFixed(3)}</td></tr>`;
+  for (let idx = 0; idx < state.pads.length; idx++) {
+    const p = state.pads[idx];
+    const isSel = (state.selectedPad === p);
+    const rowClass = isSel ? 'class="pad-row-selected"' : '';
+    html += `<tr ${rowClass} data-idx="${idx}" style="cursor:pointer;">
+      <td>${p.name}</td>
+      <td>${p.dir || 'input'}</td>
+      <td>${p.edge}</td>
+      <td>${Number(p.pos).toFixed(3)}</td>
+    </tr>`;
   }
   tbody.innerHTML = html;
 }
@@ -1962,6 +2076,7 @@ function loadSessionData(s) {
   if (s.weights) state.weights = { ...state.weights, ...s.weights };
 
   canvasZoomFit();
+  refreshPadsTable();
   regenerateTcl();
   requestAnimationFrame(render);
 }
@@ -1993,6 +2108,20 @@ try {
 });
 
 // Startup (Desktop FPA Parity Initialization)
+const padsTbody = document.getElementById('pads-table-body');
+if (padsTbody) {
+  padsTbody.addEventListener('click', (e) => {
+    const tr = e.target.closest('tr');
+    if (!tr) return;
+    const idx = parseInt(tr.getAttribute('data-idx'), 10);
+    if (!isNaN(idx) && state.pads[idx]) {
+      selectPadInGui(state.pads[idx]);
+      state.selectedMacro = null;
+      requestAnimationFrame(render);
+    }
+  });
+}
+
 resizeCanvas();
 canvasZoomFit();
 updateUtil();

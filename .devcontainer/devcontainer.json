@@ -16,6 +16,16 @@
     "PYTHONPATH": "${containerWorkspaceFolder}:${containerWorkspaceFolder}/silis:${containerWorkspaceFolder}/silis/core",
     "LD_LIBRARY_PATH": "/opt/silis/runtime/usr/lib/x86_64-linux-gnu:/opt/silis/runtime/opt/python/lib"
   },
+  "portsAttributes": {
+    "5900": {
+      "label": "Headless X11 VNC",
+      "onAutoForward": "ignore"
+    },
+    "5901": {
+      "label": "Websockify Bridge",
+      "onAutoForward": "ignore"
+    }
+  },
   "customizations": {
     "vscode": {
       "settings": {

@@ -436,6 +436,20 @@ function activate(context) {
         return `projects/${name}`;
     }
 
+    function getProjectFsPath(pName) {
+        let name = pName || activeProject || 'demo_soc';
+        if (typeof name === 'object' && name.project) {
+            name = name.project;
+        }
+        if (typeof name === 'string') {
+            if (path.isAbsolute(name)) return name;
+            name = name.replace(/^projects\//, '');
+        }
+        const wsFolders = vscode.workspace.workspaceFolders;
+        const rootPath = wsFolders && wsFolders.length > 0 ? wsFolders[0].uri.fsPath : process.cwd();
+        return path.join(rootPath, 'projects', name);
+    }
+
     let activeSidebarWebview = null;
 
     // 1. Sidebar Webview Provider (Silis CAD in Activity Bar)
@@ -1056,23 +1070,33 @@ function activate(context) {
 
     // 1c. Project State Tracker Webview View Provider (Option A: First-Class Tab beside Terminal)
     let stateTrackerWebview = null;
+    let _isSimRunning = false;
+    let _isSynthRunning = false;
 
     async function getProjectFlowState(pName) {
         const cleanName = (pName || activeProject || 'demo_soc').replace(/^projects\//, '');
-        const wsFolders = vscode.workspace.workspaceFolders;
-        const rootPath = wsFolders ? wsFolders[0].uri.fsPath : '';
-        const projDir = path.join(rootPath, 'projects', cleanName);
+        const projDir = getProjectFsPath(cleanName);
 
         const vcdPath = path.join(projDir, 'waveform.vcd');
         const hasVcd = fs.existsSync(vcdPath) && fs.statSync(vcdPath).size > 0;
 
+        // Gate-level Netlist & synthesis area reports (distinct from schematic AST)
         const netlistCandidates = [
+            path.join(projDir, 'netlist', `${cleanName}_netlist.v`),
+            path.join(projDir, 'netlist', 'chip_top_netlist.v'),
+            path.join(projDir, 'netlist', `${cleanName}_scan.v`),
+            path.join(projDir, 'reports', 'area.rpt')
+        ];
+        const hasNetlist = netlistCandidates.some(f => fs.existsSync(f) && fs.statSync(f).size > 0);
+
+        // Pre-synthesis structural AST for schematic generator
+        const schemCandidates = [
             path.join(projDir, 'results', `structural_${cleanName}.json`),
             path.join(projDir, 'results', 'structural_chip_top.json'),
             path.join(projDir, 'build', 'structural_synth.json'),
             path.join(projDir, 'build', `structural_${cleanName}.json`)
         ];
-        const hasNetlist = netlistCandidates.some(f => fs.existsSync(f) && fs.statSync(f).size > 0);
+        const hasSchematic = schemCandidates.some(f => fs.existsSync(f) && fs.statSync(f).size > 0);
 
         const hasFloorplan = fs.existsSync(path.join(projDir, 'run_floorplan.tcl')) || fs.existsSync(path.join(projDir, '.silis_fp_session.json'));
 
@@ -1089,8 +1113,11 @@ function activate(context) {
             pdk: 'sky130_fd_sc_hd',
             hasVcd,
             hasNetlist,
+            hasSchematic,
             hasFloorplan,
-            hasDef
+            hasDef,
+            isSimRunning: _isSimRunning,
+            isSynthRunning: _isSynthRunning
         };
     }
 
@@ -1113,6 +1140,12 @@ function activate(context) {
             webviewView.webview.html = getTrackerWebviewHtml(webviewView.webview, context.extensionUri);
 
             setTimeout(syncStateTracker, 200);
+
+            webviewView.onDidChangeVisibility(() => {
+                if (webviewView.visible) {
+                    syncStateTracker();
+                }
+            });
 
             webviewView.webview.onDidReceiveMessage(async (msg) => {
                 if (!msg) return;
@@ -1137,7 +1170,8 @@ function activate(context) {
                     } else if (action === 'runPlacement') {
                         const term = getFlowTerminal();
                         term.show();
-                        term.sendText(`cd projects/${activeProject} && if [ -f run_place.tcl ]; then openroad run_place.tcl; else echo "Run floorplan commit first."; fi`);
+                        const pDir = getProjectFsPath(activeProject);
+                        term.sendText(`cd "${pDir}" && if [ -f run_place.tcl ]; then openroad run_place.tcl; else echo "Run floorplan commit first."; fi`);
                     } else if (action === 'openLayout') {
                         vscode.commands.executeCommand('silis.openLayout');
                     } else if (action === 'runTapeout') {
@@ -1801,14 +1835,12 @@ function activate(context) {
             activeFloorplanPanel.webview.onDidReceiveMessage(async (msg) => {
                 if (msg && msg.command === 'fpsAction') {
                     const action = msg.action;
-                    const wsFolders = vscode.workspace.workspaceFolders;
-                    const rootPath = wsFolders ? wsFolders[0].uri.fsPath : '';
-                    const projDir = path.join(rootPath, 'projects', pName);
+                    const projDir = getProjectFsPath(pName);
 
                     if (action === 'saveSession') {
                         const sessionPath = path.join(projDir, '.silis_fp_session.json');
                         atomicWriteFileSync(sessionPath, JSON.stringify(msg.state || {}, null, 2));
-                        vscode.window.showInformationMessage(`Floorplan session saved to projects/${pName}/.silis_fp_session.json`);
+                        vscode.window.showInformationMessage(`Floorplan session saved to ${sessionPath}`);
                     } else if (action === 'exportTcl' || action === 'commitFlow') {
                         const tclPath = path.join(projDir, 'run_floorplan.tcl');
                         if (msg.tcl) {
@@ -1817,16 +1849,16 @@ function activate(context) {
                         if (action === 'commitFlow') {
                             const term = getFlowTerminal();
                             term.show();
-                            term.sendText(`cd projects/${pName} && if [ -f run_floorplan.tcl ]; then openroad run_floorplan.tcl; fi`);
+                            term.sendText(`cd "${projDir}" && if [ -f run_floorplan.tcl ]; then openroad run_floorplan.tcl; fi`);
                         } else {
-                            vscode.window.showInformationMessage(`OpenROAD Floorplan TCL exported to projects/${pName}/run_floorplan.tcl`);
+                            vscode.window.showInformationMessage(`OpenROAD Floorplan TCL exported to ${tclPath}`);
                         }
                     } else if (action === 'autoPlaceMacros') {
                         vscode.window.showInformationMessage('Macro placement calculated. Check FPS canvas or export TCL.');
                     } else if (action === 'runDrcCheck') {
                         const term = getFlowTerminal();
                         term.show();
-                        term.sendText(`verilator --lint-only -sv -Wall -Wno-fatal -Iprojects/${pName}/rtl projects/${pName}/rtl/*.sv 2>/dev/null || true`);
+                        term.sendText(`cd "${projDir}" && verilator --lint-only -sv -Wall -Wno-fatal -Irtl -Isource rtl/*.sv source/*.sv 2>/dev/null || true`);
                     }
                 }
             });
@@ -1852,54 +1884,97 @@ function activate(context) {
         return term;
     }
 
-    // 11. Run Simulation (Play Button: Runs compile & sim, opens Schematic on right, loads Waveform dock)
+    // 11. Run Simulation (Play Button: Runs compile & sim, opens Schematic on right, loads Waveform dock upon generation)
     context.subscriptions.push(
         vscode.commands.registerCommand('silis.runSimulation', async () => {
             const pName = activeProject || 'demo_soc';
+            const projDir = getProjectFsPath(pName);
+            const vcdPath = path.join(projDir, 'waveform.vcd');
+            const vvpPath = path.join(projDir, 'sim.vvp');
+
             vscode.window.showInformationMessage(`Running simulation for project "${pName}"...`);
 
             if (vscode.window.activeTextEditor) {
                 await vscode.window.activeTextEditor.document.save();
             }
 
-            // 1. Show terminal and execute simulation
+            // Stale artifact purge: ensure we never read stale waveforms
+            try { if (fs.existsSync(vvpPath)) fs.unlinkSync(vvpPath); } catch (e) {}
+            try { if (fs.existsSync(vcdPath)) fs.unlinkSync(vcdPath); } catch (e) {}
+
+            _isSimRunning = true;
+            syncStateTracker();
+
+            // 1. Show terminal and execute simulation cleanly inside projDir
             const term = getFlowTerminal();
             term.show();
-            term.sendText(`cd projects/${pName} && echo "=== [Silis Simulation: ${pName}] ===" && if [ -f tb/tb_${pName}.v ]; then iverilog -g2012 -o sim.vvp rtl/*.sv tb/*.v && vvp sim.vvp; elif [ -f source/tb_chip_top.v ]; then iverilog -g2012 -o sim.vvp source/*.sv source/*.v && vvp sim.vvp; elif [ -f source/tb_${pName}.v ]; then iverilog -g2012 -o sim.vvp source/*.sv source/*.v && vvp sim.vvp; else TB=\$(find . -maxdepth 2 -name "tb_*.v" -o -name "*_tb.v" 2>/dev/null | head -n 1); if [ -n "\$TB" ]; then iverilog -g2012 -o sim.vvp source/*.sv source/*.v rtl/*.sv rtl/*.v "\$TB" && vvp sim.vvp; else echo "[Silis Error] No testbench found in projects/${pName}"; fi; fi`);
+            term.sendText(`cd "${projDir}" && rm -f sim.vvp waveform.vcd && echo "=== [Silis Simulation: ${pName}] ===" && if [ -f tb/tb_${pName}.v ]; then iverilog -g2012 -o sim.vvp rtl/*.sv tb/*.v && vvp sim.vvp; elif [ -f source/tb_chip_top.v ]; then iverilog -g2012 -o sim.vvp source/*.sv source/*.v && vvp sim.vvp; elif [ -f source/tb_${pName}.v ]; then iverilog -g2012 -o sim.vvp source/*.sv source/*.v && vvp sim.vvp; else TB=\$(find . -maxdepth 2 -name "tb_*.v" -o -name "*_tb.v" 2>/dev/null | head -n 1); if [ -n "\$TB" ]; then iverilog -g2012 -o sim.vvp source/*.sv source/*.v rtl/*.sv rtl/*.v "\$TB" && vvp sim.vvp; else echo "[Silis Error] No testbench found in ${projDir}"; fi; fi`);
 
             // 2. Open schematic beside RTL (Native web render)
             await openSchematicPanel(pName, vscode.ViewColumn.Beside);
 
-            // 3. Load waveform into bottom dock (Native web render)
-            await vscode.commands.executeCommand('silis-bottom-dock.focus');
-            await loadWaveformInBottomDock(pName);
+            // 3. Poll for sim.vvp and completed waveform.vcd (only when Run is clicked)
+            const startTime = Date.now();
+            let pollTimer = null;
+            pollTimer = setInterval(async () => {
+                const elapsed = Date.now() - startTime;
+                if (elapsed > 20000) {
+                    clearInterval(pollTimer);
+                    pollTimer = null;
+                    _isSimRunning = false;
+                    syncStateTracker();
+                    return;
+                }
 
-            // 4. Follow-up reload checks to display waveform as soon as vvp finishes dumping
-            for (const delay of [800, 1600, 3000]) {
-                setTimeout(async () => {
-                    await loadWaveformInBottomDock(pName);
-                }, delay);
-            }
+                if (fs.existsSync(vcdPath)) {
+                    try {
+                        const st = fs.statSync(vcdPath);
+                        if (st.size > 32) {
+                            const content = fs.readFileSync(vcdPath, 'utf8');
+                            if (content.includes('$enddefinitions') || content.includes('$dumpvars') || elapsed > 3500) {
+                                clearInterval(pollTimer);
+                                pollTimer = null;
+                                _isSimRunning = false;
+                                syncStateTracker();
+                                await vscode.commands.executeCommand('silis-bottom-dock.focus');
+                                await loadWaveformInBottomDock(vcdPath);
+                            }
+                        }
+                    } catch (e) {}
+                }
+            }, 200);
         })
     );
 
-    // Watch for waveform.vcd, structural_*.json, and DEF updates across workspace to sync State Tracker & Waveforms
+    // Watch for waveform.vcd, netlists, and DEF updates across workspace to sync State Tracker & Waveforms
     try {
+        let _vcdDebounce = null;
         const vcdWatcher = vscode.workspace.createFileSystemWatcher('**/waveform.vcd');
-        vcdWatcher.onDidChange(async (uri) => {
-            await loadWaveformInBottomDock(uri.fsPath);
-            syncStateTracker();
-        });
-        vcdWatcher.onDidCreate(async (uri) => {
-            await loadWaveformInBottomDock(uri.fsPath);
-            syncStateTracker();
-        });
+        const handleVcdUpdate = (uri) => {
+            if (_isSimRunning) return; // Simulation polling owns loading while run is active
+            if (_vcdDebounce) clearTimeout(_vcdDebounce);
+            _vcdDebounce = setTimeout(async () => {
+                try {
+                    if (fs.existsSync(uri.fsPath) && fs.statSync(uri.fsPath).size > 32) {
+                        await loadWaveformInBottomDock(uri.fsPath);
+                        syncStateTracker();
+                    }
+                } catch (e) {}
+            }, 300);
+        };
+        vcdWatcher.onDidChange(handleVcdUpdate);
+        vcdWatcher.onDidCreate(handleVcdUpdate);
         context.subscriptions.push(vcdWatcher);
 
-        const netlistWatcher = vscode.workspace.createFileSystemWatcher('**/results/structural_*.json');
+        const netlistWatcher = vscode.workspace.createFileSystemWatcher('**/{netlist/*_netlist.v,reports/area.rpt}');
         netlistWatcher.onDidChange(() => syncStateTracker());
         netlistWatcher.onDidCreate(() => syncStateTracker());
         context.subscriptions.push(netlistWatcher);
+
+        const schemWatcher = vscode.workspace.createFileSystemWatcher('**/results/structural_*.json');
+        schemWatcher.onDidChange(() => syncStateTracker());
+        schemWatcher.onDidCreate(() => syncStateTracker());
+        context.subscriptions.push(schemWatcher);
 
         const defWatcher = vscode.workspace.createFileSystemWatcher('**/results/*_filled.def');
         defWatcher.onDidChange(() => syncStateTracker());
@@ -2018,15 +2093,29 @@ function activate(context) {
 
                     const term = getFlowTerminal();
                     term.show();
-                    term.sendText(`cd projects/${pName} && echo "=== [Silis Synthesis & Scan Flow: ${pName}] ===" && yosys -s synth.ys`);
+                    term.sendText(`cd "${projDir}" && echo "=== [Silis Synthesis & Scan Flow: ${pName}] ===" && yosys -s synth.ys`);
 
                     if (msg.dft && msg.dft.enabled) {
-                        term.sendText(`python3 -c "import os, sys; sys.path.insert(0, '.'); sys.path.insert(0, 'silis'); sys.path.insert(0, 'silis/core'); from dft.dft_engine import DFTEngine; e = DFTEngine('netlist/${pName}_netlist.v', '${pName === 'demo_soc' ? 'chip_top' : pName}', 'sky130', '${msg.dft.scan_in}', '${msg.dft.scan_out}', '${msg.dft.scan_en}', '${msg.dft.scan_clk}', ${msg.dft.clamp ? 'True' : 'False'}); e.stitch_scan_chain('netlist/${pName}_scan.v', 'results/design.scandef')" 2>/dev/null || true`);
+                        term.sendText(`cd "${projDir}" && python3 -c "import os, sys; sys.path.insert(0, '.'); sys.path.insert(0, '${rootPath}'); sys.path.insert(0, '${rootPath}/silis'); sys.path.insert(0, '${rootPath}/silis/core'); from dft.dft_engine import DFTEngine; e = DFTEngine('netlist/${pName}_netlist.v', '${pName === 'demo_soc' ? 'chip_top' : pName}', 'sky130', '${msg.dft.scan_in}', '${msg.dft.scan_out}', '${msg.dft.scan_en}', '${msg.dft.scan_clk}', ${msg.dft.clamp ? 'True' : 'False'}); e.stitch_scan_chain('netlist/${pName}_scan.v', 'results/design.scandef')" 2>/dev/null || true`);
                     }
 
+                    _isSynthRunning = true;
+                    syncStateTracker();
+
                     vscode.window.showInformationMessage(`Synthesis flow started for projects/${pName}`);
-                    setTimeout(syncStateTracker, 1000);
-                    setTimeout(syncStateTracker, 3000);
+
+                    const synthStart = Date.now();
+                    const synthPoll = setInterval(() => {
+                        const elapsed = Date.now() - synthStart;
+                        const netlistV = path.join(projDir, 'netlist', `${pName}_netlist.v`);
+                        const areaRpt = path.join(projDir, 'reports', 'area.rpt');
+                        const isDone = (fs.existsSync(netlistV) && fs.statSync(netlistV).size > 0) || (fs.existsSync(areaRpt) && fs.statSync(areaRpt).size > 0);
+                        if (isDone || elapsed > 30000) {
+                            clearInterval(synthPoll);
+                            _isSynthRunning = false;
+                            syncStateTracker();
+                        }
+                    }, 500);
                 } catch (err) {
                     vscode.window.showErrorMessage(`Failed to initiate synthesis: ${err.message}`);
                 }
@@ -2056,9 +2145,10 @@ function activate(context) {
     context.subscriptions.push(
         vscode.commands.registerCommand('silis.runAll', () => {
             const pName = activeProject || 'demo_soc';
+            const projDir = getProjectFsPath(pName);
             const term = getFlowTerminal();
             term.show();
-            term.sendText(`cd projects/${pName} && if [ -f run_init.tcl ]; then openroad run_init.tcl; else echo "No run_init.tcl found in projects/${pName}"; fi`);
+            term.sendText(`cd "${projDir}" && if [ -f run_init.tcl ]; then openroad run_init.tcl; else echo "No run_init.tcl found in ${projDir}"; fi`);
         })
     );
 

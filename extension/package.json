@@ -82,7 +82,7 @@
         {
           "type": "webview",
           "id": "silis-bottom-dock",
-          "name": "ROHD Waveform Inspector"
+          "name": "ROHD Wave Viewer"
         }
       ]
     },
