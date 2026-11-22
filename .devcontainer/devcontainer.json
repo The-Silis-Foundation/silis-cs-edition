@@ -13,6 +13,7 @@
     "DISPLAY": ":1",
     "LIBGL_ALWAYS_SOFTWARE": "1",
     "QT_QPA_PLATFORM": "xcb",
+    "PDK_ROOT": "${containerWorkspaceFolder}/assets/pdk",
     "PYTHONPATH": "${containerWorkspaceFolder}:${containerWorkspaceFolder}/silis:${containerWorkspaceFolder}/silis/core",
     "LD_LIBRARY_PATH": "/opt/silis/runtime/usr/lib/x86_64-linux-gnu:/opt/silis/runtime/opt/python/lib"
   },

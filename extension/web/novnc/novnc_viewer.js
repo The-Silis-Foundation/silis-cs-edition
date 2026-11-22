@@ -128,9 +128,17 @@ if (btnReconnect) {
     });
 }
 
+// Dismiss overlay if clicked directly by user
+if (overlayPanel) {
+    overlayPanel.addEventListener('click', () => {
+        overlayPanel.classList.add('hidden');
+    });
+}
+
 // Launcher button hooks
 document.querySelectorAll('.launcher-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', (e) => {
+        e.stopPropagation();
         const mode = btn.getAttribute('data-mode');
         if (mode) {
             vscode.postMessage({ type: 'launch_viewer', mode: mode });
@@ -138,8 +146,19 @@ document.querySelectorAll('.launcher-btn').forEach(btn => {
             const titleEl = btn.querySelector('.launcher-btn-title') || btn.querySelector('span');
             const title = titleEl ? titleEl.textContent.trim() : mode;
             overlayDesc.textContent = `Starting ${title} on DISPLAY=:1...`;
+            // Auto-hide overlay after brief launch window so it never hangs
+            setTimeout(() => {
+                overlayPanel.classList.add('hidden');
+            }, 1200);
         }
     });
+});
+
+// Auto-scale on window / tab resize
+window.addEventListener('resize', () => {
+    if (rfb) {
+        rfb.scaleViewport = scaleViewport;
+    }
 });
 
 // Listen for incoming commands from extension host
@@ -147,7 +166,13 @@ window.addEventListener('message', (event) => {
     const msg = event.data;
     if (!msg || typeof msg !== 'object') return;
 
-    if (msg.type === 'project_info') {
+    if (msg.type === 'viewer_launched') {
+        overlayTitle.textContent = 'Rendering Layout...';
+        overlayDesc.textContent = `Streaming ${msg.mode || 'CAD engine'} frame...`;
+        setTimeout(() => {
+            overlayPanel.classList.add('hidden');
+        }, 600);
+    } else if (msg.type === 'project_info') {
         const tag = document.getElementById('project-tag');
         if (tag && msg.projectName) {
             tag.textContent = msg.projectName;

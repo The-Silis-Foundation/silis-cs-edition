@@ -72,6 +72,7 @@ cat << EOF | sudo tee /etc/profile.d/silis_env.sh > /dev/null
 export PATH="/opt/silis/runtime/opt/python/bin:${WORKSPACE_DIR}/assets/bin:\$PATH"
 export PYTHONPATH="${WORKSPACE_DIR}:${WORKSPACE_DIR}/silis:${WORKSPACE_DIR}/silis/core:\$PYTHONPATH"
 export LD_LIBRARY_PATH="/opt/silis/runtime/usr/lib/x86_64-linux-gnu:/opt/silis/runtime/opt/python/lib:\$LD_LIBRARY_PATH"
+export PDK_ROOT="${WORKSPACE_DIR}/assets/pdk"
 export LIBGL_ALWAYS_SOFTWARE=1
 export QT_QPA_PLATFORM=xcb
 export DISPLAY=:1

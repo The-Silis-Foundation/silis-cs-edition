@@ -682,11 +682,22 @@ function activate(context) {
         return path.join(projDir, 'results', 'temp.def');
     }
 
+    let currentNativeViewerProcess = null;
+
     function launchNativeViewer(mode, pName, specificDefPath = null) {
         const wsFolders = vscode.workspace.workspaceFolders;
         const rootPath = wsFolders ? wsFolders[0].uri.fsPath : process.cwd();
         const cleanName = (pName || activeProject || 'demo_soc').replace(/^projects\//, '');
         const defPath = specificDefPath || findProjectDefFile(cleanName);
+
+        // Terminate any previous viewer to avoid multiple stacked windows
+        if (currentNativeViewerProcess) {
+            try { currentNativeViewerProcess.kill('SIGKILL'); } catch (e) {}
+            currentNativeViewerProcess = null;
+        }
+        try {
+            cp.spawnSync('pkill', ['-9', '-f', 'silis\\.view_layout|silis\\.view_layers']);
+        } catch (e) {}
 
         let pythonBin = 'python3';
         if (fs.existsSync('/opt/silis/runtime/opt/python/bin/python3')) {
@@ -695,6 +706,7 @@ function activate(context) {
             pythonBin = '/usr/local/bin/silis-python3';
         }
 
+        const pdkRoot = path.join(rootPath, 'assets', 'pdk');
         const runtimeLd = '/opt/silis/runtime/usr/lib/x86_64-linux-gnu:/opt/silis/runtime/opt/python/lib';
         const currentLd = process.env.LD_LIBRARY_PATH || '';
         const ldLibPath = currentLd ? `${runtimeLd}:${currentLd}` : runtimeLd;
@@ -702,19 +714,25 @@ function activate(context) {
             DISPLAY: ':1',
             LIBGL_ALWAYS_SOFTWARE: '1',
             QT_QPA_PLATFORM: 'xcb',
+            PDK_ROOT: pdkRoot,
             LD_LIBRARY_PATH: ldLibPath,
             PYTHONPATH: `${rootPath}:${rootPath}/silis:${rootPath}/silis/core:${process.env.PYTHONPATH || ''}`,
         });
 
         try {
             if (mode === 'fast_peeker') {
-                const pyScript = `import sys, silis; from PyQt6.QtWidgets import QApplication; app = QApplication.instance() or QApplication(sys.argv); win = silis.view_layout(r'${defPath}', show=True, detach=False); win.show(); sys.exit(app.exec())`;
+                const pyScript = `import sys, silis; from PyQt6.QtWidgets import QApplication; app = QApplication.instance() or QApplication(sys.argv); win = silis.view_layout(r'${defPath}', show=True, detach=False); win.showMaximized(); sys.exit(app.exec())`;
                 const child = cp.spawn(pythonBin, ['-c', pyScript], { env, cwd: rootPath, detached: true, stdio: 'ignore' });
                 child.unref();
+                currentNativeViewerProcess = child;
             } else if (mode === 'layer_viewer') {
-                const pyScript = `import sys, silis; from PyQt6.QtWidgets import QApplication; app = QApplication.instance() or QApplication(sys.argv); win = silis.view_layers(r'${defPath}', show=True, detach=False); win.show(); sys.exit(app.exec())`;
+                const pyScript = `import sys, silis; from PyQt6.QtWidgets import QApplication; app = QApplication.instance() or QApplication(sys.argv); win = silis.view_layers(r'${defPath}', show=True, detach=False); win.showMaximized(); sys.exit(app.exec())`;
                 const child = cp.spawn(pythonBin, ['-c', pyScript], { env, cwd: rootPath, detached: true, stdio: 'ignore' });
                 child.unref();
+                currentNativeViewerProcess = child;
+            }
+            if (activeLayoutPanel) {
+                safePostMessage(activeLayoutPanel, { type: 'viewer_launched', mode });
             }
         } catch (err) {
             console.error('Failed to spawn native layout viewer:', err);
