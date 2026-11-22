@@ -27,7 +27,11 @@ RUN apt-get update -qq && \
         libxkbcommon-x11-0 \
         libgl1-mesa-dri \
         libglib2.0-0t64 \
-        libdbus-1-3 && \
+        libdbus-1-3 \
+        libqt5widgets5 \
+        libqt5gui5 \
+        libqt5core5a \
+        tcl-tclreadline && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
