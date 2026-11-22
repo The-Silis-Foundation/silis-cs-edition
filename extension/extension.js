@@ -629,6 +629,9 @@ function activate(context) {
                     '-display', ':1',
                     '-listen', '127.0.0.1',
                     '-rfbport', '5901',
+                    '-rfbportv6', '0',
+                    '-no6',
+                    '-noipv6',
                     '-nopw',
                     '-shared',
                     '-forever'
@@ -710,16 +713,6 @@ function activate(context) {
             } else if (mode === 'layer_viewer') {
                 const pyScript = `import silis; silis.view_layers(r'${defPath}', show=True, detach=False)`;
                 const child = cp.spawn(pythonBin, ['-c', pyScript], { env, cwd: rootPath, detached: true, stdio: 'ignore' });
-                child.unref();
-            } else if (mode === 'openroad_gui') {
-                const openroadBin = fs.existsSync('/home/econsystems/.local/bin/openroad')
-                    ? '/home/econsystems/.local/bin/openroad'
-                    : (fs.existsSync('/opt/silis/runtime/usr/bin/openroad') ? '/opt/silis/runtime/usr/bin/openroad' : 'openroad');
-                const child = cp.spawn(openroadBin, ['-gui'], { env, cwd: rootPath, detached: true, stdio: 'ignore' });
-                child.unref();
-            } else if (mode === 'backend_gui') {
-                const silisBin = path.join(rootPath, 'assets', 'bin', 'silis');
-                const child = cp.spawn(silisBin, ['--bend'], { env, cwd: rootPath, detached: true, stdio: 'ignore' });
                 child.unref();
             }
         } catch (err) {

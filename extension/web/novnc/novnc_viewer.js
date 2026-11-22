@@ -135,7 +135,9 @@ document.querySelectorAll('.launcher-btn').forEach(btn => {
         if (mode) {
             vscode.postMessage({ type: 'launch_viewer', mode: mode });
             overlayTitle.textContent = 'Launching CAD Engine...';
-            overlayDesc.textContent = `Starting ${btn.querySelector('.launcher-btn-title').textContent} on DISPLAY=:1...`;
+            const titleEl = btn.querySelector('.launcher-btn-title') || btn.querySelector('span');
+            const title = titleEl ? titleEl.textContent.trim() : mode;
+            overlayDesc.textContent = `Starting ${title} on DISPLAY=:1...`;
         }
     });
 });

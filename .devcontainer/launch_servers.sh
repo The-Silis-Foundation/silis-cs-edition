@@ -19,7 +19,7 @@ if command -v Xvfb >/dev/null 2>&1 && ! pgrep -f "Xvfb :1" >/dev/null 2>&1; then
     Xvfb :1 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset >/dev/null 2>&1 &
 fi
 if command -v x11vnc >/dev/null 2>&1 && ! pgrep -f "x11vnc.*5901" >/dev/null 2>&1; then
-    x11vnc -display :1 -listen 127.0.0.1 -rfbport 5901 -nopw -shared -forever -bg >/dev/null 2>&1 || true
+    x11vnc -display :1 -listen 127.0.0.1 -rfbport 5901 -rfbportv6 0 -no6 -noipv6 -nopw -shared -forever -bg >/dev/null 2>&1 || true
 fi
 
 # Ensure extension is installed in active VS Code server session

@@ -18,11 +18,9 @@
   },
   "portsAttributes": {
     "5900": {
-      "label": "Headless X11 VNC",
       "onAutoForward": "ignore"
     },
     "5901": {
-      "label": "Websockify Bridge",
       "onAutoForward": "ignore"
     }
   },
