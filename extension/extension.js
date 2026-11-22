@@ -661,6 +661,7 @@ function activate(context) {
         const cleanName = (pName || 'demo_soc').replace(/^projects\//, '');
         const projDir = path.join(rootPath, 'projects', cleanName);
         const candidates = [
+            path.join(projDir, 'results', 'chip_top_filled.def'),
             path.join(projDir, 'results', 'temp.def'),
             path.join(projDir, 'results', 'routed.def'),
             path.join(projDir, 'results', 'placed.def'),
@@ -759,7 +760,8 @@ function activate(context) {
                     client.on('data', (chunk) => {
                         safePostMessage(panel, {
                             type: 'vnc_data',
-                            data: new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength)
+                            data: chunk.toString('base64'),
+                            isBase64: true
                         });
                     });
 
@@ -778,7 +780,9 @@ function activate(context) {
                 case 'vnc_data': {
                     if (panelVncSocket && !panelVncSocket.destroyed) {
                         let buf;
-                        if (Buffer.isBuffer(msg.data)) {
+                        if (typeof msg.data === 'string') {
+                            buf = Buffer.from(msg.data, 'base64');
+                        } else if (Buffer.isBuffer(msg.data)) {
                             buf = msg.data;
                         } else if (msg.data instanceof Uint8Array) {
                             buf = Buffer.from(msg.data.buffer, msg.data.byteOffset, msg.data.byteLength);
@@ -786,6 +790,8 @@ function activate(context) {
                             buf = Buffer.from(msg.data);
                         } else if (msg.data && msg.data.data && Array.isArray(msg.data.data)) {
                             buf = Buffer.from(msg.data.data);
+                        } else if (typeof msg.data === 'object' && msg.data !== null) {
+                            buf = Buffer.from(Object.values(msg.data));
                         } else {
                             buf = Buffer.from(msg.data);
                         }

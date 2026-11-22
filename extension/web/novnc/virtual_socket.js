@@ -37,8 +37,20 @@ export default class VirtualVncSocket {
 
                 case 'vnc_data':
                     if (this.readyState === 1 && typeof this.onmessage === 'function') {
-                        let arrayBuf;
-                        if (msg.data instanceof ArrayBuffer) {
+                        let arrayBuf = null;
+                        if (typeof msg.data === 'string') {
+                            try {
+                                const binaryStr = atob(msg.data);
+                                const len = binaryStr.length;
+                                const bytes = new Uint8Array(len);
+                                for (let i = 0; i < len; i++) {
+                                    bytes[i] = binaryStr.charCodeAt(i);
+                                }
+                                arrayBuf = bytes.buffer;
+                            } catch (e) {
+                                console.error('VirtualVncSocket: failed to decode base64 vnc_data', e);
+                            }
+                        } else if (msg.data instanceof ArrayBuffer) {
                             arrayBuf = msg.data;
                         } else if (ArrayBuffer.isView(msg.data)) {
                             arrayBuf = msg.data.buffer.slice(
@@ -49,15 +61,13 @@ export default class VirtualVncSocket {
                             arrayBuf = new Uint8Array(msg.data).buffer;
                         } else if (msg.data && msg.data.type === 'Buffer' && Array.isArray(msg.data.data)) {
                             arrayBuf = new Uint8Array(msg.data.data).buffer;
-                        } else {
-                            try {
-                                arrayBuf = new Uint8Array(msg.data).buffer;
-                            } catch (e) {
-                                console.error('VirtualVncSocket: failed to convert data to ArrayBuffer', e);
-                                return;
-                            }
+                        } else if (typeof msg.data === 'object' && msg.data !== null) {
+                            const values = Object.values(msg.data);
+                            arrayBuf = new Uint8Array(values).buffer;
                         }
-                        this.onmessage({ data: arrayBuf });
+                        if (arrayBuf && arrayBuf.byteLength > 0) {
+                            this.onmessage({ data: arrayBuf });
+                        }
                     }
                     break;
 
@@ -91,20 +101,27 @@ export default class VirtualVncSocket {
             return;
         }
 
-        let bytes;
+        let u8;
         if (data instanceof Uint8Array) {
-            bytes = Array.from(data);
+            u8 = data;
         } else if (data instanceof ArrayBuffer) {
-            bytes = Array.from(new Uint8Array(data));
+            u8 = new Uint8Array(data);
         } else if (ArrayBuffer.isView(data)) {
-            bytes = Array.from(new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
+            u8 = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
         } else if (Array.isArray(data)) {
-            bytes = data;
+            u8 = new Uint8Array(data);
         } else {
-            bytes = Array.from(new Uint8Array(data));
+            u8 = new Uint8Array(data);
         }
 
-        this._vscode.postMessage({ type: 'vnc_data', data: bytes });
+        let binary = '';
+        const len = u8.byteLength;
+        for (let i = 0; i < len; i++) {
+            binary += String.fromCharCode(u8[i]);
+        }
+        const b64 = btoa(binary);
+
+        this._vscode.postMessage({ type: 'vnc_data', data: b64, isBase64: true });
     }
 
     close() {

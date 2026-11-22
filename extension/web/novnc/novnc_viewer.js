@@ -159,7 +159,11 @@ window.addEventListener('message', (event) => {
     }
 });
 
-// Auto-start connection on page load
-window.addEventListener('DOMContentLoaded', () => {
+// Auto-start connection on page load (support both early and deferred module execution)
+if (document.readyState === 'loading') {
+    window.addEventListener('DOMContentLoaded', () => {
+        initVnc();
+    });
+} else {
     initVnc();
-});
+}

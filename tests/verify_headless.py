@@ -234,21 +234,23 @@ globalThis._msgHandler({ data: { type: 'vnc_open' } });
 if (sock.readyState !== 'open') throw new Error('Socket failed to transition to open');
 console.log('  [PASS] Connection state transition: open');
 
-// 4. Binary duplex RFB exchange
+// 4. Binary duplex RFB exchange (test base64 string from extension host)
 let receivedMsg = false;
 sock.on('message', () => { receivedMsg = true; });
-const rfbGreeting = [0x52, 0x46, 0x42, 0x20, 0x30, 0x30, 0x33, 0x2e, 0x30, 0x30, 0x38, 0x0a];
-globalThis._msgHandler({ data: { type: 'vnc_data', data: rfbGreeting } });
+const b64Greeting = Buffer.from('RFB 003.008\\n').toString('base64');
+globalThis._msgHandler({ data: { type: 'vnc_data', data: b64Greeting, isBase64: true } });
 const decoded = sock.rQshiftStr(12);
 if (decoded !== 'RFB 003.008\\n') throw new Error('RFB version decoding failed');
 console.log('  [PASS] Received & decoded RFB handshake frame: ' + JSON.stringify(decoded));
 
-// 5. Send RFB response
+// 5. Send RFB response (outgoing base64 over IPC)
 sock.sQpushString('RFB 003.008\\n');
 sock.flush();
 const lastMsg = postedMessages[postedMessages.length - 1];
-if (lastMsg.type !== 'vnc_data' || lastMsg.data.length !== 12) throw new Error('Binary flush failed');
-console.log('  [PASS] Sent binary RFB frame across VS Code IPC pipe (12 bytes)');
+if (lastMsg.type !== 'vnc_data') throw new Error('Binary flush failed');
+const sentBytes = Buffer.from(lastMsg.data, 'base64');
+if (sentBytes.length !== 12 || sentBytes.toString() !== 'RFB 003.008\\n') throw new Error('Binary base64 payload mismatch');
+console.log('  [PASS] Sent binary RFB frame across VS Code IPC pipe (12 bytes base64 encoded)');
 """
     res = subprocess.run([node_bin, "--input-type=module", "-e", js_test], cwd=REPO_ROOT, capture_output=True, text=True)
     if res.returncode != 0:
