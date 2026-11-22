@@ -1547,7 +1547,7 @@ COMPONENTS 1409 ;
     - clkbuf_regs_0_clk_pad sky130_fd_sc_hd__clkbuf_8 + SOURCE TIMING + PLACED ( 17020 68000 ) FS ;
     - clkload0 sky130_fd_sc_hd__clkbuf_1 + SOURCE TIMING + PLACED ( 22540 54400 ) N ;
     - delaybuf_0_clk_pad sky130_fd_sc_hd__clkbuf_8 + SOURCE TIMING + PLACED ( 88780 19040 ) FS ;
-    - u_alu_core simple_alu + FIXED ( 40000 40000 ) N ;
+    - u_alu_core simple_alu + FIXED ( 40000 40800 ) N ;
 END COMPONENTS
 PINS 11 ;
     - a_pad + NET a_pad + DIRECTION INPUT + USE SIGNAL

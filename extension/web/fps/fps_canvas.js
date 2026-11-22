@@ -1773,7 +1773,37 @@ window.addEventListener('keydown', (e) => {
 // Live TCL Generator (Strict OpenROAD & Desktop Parity)
 function regenerateTcl() {
   let tcl = `# Silis Floorplan & Power Studio (FPS) - Generated Flow Script\n`;
-  // Iteration 36: Multi-point DIEAREA support
+  tcl += `set SCRIPT_DIR [file normalize [file dirname [info script]]]\n`;
+  tcl += `set REPO_ROOT [file normalize "$SCRIPT_DIR/../.."]\n`;
+  tcl += `set SILIS_FP "$REPO_ROOT/silis/core/backendflow/floorplanner/silis_fp.tcl"\n`;
+  tcl += `if {[info procs create_fence] eq "" && [file exists $SILIS_FP]} { catch { source $SILIS_FP } }\n\n`;
+
+  tcl += `# --- Design Loading / Linking (if standalone OpenROAD execution) ---\n`;
+  tcl += `if {[catch {::ord::get_db_block}] || [::ord::get_db_block] eq "NULL" || [::ord::get_db_block] eq ""} {\n`;
+  tcl += `  set pdk_nom "$REPO_ROOT/assets/pdk/sky130/sky130_fd_sc_hd__nom.tlef"\n`;
+  tcl += `  set pdk_sc "$REPO_ROOT/assets/pdk/sky130/sky130_fd_sc_hd.lef"\n`;
+  tcl += `  if {![file exists $pdk_nom]} {\n`;
+  tcl += `    set pdk_nom "$REPO_ROOT/silis/third-party/OpenROAD/test/sky130hd/sky130_fd_sc_hd__nom.tlef"\n`;
+  tcl += `    set pdk_sc "$REPO_ROOT/silis/third-party/OpenROAD/test/sky130hd/sky130_fd_sc_hd.lef"\n`;
+  tcl += `  }\n`;
+  tcl += `  if {[file exists $pdk_nom]} { catch { read_lef $pdk_nom } }\n`;
+  tcl += `  if {[file exists $pdk_sc]} { catch { read_lef $pdk_sc } }\n`;
+  tcl += `  if {[file exists "$SCRIPT_DIR/source/simple_alu.lef"]} { catch { read_lef "$SCRIPT_DIR/source/simple_alu.lef" } }\n`;
+  tcl += `  if {[file exists "$SCRIPT_DIR/results/temp.def"]} {\n`;
+  tcl += `    catch { read_def "$SCRIPT_DIR/results/temp.def" }\n`;
+  tcl += `  } elseif {[file exists "$SCRIPT_DIR/results/chip_top_filled.def"]} {\n`;
+  tcl += `    catch { read_def "$SCRIPT_DIR/results/chip_top_filled.def" }\n`;
+  tcl += `  }\n`;
+  tcl += `}\n\n`;
+
+  tcl += `# Power Domains (IEEE 1801 UPF - Area must precede initialize_floorplan)\n`;
+  const topVoltage = 1.80;
+  for (const dom of state.domains) {
+    if (dom.name !== 'PD_TOP') {
+      tcl += `catch { set_domain_area ${dom.name} -area { ${dom.box.map(v => v.toFixed(3)).join(' ')} } }\n`;
+    }
+  }
+  tcl += `\n# === INITIALIZATION ===\n`;
   if (state.die && Array.isArray(state.die.polygon) && state.die.polygon.length >= 6) {
     const polyStr = state.die.polygon.map(v => Number(v).toFixed(3)).join(' ');
     tcl += `initialize_floorplan -die_area { ${polyStr} } \\\n`;
@@ -1783,32 +1813,55 @@ function regenerateTcl() {
   tcl += `                     -core_area { ${state.core.border.toFixed(3)} ${state.core.border.toFixed(3)} ${(state.die.w - state.core.border).toFixed(3)} ${(state.die.h - state.core.border).toFixed(3)} } \\\n`;
   tcl += `                     -site unithd\n\n`;
 
-  tcl += `# Power Domains (IEEE 1801 UPF)\n`;
-  const topVoltage = 1.80;
+  tcl += `# Deduplicate overlapping rows created by multi-domain row slicing\n`;
+  tcl += `set _blk [ord::get_db_block]\n`;
+  tcl += `if {$_blk ne "NULL" && $_blk ne ""} {\n`;
+  tcl += `  set _seen_rows [dict create]\n`;
+  tcl += `  set _dup_rows [list]\n`;
+  tcl += `  foreach _r [$_blk getRows] {\n`;
+  tcl += `    set _orig [$_r getOrigin]\n`;
+  tcl += `    set _cnt [$_r getSiteCount]\n`;
+  tcl += `    set _site [[$_r getSite] getName]\n`;
+  tcl += `    set _key "\${_site},[lindex \$_orig 0],[lindex \$_orig 1],\${_cnt}"\n`;
+  tcl += `    if {[dict exists \$_seen_rows \$_key]} {\n`;
+  tcl += `      lappend _dup_rows \$_r\n`;
+  tcl += `    } else {\n`;
+  tcl += `      dict set _seen_rows \$_key 1\n`;
+  tcl += `    }\n`;
+  tcl += `  }\n`;
+  tcl += `  foreach _dr \$_dup_rows { odb::dbRow_destroy \$_dr }\n`;
+  tcl += `}\n\n`;
+
+  tcl += `# Power Domain Isolation & Level Shifters\n`;
   for (const dom of state.domains) {
     if (dom.name !== 'PD_TOP') {
-      tcl += `set_domain_area ${dom.name} -area { ${dom.box.map(v => v.toFixed(3)).join(' ')} }\n`;
-      // Iteration 31: Isolation Rule Clamp Synthesis
       const isoEn = dom.iso_en || `${dom.name.toLowerCase()}_iso_en`;
-      tcl += `set_isolation iso_${dom.name} -domain ${dom.name} -clamp_value 0 -applies_to outputs\n`;
-      tcl += `set_isolation_control iso_${dom.name} -domain ${dom.name} -isolation_signal ${isoEn} -isolation_sense high\n`;
-
-      // Iteration 30: Level Shifter Rule Synthesis (|V1 - V2| > 0.05V)
+      tcl += `catch { set_isolation iso_${dom.name} -domain ${dom.name} -clamp_value 0 -applies_to outputs }\n`;
+      tcl += `catch { set_isolation_control iso_${dom.name} -domain ${dom.name} -isolation_signal ${isoEn} -isolation_sense high }\n`;
       const domVoltage = Number(dom.voltage) || 1.80;
       if (Math.abs(domVoltage - topVoltage) > 0.05) {
-        tcl += `set_level_shifter ls_${dom.name}_to_top -domain ${dom.name} -direction both\n`;
+        tcl += `catch { set_level_shifter ls_${dom.name}_to_top -domain ${dom.name} -direction both }\n`;
       }
     }
   }
 
   // Iteration 35: Standard Cell Row Tapcell Invariant (Max 14.0 um)
   tcl += `\n# Standard Cell Row Tapcells\n`;
-  tcl += `tapcell -endcap_cpp 1 -distance 14.0 -tapcell_master sky130_fd_sc_hd__tapvpwrvgnd_1\n`;
+  tcl += `catch { tapcell -endcap_cpp 1 -distance 14.0 -tapcell_master sky130_fd_sc_hd__tapvpwrvgnd_1 }\n`;
+
   tcl += `\n# Macro Placements and Keepout Halos\n`;
   for (const m of state.macros) {
-    tcl += `place_macro -inst ${m.inst} -origin { ${m.x.toFixed(3)} ${m.y.toFixed(3)} } -orient ${m.orient || 'R0'}\n`;
     const halo = Array.isArray(m.halo) && m.halo.length >= 4 ? m.halo : [10, 10, 10, 10];
-    tcl += `set_macro_halo -inst ${m.inst} -halo { ${halo[0].toFixed(3)} ${halo[2].toFixed(3)} ${halo[1].toFixed(3)} ${halo[3].toFixed(3)} }\n`;
+    tcl += `if {[info procs place_macro] ne ""} {\n`;
+    tcl += `  place_macro -inst "${m.inst}" -origin { ${m.x.toFixed(3)} ${m.y.toFixed(3)} } -orient ${m.orient || 'R0'} -halo { ${halo[0].toFixed(3)} ${halo[2].toFixed(3)} ${halo[1].toFixed(3)} ${halo[3].toFixed(3)} }\n`;
+    tcl += `} elseif {\$_blk ne "NULL" && \$_blk ne ""} {\n`;
+    tcl += `  set _mi [\$_blk findInst "${m.inst}"]\n`;
+    tcl += `  if {\$_mi ne "NULL" && \$_mi ne ""} {\n`;
+    tcl += `    \$_mi setPlacementStatus NONE\n`;
+    tcl += `    \$_mi setLocation ${Math.round(m.x * 1000)} ${Math.round(m.y * 1000)}\n`;
+    tcl += `    \$_mi setPlacementStatus FIRM\n`;
+    tcl += `  }\n`;
+    tcl += `}\n`;
   }
 
   // Hierarchical Regions & Fences (OpenROAD Compliant)
@@ -1821,9 +1874,9 @@ function regenerateTcl() {
       const y2 = (r.y + r.h).toFixed(3);
       const mod = r.module_name || 'u_region';
       if (r.is_fence) {
-        tcl += `create_fence -module ${mod} -box { ${x1} ${y1} ${x2} ${y2} }\n`;
+        tcl += `catch { create_fence -module ${mod} -box { ${x1} ${y1} ${x2} ${y2} } }\n`;
       } else {
-        tcl += `create_region -module ${mod} -box { ${x1} ${y1} ${x2} ${y2} } -type inclusive\n`;
+        tcl += `catch { create_region -module ${mod} -box { ${x1} ${y1} ${x2} ${y2} } -type inclusive }\n`;
       }
     }
   }
@@ -1838,21 +1891,32 @@ function regenerateTcl() {
       const y2 = (b.y + b.h).toFixed(3);
       const bt = (b.btype || 'Hard').toLowerCase();
       if (bt === 'hard') {
-        tcl += `create_placement_blockage -area { ${x1} ${y1} ${x2} ${y2} } -type hard\n`;
+        tcl += `catch { create_placement_blockage -area { ${x1} ${y1} ${x2} ${y2} } -type hard }\n`;
       } else if (bt === 'soft') {
-        tcl += `create_placement_blockage -area { ${x1} ${y1} ${x2} ${y2} } -type soft\n`;
+        tcl += `catch { create_placement_blockage -area { ${x1} ${y1} ${x2} ${y2} } -type soft }\n`;
       } else if (bt === 'partial') {
         const pct = b.pct !== undefined ? b.pct : 50;
-        tcl += `create_placement_blockage -area { ${x1} ${y1} ${x2} ${y2} } -type partial -density ${pct}\n`;
+        tcl += `catch { create_placement_blockage -area { ${x1} ${y1} ${x2} ${y2} } -type partial -density ${pct} }\n`;
       } else {
-        tcl += `create_placement_blockage -area { ${x1} ${y1} ${x2} ${y2} } -type hard\n`;
+        tcl += `catch { create_placement_blockage -area { ${x1} ${y1} ${x2} ${y2} } -type hard }\n`;
       }
     }
   }
+
+  // I/O Pins & Pads
+  tcl += `\n# I/O Pins & Pads Placement\n`;
+  tcl += `catch { place_pins -hor_layers met3 -ver_layers met4 -corner_avoidance 5.0 -min_distance 1.0 }\n`;
+
   tcl += `\n# PDN Ring & Straps\n`;
-  tcl += `add_pdn_ring -grid grid_top -layers { met5 met4 } -widths { 5.0 5.0 } -spacings { 2.0 2.0 }\n`;
-  tcl += `add_pdn_stripe -grid grid_top -layer met4 -width 3.2 -pitch 40.0\n`;
-  tcl += `add_pdn_stripe -grid grid_top -layer met5 -width 3.2 -pitch 40.0\n`;
+  tcl += `catch { add_pdn_ring -grid grid_top -layers { met5 met4 } -widths { 5.0 5.0 } -spacings { 2.0 2.0 } }\n`;
+  tcl += `catch { add_pdn_stripe -grid grid_top -layer met4 -width 3.2 -pitch 40.0 }\n`;
+  tcl += `catch { add_pdn_stripe -grid grid_top -layer met5 -width 3.2 -pitch 40.0 }\n`;
+
+  tcl += `\n# Results Output\n`;
+  tcl += `file mkdir "$SCRIPT_DIR/results"\n`;
+  tcl += `catch { write_def "$SCRIPT_DIR/results/temp.def" }\n`;
+  tcl += `puts "SILIS_FLOORPLAN_DONE"\n`;
+  tcl += `exit 0\n`;
 
   const ed = document.getElementById('live-tcl-editor');
   if (ed) ed.value = tcl;

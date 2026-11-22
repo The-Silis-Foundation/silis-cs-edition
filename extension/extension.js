@@ -1171,7 +1171,7 @@ function activate(context) {
                         const term = getFlowTerminal();
                         term.show();
                         const pDir = getProjectFsPath(activeProject);
-                        term.sendText(`cd "${pDir}" && if [ -f run_place.tcl ]; then openroad run_place.tcl; else echo "Run floorplan commit first."; fi`);
+                        term.sendText(`cd "${pDir}" && if [ -f run_place.tcl ]; then openroad -no_init -exit run_place.tcl; else echo "Run floorplan commit first."; fi`);
                     } else if (action === 'openLayout') {
                         vscode.commands.executeCommand('silis.openLayout');
                     } else if (action === 'runTapeout') {
@@ -1824,7 +1824,7 @@ function activate(context) {
                         const initSession = {
                             die: { w: 180, h: 180, ml: 15, mr: 15, mt: 15, mb: 15 },
                             core: { border: 15, w: 150, h: 150 },
-                            macros: macros.length > 0 ? macros : [{ inst: 'u_alu_core', master: 'simple_alu', x: 40, y: 40, w: 80, h: 60, orient: 'R0' }],
+                            macros: macros.length > 0 ? macros : [{ inst: 'u_alu_core', master: 'simple_alu', x: 40, y: 40.8, w: 80, h: 60, orient: 'R0' }],
                             pins: pins.length > 0 ? pins.slice(0, 16) : [{ name: 'clk', edge: 'bottom', pos: 30, dir: 'input' }, { name: 'rst_n', edge: 'bottom', pos: 60, dir: 'input' }]
                         };
                         safePostMessage(activeFloorplanPanel, { command: 'loadSession', session: initSession });
@@ -1849,7 +1849,7 @@ function activate(context) {
                         if (action === 'commitFlow') {
                             const term = getFlowTerminal();
                             term.show();
-                            term.sendText(`cd "${projDir}" && if [ -f run_floorplan.tcl ]; then openroad run_floorplan.tcl; fi`);
+                            term.sendText(`cd "${projDir}" && if [ -f run_floorplan.tcl ]; then openroad -no_init -exit run_floorplan.tcl; fi`);
                         } else {
                             vscode.window.showInformationMessage(`OpenROAD Floorplan TCL exported to ${tclPath}`);
                         }
@@ -2148,7 +2148,7 @@ function activate(context) {
             const projDir = getProjectFsPath(pName);
             const term = getFlowTerminal();
             term.show();
-            term.sendText(`cd "${projDir}" && if [ -f run_init.tcl ]; then openroad run_init.tcl; else echo "No run_init.tcl found in ${projDir}"; fi`);
+            term.sendText(`cd "${projDir}" && if [ -f run_init.tcl ]; then openroad -no_init -exit run_init.tcl; else echo "No run_init.tcl found in ${projDir}"; fi`);
         })
     );
 
