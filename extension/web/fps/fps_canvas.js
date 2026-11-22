@@ -1905,10 +1905,11 @@ function regenerateTcl() {
 
   // I/O Pins & Pads
   tcl += `\n# I/O Pins & Pads Placement\n`;
+  tcl += `catch { make_tracks }\n`;
   tcl += `catch { place_pins -hor_layers met3 -ver_layers met4 -corner_avoidance 5.0 -min_distance 1.0 }\n`;
 
   tcl += `\n# PDN Ring & Straps\n`;
-  tcl += `catch { add_pdn_ring -grid grid_top -layers { met5 met4 } -widths { 5.0 5.0 } -spacings { 2.0 2.0 } }\n`;
+  tcl += `catch { add_pdn_ring -grid grid_top -layers { met5 met4 } -widths { 5.0 5.0 } -spacings { 2.0 2.0 } -core_offsets { 5.0 5.0 } }\n`;
   tcl += `catch { add_pdn_stripe -grid grid_top -layer met4 -width 3.2 -pitch 40.0 }\n`;
   tcl += `catch { add_pdn_stripe -grid grid_top -layer met5 -width 3.2 -pitch 40.0 }\n`;
 

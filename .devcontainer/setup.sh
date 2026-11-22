@@ -57,6 +57,13 @@ if [ -n "$PACKAGES_TO_INSTALL" ]; then
     fi
 fi
 
+# 3b. Install OpenROAD EDA Engine from prebuilt release bundle if not present
+if ! command -v openroad >/dev/null 2>&1; then
+    echo "Fetching OpenROAD EDA Engine from GitHub release..."
+    sudo curl -sL --retry 3 "https://github.com/The-Silis-Foundation/silis-cs-edition/releases/download/v1.0.0-runtime/openroad-x86_64.tar.gz" | sudo tar -xz -C /usr/local/
+    sudo ldconfig 2>/dev/null || true
+fi
+
 # 4. DO NOT overwrite system /usr/bin/python3. Create /usr/local/bin/silis-python3 and export PATH in /etc/profile.d/silis_env.sh
 sudo ln -sf /opt/silis/runtime/opt/python/bin/python3 /usr/local/bin/silis-python3 2>/dev/null || true
 sudo ln -sf "${WORKSPACE_DIR}/assets/bin/silis" /usr/local/bin/silis 2>/dev/null || true

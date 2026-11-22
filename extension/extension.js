@@ -708,11 +708,11 @@ function activate(context) {
 
         try {
             if (mode === 'fast_peeker') {
-                const pyScript = `import silis; silis.view_layout(r'${defPath}', show=True, detach=False)`;
+                const pyScript = `import sys, silis; from PyQt6.QtWidgets import QApplication; app = QApplication.instance() or QApplication(sys.argv); win = silis.view_layout(r'${defPath}', show=True, detach=False); win.show(); sys.exit(app.exec())`;
                 const child = cp.spawn(pythonBin, ['-c', pyScript], { env, cwd: rootPath, detached: true, stdio: 'ignore' });
                 child.unref();
             } else if (mode === 'layer_viewer') {
-                const pyScript = `import silis; silis.view_layers(r'${defPath}', show=True, detach=False)`;
+                const pyScript = `import sys, silis; from PyQt6.QtWidgets import QApplication; app = QApplication.instance() or QApplication(sys.argv); win = silis.view_layers(r'${defPath}', show=True, detach=False); win.show(); sys.exit(app.exec())`;
                 const child = cp.spawn(pythonBin, ['-c', pyScript], { env, cwd: rootPath, detached: true, stdio: 'ignore' });
                 child.unref();
             }
