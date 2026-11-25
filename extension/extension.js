@@ -2084,17 +2084,26 @@ function activate(context) {
 
     async function openSynthConfirmPanel(projectName) {
         const pName = (projectName || activeProject || 'demo_soc').replace(/^projects\//, '');
-        const wsFolders = vscode.workspace.workspaceFolders;
-        const rootPath = wsFolders ? wsFolders[0].uri.fsPath : '';
+        const rootPath = getWorkspaceRoot();
         const projDir = path.join(rootPath, 'projects', pName);
         const synthYsPath = path.join(projDir, 'synth.ys');
+
+        let projMeta = { topModule: pName === 'demo_soc' ? 'chip_top' : pName, pdk: 'sky130' };
+        if (isValidIdent(pName)) {
+            try {
+                const st = runSilisBridge('project-state', ['--project', pName]);
+                if (st && st.topModule) projMeta = st;
+            } catch (e) {}
+        }
+        const topMod = projMeta.topModule || (pName === 'demo_soc' ? 'chip_top' : pName);
+        const targetPdk = projMeta.pdk || 'sky130';
 
         let scriptText = '';
         if (fs.existsSync(synthYsPath)) {
             try { scriptText = fs.readFileSync(synthYsPath, 'utf8'); } catch (e) {}
         }
         if (!scriptText.trim()) {
-            scriptText = `# Silis CS Edition - Project Synthesis Script (${pName})\nread_verilog -sv source/chip_top.sv source/simple_alu.v 2>/dev/null || read_verilog -sv rtl/*.sv 2>/dev/null;\nhierarchy -top ${pName === 'demo_soc' ? 'chip_top' : pName};\nsynth -top ${pName === 'demo_soc' ? 'chip_top' : pName};\ntee -o reports/area.rpt stat;\nwrite_json results/structural_${pName}.json;\nwrite_verilog -noattr netlist/${pName}_netlist.v;\n`;
+            scriptText = `# Silis CS Edition - Project Synthesis Script (${pName})\nread_verilog -sv source/chip_top.sv source/simple_alu.v 2>/dev/null || read_verilog -sv rtl/*.sv 2>/dev/null;\nhierarchy -top ${topMod};\nsynth -top ${topMod};\ntee -o reports/area.rpt stat;\nwrite_json results/structural_${topMod}.json;\nwrite_verilog -noattr netlist/${topMod}_netlist.v;\n`;
         }
 
         let dftConfig = { enabled: false, scan_in: 'scan_in', scan_out: 'scan_out', scan_en: 'scan_en', scan_clk: 'clk', clamp: true };
@@ -2108,8 +2117,8 @@ function activate(context) {
             safePostMessage(synthConfirmPanel, {
                 command: 'loadConfig',
                 projectName: pName,
-                topModule: pName === 'demo_soc' ? 'chip_top' : pName,
-                pdk: 'sky130',
+                topModule: topMod,
+                pdk: targetPdk,
                 script: scriptText,
                 dft: dftConfig
             });
@@ -2129,8 +2138,8 @@ function activate(context) {
             safePostMessage(synthConfirmPanel, {
                 command: 'loadConfig',
                 projectName: pName,
-                topModule: pName === 'demo_soc' ? 'chip_top' : pName,
-                pdk: 'sky130',
+                topModule: topMod,
+                pdk: targetPdk,
                 script: scriptText,
                 dft: dftConfig
             });
@@ -2152,11 +2161,16 @@ function activate(context) {
             }
             if (msg.command === 'confirmSynthesis') {
                 try {
-                    const netlistV = path.join(projDir, 'netlist', `${pName}_netlist.v`);
+                    for (const sub of ['reports', 'netlist', 'results']) {
+                        fs.mkdirSync(path.join(projDir, sub), { recursive: true });
+                    }
+                    const netlistTopV = path.join(projDir, 'netlist', `${topMod}_netlist.v`);
+                    const netlistProjV = path.join(projDir, 'netlist', `${pName}_netlist.v`);
                     const areaRpt = path.join(projDir, 'reports', 'area.rpt');
                     // Clear stale outputs so completion polling reflects the current run
-                    try { if (fs.existsSync(netlistV)) fs.unlinkSync(netlistV); } catch (e) {}
-                    try { if (fs.existsSync(areaRpt)) fs.unlinkSync(areaRpt); } catch (e) {}
+                    for (const stale of [netlistTopV, netlistProjV, areaRpt]) {
+                        try { if (fs.existsSync(stale)) fs.unlinkSync(stale); } catch (e) {}
+                    }
 
                     if (msg.script) {
                         atomicWriteFileSync(synthYsPath, msg.script);
@@ -2170,19 +2184,16 @@ function activate(context) {
                         synthConfirmPanel = null;
                     }
 
-                    const topMod = pName === 'demo_soc' ? 'chip_top' : pName;
                     const term = getFlowTerminal();
                     term.show();
-                    term.sendText(`cd "${projDir}" && echo "=== [Silis Synthesis & Scan Flow: ${pName}] ===" && yosys -s synth.ys`);
+                    let fullCmd = `cd "${projDir}" && mkdir -p reports netlist results && echo "=== [Silis Synthesis & Scan Flow: ${pName}] ===" && yosys -s synth.ys`;
 
-                    if (msg.dft && msg.dft.enabled) {
+                    if (msg.dft && msg.dft.enabled && isValidIdent(pName)) {
                         const pythonBin = resolvePythonBin();
-                        const dftCmd = [
-                            `cd "${projDir}"`,
-                            `&& "${pythonBin}" -c "import json, sys; sys.path[:0]=['.', '${rootPath}', '${rootPath}/silis', '${rootPath}/silis/core']; from dft.dft_engine import DFTEngine; c=json.load(open('dft_config.json')); e=DFTEngine('netlist/${pName}_netlist.v', '${topMod}', 'sky130', c.get('scan_in','scan_in'), c.get('scan_out','scan_out'), c.get('scan_en','scan_en'), c.get('scan_clk','clk'), bool(c.get('clamp',True))); e.stitch_scan_chain('netlist/${pName}_scan.v', 'results/design.scandef')" || true`
-                        ].join(' ');
-                        term.sendText(dftCmd);
+                        const bridgeScript = path.join(rootPath, 'tools', 'silis_web_bridge.py');
+                        fullCmd += ` && "${pythonBin}" "${bridgeScript}" synth-dft --project "${pName}"`;
                     }
+                    term.sendText(fullCmd);
 
                     _isSynthRunning = true;
                     syncStateTracker();
@@ -2192,8 +2203,9 @@ function activate(context) {
                     const synthStart = Date.now();
                     const synthPoll = setInterval(() => {
                         const elapsed = Date.now() - synthStart;
-                        const isDone = (fs.existsSync(netlistV) && fs.statSync(netlistV).size > 0 && fs.statSync(netlistV).mtimeMs >= synthStart) ||
-                                       (fs.existsSync(areaRpt) && fs.statSync(areaRpt).size > 0 && fs.statSync(areaRpt).mtimeMs >= synthStart);
+                        const isDone = [netlistTopV, netlistProjV, areaRpt].some(
+                            f => fs.existsSync(f) && fs.statSync(f).size > 0 && fs.statSync(f).mtimeMs >= synthStart
+                        );
                         if (isDone || elapsed > 30000) {
                             clearInterval(synthPoll);
                             _isSynthRunning = false;

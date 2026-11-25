@@ -351,6 +351,7 @@ def cmd_project_state(args: argparse.Namespace) -> int:
         proj_dir / "netlist" / f"{args.project}_netlist.v",
         proj_dir / "netlist" / f"{top_module}_netlist.v",
         proj_dir / "netlist" / f"{args.project}_scan.v",
+        proj_dir / "netlist" / f"{top_module}_scan.v",
         proj_dir / "reports" / "area.rpt",
     ])
     has_schematic = _has_nonempty([
@@ -521,6 +522,64 @@ def cmd_floorplan_tcl(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_synth_dft(args: argparse.Namespace) -> int:
+    """Stitch DFT scan chains on the synthesized netlist using silis DFTEngine."""
+    ensure_pdk_environment()
+    proj_dir = (REPO_ROOT / "projects" / args.project).resolve()
+    for sub in ("reports", "netlist", "results"):
+        (proj_dir / sub).mkdir(parents=True, exist_ok=True)
+
+    top_module = "chip_top" if args.project == "demo_soc" else args.project
+    pdk = "sky130"
+    try:
+        import silis
+        proj = silis.load_project(str(proj_dir))
+        top_module = proj.top_module or top_module
+        pdk = proj.pdk or pdk
+    except Exception:
+        pass
+
+    dft_cfg_path = proj_dir / "dft_config.json"
+    cfg = json.loads(dft_cfg_path.read_text(encoding="utf-8")) if dft_cfg_path.is_file() else {}
+
+    # Detect exact Verilog netlist written by synth.ys, with standard fallbacks
+    netlist_path: Optional[Path] = None
+    synth_ys = proj_dir / "synth.ys"
+    if synth_ys.is_file():
+        m = re.search(r"write_verilog\b[^\n;]*?\s+([^\s;]+\.v)\b", synth_ys.read_text(encoding="utf-8", errors="ignore"))
+        if m:
+            cand = (proj_dir / m.group(1)).resolve()
+            if cand.is_file():
+                netlist_path = cand
+    if netlist_path is None:
+        for cand in (
+            proj_dir / "netlist" / f"{top_module}_netlist.v",
+            proj_dir / "netlist" / f"{args.project}_netlist.v",
+        ):
+            if cand.is_file():
+                netlist_path = cand
+                break
+    if netlist_path is None:
+        netlist_path = proj_dir / "netlist" / f"{top_module}_netlist.v"
+
+    from dft.dft_engine import DFTEngine
+    engine = DFTEngine(
+        str(netlist_path),
+        top_module,
+        pdk,
+        cfg.get("scan_in", "scan_in"),
+        cfg.get("scan_out", "scan_out"),
+        cfg.get("scan_en", "scan_en"),
+        cfg.get("scan_clk", "clk"),
+        bool(cfg.get("clamp", True)),
+    )
+    out_scan = proj_dir / "netlist" / f"{top_module}_scan.v"
+    out_scandef = proj_dir / "results" / "design.scandef"
+    engine.stitch_scan_chain(str(out_scan), str(out_scandef))
+    print(f"[SILIS DFT] Stitched scan chain: {out_scan.relative_to(proj_dir)} & {out_scandef.relative_to(proj_dir)}")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Silis CS Edition Web Bridge")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -541,6 +600,9 @@ def main() -> int:
     p_state = sub.add_parser("project-state")
     p_state.add_argument("--project", required=True)
 
+    p_dft = sub.add_parser("synth-dft")
+    p_dft.add_argument("--project", required=True)
+
     p_fp = sub.add_parser("floorplan-tcl")
     p_fp.add_argument("--pdk", default="sky130")
 
@@ -551,6 +613,7 @@ def main() -> int:
         "list-macros": cmd_list_macros,
         "create-project": cmd_create_project,
         "project-state": cmd_project_state,
+        "synth-dft": cmd_synth_dft,
         "floorplan-tcl": cmd_floorplan_tcl,
     }
     return handlers[args.command](args)
