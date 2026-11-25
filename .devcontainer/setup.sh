@@ -42,6 +42,12 @@ elif [ -f "$APPIMAGE" ]; then
     (cd /opt/silis && sudo "$APPIMAGE" --appimage-extract && sudo mv squashfs-root runtime && sudo chmod -R a+rX /opt/silis)
 fi
 
+# 2b. Ensure Silis ~/.silis/pdks/sky130A resolves cleanly to bundled assets/pdk/sky130A for OpenDB & LayerViewer
+if [ -d "${WORKSPACE_DIR}/assets/pdk/sky130A" ]; then
+    mkdir -p "$HOME/.silis/pdks"
+    ln -sfn "${WORKSPACE_DIR}/assets/pdk/sky130A" "$HOME/.silis/pdks/sky130A" 2>/dev/null || true
+fi
+
 # 3. Install xvfb, x11vnc, iverilog, verilator, and yosys for simulation and CAD display bridges
 PACKAGES_TO_INSTALL=""
 if ! command -v Xvfb >/dev/null 2>&1; then PACKAGES_TO_INSTALL="$PACKAGES_TO_INSTALL xvfb"; fi

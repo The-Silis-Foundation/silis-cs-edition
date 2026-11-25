@@ -30,6 +30,75 @@ function atomicWriteFileSync(filePath, content) {
     fs.renameSync(tmpPath, filePath);
 }
 
+const SAFE_IDENT_RE = /^[a-zA-Z][a-zA-Z0-9_]{0,63}$/;
+
+function isValidIdent(val) {
+    return typeof val === 'string' && SAFE_IDENT_RE.test(val.trim());
+}
+
+function getWorkspaceRoot() {
+    const wsFolders = vscode.workspace.workspaceFolders;
+    return wsFolders && wsFolders.length > 0 ? wsFolders[0].uri.fsPath : process.cwd();
+}
+
+function resolveSafeWorkspacePath(rootPath, targetPath) {
+    if (!targetPath || typeof targetPath !== 'string') return null;
+    const base = path.resolve(rootPath);
+    const resolved = path.isAbsolute(targetPath)
+        ? path.resolve(targetPath)
+        : path.resolve(base, targetPath);
+    if (resolved !== base && !resolved.startsWith(base + path.sep)) {
+        return null;
+    }
+    return resolved;
+}
+
+function resolvePythonBin() {
+    if (fs.existsSync('/opt/silis/runtime/opt/python/bin/python3')) {
+        return '/opt/silis/runtime/opt/python/bin/python3';
+    }
+    if (fs.existsSync('/usr/local/bin/silis-python3')) {
+        return '/usr/local/bin/silis-python3';
+    }
+    return 'python3';
+}
+
+function getSilisEnv(rootPath) {
+    const pdkRoot = path.join(rootPath, 'assets', 'pdk');
+    const runtimeLd = '/opt/silis/runtime/usr/lib/x86_64-linux-gnu:/opt/silis/runtime/opt/python/lib';
+    const currentLd = process.env.LD_LIBRARY_PATH || '';
+    const ldLibPath = currentLd ? `${runtimeLd}:${currentLd}` : runtimeLd;
+    return Object.assign({}, process.env, {
+        DISPLAY: ':1',
+        LIBGL_ALWAYS_SOFTWARE: '1',
+        QT_QPA_PLATFORM: 'xcb',
+        PDK_ROOT: pdkRoot,
+        LD_LIBRARY_PATH: ldLibPath,
+        PYTHONPATH: `${rootPath}:${rootPath}/silis:${rootPath}/silis/core:${process.env.PYTHONPATH || ''}`,
+    });
+}
+
+function runSilisBridge(subcommand, args = [], stdinObj = null, timeoutMs = 15000) {
+    const rootPath = getWorkspaceRoot();
+    const bridgeScript = path.join(rootPath, 'tools', 'silis_web_bridge.py');
+    if (!fs.existsSync(bridgeScript)) {
+        throw new Error(`Silis bridge missing: ${bridgeScript}`);
+    }
+    const pythonBin = resolvePythonBin();
+    const res = cp.spawnSync(pythonBin, [bridgeScript, subcommand, ...args], {
+        cwd: rootPath,
+        env: getSilisEnv(rootPath),
+        input: stdinObj !== null ? JSON.stringify(stdinObj) : undefined,
+        encoding: 'utf8',
+        timeout: timeoutMs,
+        shell: false,
+    });
+    if (res.status !== 0) {
+        throw new Error((res.stderr || res.stdout || `Bridge exited with ${res.status}`).trim());
+    }
+    return JSON.parse((res.stdout || '{}').trim());
+}
+
 // -----------------------------------------------------------------------------
 // Native In-Memory Web EDA Engines (Zero Ports, Zero Loopback Overhead)
 // -----------------------------------------------------------------------------
@@ -258,11 +327,16 @@ async function loadNativeProjectNetlist(pName) {
                 });
             }
         }
-        if (svFiles.length > 0) {
+        const safeFiles = svFiles.filter(f => /^[a-zA-Z0-9_.\-/]+$/.test(f));
+        if (safeFiles.length > 0) {
             const resultsDir = path.join(projPath, 'results');
             if (!fs.existsSync(resultsDir)) fs.mkdirSync(resultsDir, { recursive: true });
-            const outJson = path.join(resultsDir, `structural_${cleanName}.json`);
-            cp.execSync(`yosys -p "read_verilog -sv ${svFiles.join(' ')}; hierarchy -auto-top; proc; write_json ${outJson}"`, { cwd: projPath, timeout: 10000 });
+            const safeProjName = isValidIdent(cleanName) ? cleanName : 'design';
+            const outJson = path.join(resultsDir, `structural_${safeProjName}.json`);
+            cp.spawnSync('yosys', [
+                '-p',
+                `read_verilog -sv ${safeFiles.join(' ')}; hierarchy -auto-top; proc; write_json "${outJson}"`
+            ], { cwd: projPath, timeout: 10000, shell: false });
             if (fs.existsSync(outJson)) {
                 return JSON.parse(fs.readFileSync(outJson, 'utf8'));
             }
@@ -684,58 +758,84 @@ function activate(context) {
 
     let currentNativeViewerProcess = null;
 
-    function launchNativeViewer(mode, pName, specificDefPath = null) {
-        const wsFolders = vscode.workspace.workspaceFolders;
-        const rootPath = wsFolders ? wsFolders[0].uri.fsPath : process.cwd();
-        const cleanName = (pName || activeProject || 'demo_soc').replace(/^projects\//, '');
-        const defPath = specificDefPath || findProjectDefFile(cleanName);
-
-        // Terminate any previous viewer to avoid multiple stacked windows
-        if (currentNativeViewerProcess) {
-            try { currentNativeViewerProcess.kill('SIGKILL'); } catch (e) {}
+    function stopNativeViewerProcess() {
+        if (currentNativeViewerProcess && currentNativeViewerProcess.pid) {
+            const pid = currentNativeViewerProcess.pid;
+            try { process.kill(-pid, 'SIGTERM'); } catch (e) {
+                try { currentNativeViewerProcess.kill('SIGTERM'); } catch (e2) {}
+            }
+            setTimeout(() => {
+                try { process.kill(-pid, 'SIGKILL'); } catch (e) {}
+            }, 300);
             currentNativeViewerProcess = null;
         }
         try {
-            cp.spawnSync('pkill', ['-9', '-f', 'silis\\.view_layout|silis\\.view_layers']);
+            cp.spawnSync('pkill', ['-TERM', '-f', 'silis_web_bridge\\.py viewer'], { timeout: 1000 });
         } catch (e) {}
+    }
 
-        let pythonBin = 'python3';
-        if (fs.existsSync('/opt/silis/runtime/opt/python/bin/python3')) {
-            pythonBin = '/opt/silis/runtime/opt/python/bin/python3';
-        } else if (fs.existsSync('/usr/local/bin/silis-python3')) {
-            pythonBin = '/usr/local/bin/silis-python3';
-        }
+    function launchNativeViewer(mode, pName, specificDefPath = null) {
+        const rootPath = getWorkspaceRoot();
+        const cleanName = (pName || activeProject || 'demo_soc').replace(/^projects\//, '');
+        const defPath = specificDefPath || findProjectDefFile(cleanName);
+        const viewerMode = mode === 'layer_viewer' ? 'layer_viewer' : 'fast_peeker';
+        const bridgeScript = path.join(rootPath, 'tools', 'silis_web_bridge.py');
 
-        const pdkRoot = path.join(rootPath, 'assets', 'pdk');
-        const runtimeLd = '/opt/silis/runtime/usr/lib/x86_64-linux-gnu:/opt/silis/runtime/opt/python/lib';
-        const currentLd = process.env.LD_LIBRARY_PATH || '';
-        const ldLibPath = currentLd ? `${runtimeLd}:${currentLd}` : runtimeLd;
-        const env = Object.assign({}, process.env, {
-            DISPLAY: ':1',
-            LIBGL_ALWAYS_SOFTWARE: '1',
-            QT_QPA_PLATFORM: 'xcb',
-            PDK_ROOT: pdkRoot,
-            LD_LIBRARY_PATH: ldLibPath,
-            PYTHONPATH: `${rootPath}:${rootPath}/silis:${rootPath}/silis/core:${process.env.PYTHONPATH || ''}`,
-        });
+        stopNativeViewerProcess();
+
+        const pythonBin = resolvePythonBin();
+        const env = getSilisEnv(rootPath);
 
         try {
-            if (mode === 'fast_peeker') {
-                const pyScript = `import sys, silis; from PyQt6.QtWidgets import QApplication; app = QApplication.instance() or QApplication(sys.argv); win = silis.view_layout(r'${defPath}', show=True, detach=False); win.showMaximized(); sys.exit(app.exec())`;
-                const child = cp.spawn(pythonBin, ['-c', pyScript], { env, cwd: rootPath, detached: true, stdio: 'ignore' });
-                child.unref();
-                currentNativeViewerProcess = child;
-            } else if (mode === 'layer_viewer') {
-                const pyScript = `import sys, silis; from PyQt6.QtWidgets import QApplication; app = QApplication.instance() or QApplication(sys.argv); win = silis.view_layers(r'${defPath}', show=True, detach=False); win.showMaximized(); sys.exit(app.exec())`;
-                const child = cp.spawn(pythonBin, ['-c', pyScript], { env, cwd: rootPath, detached: true, stdio: 'ignore' });
-                child.unref();
-                currentNativeViewerProcess = child;
-            }
+            const child = cp.spawn(pythonBin, [
+                bridgeScript,
+                'viewer',
+                '--mode', viewerMode,
+                '--def-path', defPath,
+            ], {
+                env,
+                cwd: rootPath,
+                detached: true,
+                stdio: ['ignore', 'pipe', 'pipe'],
+                shell: false,
+            });
+            child.unref();
+            currentNativeViewerProcess = child;
+
+            let readyEmitted = false;
+            let errBuf = '';
+            child.stdout.on('data', (chunk) => {
+                const text = chunk.toString('utf8');
+                if (!readyEmitted && text.includes('SILIS_VIEWER_READY')) {
+                    readyEmitted = true;
+                    if (activeLayoutPanel) {
+                        safePostMessage(activeLayoutPanel, { type: 'viewer_ready', mode: viewerMode });
+                    }
+                }
+            });
+            child.stderr.on('data', (chunk) => {
+                if (errBuf.length < 2048) errBuf += chunk.toString('utf8');
+            });
+            child.on('exit', (code) => {
+                if (currentNativeViewerProcess === child) {
+                    currentNativeViewerProcess = null;
+                }
+                if (!readyEmitted && code !== 0 && code !== null && activeLayoutPanel) {
+                    safePostMessage(activeLayoutPanel, {
+                        type: 'viewer_error',
+                        error: errBuf.trim() || `Viewer exited with code ${code}`
+                    });
+                }
+            });
+
             if (activeLayoutPanel) {
-                safePostMessage(activeLayoutPanel, { type: 'viewer_launched', mode });
+                safePostMessage(activeLayoutPanel, { type: 'viewer_launched', mode: viewerMode });
             }
         } catch (err) {
             console.error('Failed to spawn native layout viewer:', err);
+            if (activeLayoutPanel) {
+                safePostMessage(activeLayoutPanel, { type: 'viewer_error', error: err.message });
+            }
         }
     }
 
@@ -827,7 +927,7 @@ function activate(context) {
                 }
 
                 case 'rfb_connected': {
-                    launchNativeViewer('fast_peeker', pName, specificDefPath);
+                    launchNativeViewer(msg.mode || 'fast_peeker', pName, specificDefPath);
                     break;
                 }
 
@@ -839,6 +939,7 @@ function activate(context) {
         });
 
         panel.onDidDispose(() => {
+            stopNativeViewerProcess();
             if (panelVncSocket) {
                 try { panelVncSocket.destroy(); } catch (e) {}
                 panelVncSocket = null;
@@ -1092,47 +1193,24 @@ function activate(context) {
 
     async function getProjectFlowState(pName) {
         const cleanName = (pName || activeProject || 'demo_soc').replace(/^projects\//, '');
-        const projDir = getProjectFsPath(cleanName);
-
-        const vcdPath = path.join(projDir, 'waveform.vcd');
-        const hasVcd = fs.existsSync(vcdPath) && fs.statSync(vcdPath).size > 0;
-
-        // Gate-level Netlist & synthesis area reports (distinct from schematic AST)
-        const netlistCandidates = [
-            path.join(projDir, 'netlist', `${cleanName}_netlist.v`),
-            path.join(projDir, 'netlist', 'chip_top_netlist.v'),
-            path.join(projDir, 'netlist', `${cleanName}_scan.v`),
-            path.join(projDir, 'reports', 'area.rpt')
-        ];
-        const hasNetlist = netlistCandidates.some(f => fs.existsSync(f) && fs.statSync(f).size > 0);
-
-        // Pre-synthesis structural AST for schematic generator
-        const schemCandidates = [
-            path.join(projDir, 'results', `structural_${cleanName}.json`),
-            path.join(projDir, 'results', 'structural_chip_top.json'),
-            path.join(projDir, 'build', 'structural_synth.json'),
-            path.join(projDir, 'build', `structural_${cleanName}.json`)
-        ];
-        const hasSchematic = schemCandidates.some(f => fs.existsSync(f) && fs.statSync(f).size > 0);
-
-        const hasFloorplan = fs.existsSync(path.join(projDir, 'run_floorplan.tcl')) || fs.existsSync(path.join(projDir, '.silis_fp_session.json'));
-
-        const defCandidates = [
-            path.join(projDir, 'results', `${cleanName}_filled.def`),
-            path.join(projDir, 'results', 'chip_top_filled.def'),
-            path.join(projDir, 'results', 'design.gds')
-        ];
-        const hasDef = defCandidates.some(f => fs.existsSync(f) && fs.statSync(f).size > 0);
-
+        if (isValidIdent(cleanName)) {
+            try {
+                const state = runSilisBridge('project-state', ['--project', cleanName]);
+                return Object.assign(state, {
+                    isSimRunning: _isSimRunning,
+                    isSynthRunning: _isSynthRunning
+                });
+            } catch (e) {}
+        }
         return {
             projectName: cleanName,
             topModule: cleanName === 'demo_soc' ? 'chip_top' : cleanName,
-            pdk: 'sky130_fd_sc_hd',
-            hasVcd,
-            hasNetlist,
-            hasSchematic,
-            hasFloorplan,
-            hasDef,
+            pdk: 'sky130',
+            hasVcd: false,
+            hasNetlist: false,
+            hasSchematic: false,
+            hasFloorplan: false,
+            hasDef: false,
             isSimRunning: _isSimRunning,
             isSynthRunning: _isSynthRunning
         };
@@ -1194,15 +1272,15 @@ function activate(context) {
                     } else if (action === 'runTapeout') {
                         vscode.commands.executeCommand('silis.runAll');
                     } else if (action === 'openFile' && msg.path) {
-                        const wsFolders = vscode.workspace.workspaceFolders;
-                        if (wsFolders && wsFolders.length > 0) {
-                            let p = msg.path;
-                            if (!p.startsWith('projects/') && !p.startsWith('/')) {
-                                p = `projects/${activeProject}/${p}`;
-                            }
-                            const fileUri = p.startsWith('/') ? vscode.Uri.file(p) : vscode.Uri.joinPath(wsFolders[0].uri, p);
+                        const rootPath = getWorkspaceRoot();
+                        let p = String(msg.path);
+                        if (!p.startsWith('projects/') && !p.startsWith('/')) {
+                            p = `projects/${activeProject}/${p}`;
+                        }
+                        const safePath = resolveSafeWorkspacePath(rootPath, p);
+                        if (safePath) {
                             try {
-                                const doc = await vscode.workspace.openTextDocument(fileUri);
+                                const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(safePath));
                                 await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.One, preview: false });
                             } catch (e) {}
                         }
@@ -1385,12 +1463,9 @@ function activate(context) {
                         break;
                     case 'openRTL':
                         if (msg.file) {
-                            const wsFolders = vscode.workspace.workspaceFolders;
-                            if (wsFolders && wsFolders.length > 0) {
-                                const fileUri = (typeof msg.file === 'string' && msg.file.startsWith('/'))
-                                    ? vscode.Uri.file(msg.file)
-                                    : vscode.Uri.joinPath(wsFolders[0].uri, msg.file);
-                                vscode.window.showTextDocument(fileUri, { preview: false });
+                            const safePath = resolveSafeWorkspacePath(getWorkspaceRoot(), msg.file);
+                            if (safePath) {
+                                vscode.window.showTextDocument(vscode.Uri.file(safePath), { preview: false });
                             }
                         }
                         break;
@@ -1451,17 +1526,26 @@ function activate(context) {
 
             panel.webview.onDidReceiveMessage(async (message) => {
                 if (message.command === 'fetchPdks') {
-                    safePostMessage(panel, { type: 'pdksLoaded', pdks: ['sky130', 'sky130A', 'sky130B', 'gf180mcu', 'asap7', 'freepdk45'] });
+                    try {
+                        const res = runSilisBridge('list-pdks');
+                        safePostMessage(panel, { type: 'pdksLoaded', pdks: res.pdks || [] });
+                    } catch (e) {
+                        safePostMessage(panel, {
+                            type: 'pdksLoaded',
+                            pdks: [{ id: 'sky130A', name: 'SkyWater 130nm High-Density (sky130A)', installed: true }]
+                        });
+                    }
                     return;
                 }
 
                 if (message.command === 'fetchMacros') {
-                    const macros = [
-                        { name: 'simple_alu', w: 220, h: 160 },
-                        { name: 'sky130_sram_1kbyte_1rw1r_32x256_8', w: 420, h: 280 },
-                        { name: 'sky130_sram_2kbyte_1rw1r_32x512_8', w: 420, h: 280 }
-                    ];
-                    safePostMessage(panel, { type: 'macrosLoaded', macros: macros });
+                    try {
+                        const pdk = isValidIdent(message.pdk) ? message.pdk : 'sky130';
+                        const res = runSilisBridge('list-macros', ['--pdk', pdk]);
+                        safePostMessage(panel, { type: 'macrosLoaded', macros: res.macros || [] });
+                    } catch (e) {
+                        safePostMessage(panel, { type: 'macrosLoaded', macros: [] });
+                    }
                     return;
                 }
 
@@ -1485,91 +1569,29 @@ function activate(context) {
                 }
 
                 if (message.command === 'createProject') {
-                    const payload = message.data;
+                    const payload = message.data || {};
+                    const pName = String(payload.name || '').trim();
+                    if (!isValidIdent(pName)) {
+                        safePostMessage(panel, { type: 'error', message: 'Project name must match ^[a-zA-Z][a-zA-Z0-9_]{0,63}$' });
+                        return;
+                    }
                     try {
-                        const wsFolders = vscode.workspace.workspaceFolders;
-                        if (!wsFolders || wsFolders.length === 0) return;
-                        const rootUri = wsFolders[0].uri;
-                        const pName = payload.name;
-                        const topMod = payload.top_module || pName;
-                        const projUri = vscode.Uri.joinPath(rootUri, 'projects', pName);
-
-                        await vscode.workspace.fs.createDirectory(projUri);
-                        await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(projUri, 'rtl'));
-                        await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(projUri, 'tb'));
-                        await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(projUri, 'constr'));
-
-                        const meta = {
-                            project_name: pName,
-                            top_module: topMod,
-                            pdk: payload.pdk || 'sky130',
-                            macros: payload.macros || [],
-                            auto_sdc: true,
-                            rtl_files: [`rtl/${pName}.sv`],
-                            sdc_files: ['constr/default.sdc'],
-                            tb_files: [`tb/tb_${pName}.v`]
-                        };
-                        await vscode.workspace.fs.writeFile(
-                            vscode.Uri.joinPath(projUri, 'silis.silisproj'),
-                            new TextEncoder().encode(JSON.stringify(meta, null, 4))
-                        );
-
-                        const rtlTmpl = `// ${pName}.sv - Top Module: ${topMod}\n` +
-                            `module ${topMod} (\n` +
-                            `    input  logic clk,\n` +
-                            `    input  logic rst_n,\n` +
-                            `    input  logic [7:0] data_in,\n` +
-                            `    output logic [7:0] data_out\n` +
-                            `);\n` +
-                            `    always_ff @(posedge clk or negedge rst_n) begin\n` +
-                            `        if (!rst_n) data_out <= 8'h00;\n` +
-                            `        else        data_out <= data_in + 8'h01;\n` +
-                            `    end\n` +
-                            `endmodule\n`;
-                        await vscode.workspace.fs.writeFile(
-                            vscode.Uri.joinPath(projUri, 'rtl', `${pName}.sv`),
-                            new TextEncoder().encode(rtlTmpl)
-                        );
-
-                        const sdcTmpl = `create_clock -name clk -period 10.0 [get_ports clk]\n` +
-                            `set_input_delay 2.0 -clock clk [all_inputs]\n` +
-                            `set_output_delay 2.0 -clock clk [all_outputs]\n`;
-                        await vscode.workspace.fs.writeFile(
-                            vscode.Uri.joinPath(projUri, 'constr', 'default.sdc'),
-                            new TextEncoder().encode(sdcTmpl)
-                        );
-
-                        const tbTmpl = `\`timescale 1ns/1ps\n` +
-                            `module tb_${pName};\n` +
-                            `    logic clk = 0;\n` +
-                            `    logic rst_n = 0;\n` +
-                            `    logic [7:0] din = 0;\n` +
-                            `    wire [7:0] dout;\n` +
-                            `    always #5 clk = ~clk;\n` +
-                            `    ${topMod} dut (.clk(clk), .rst_n(rst_n), .data_in(din), .data_out(dout));\n` +
-                            `    initial begin\n` +
-                            `        $dumpfile("waveform.vcd");\n` +
-                            `        $dumpvars(0, tb_${pName});\n` +
-                            `        #20 rst_n = 1; din = 8'h10;\n` +
-                            `        #40 din = 8'h20;\n` +
-                            `        #60 $finish;\n` +
-                            `    end\n` +
-                            `endmodule\n`;
-                        await vscode.workspace.fs.writeFile(
-                            vscode.Uri.joinPath(projUri, 'tb', `tb_${pName}.v`),
-                            new TextEncoder().encode(tbTmpl)
-                        );
+                        const res = runSilisBridge('create-project', [], payload);
+                        const projFs = getProjectFsPath(pName);
 
                         activeProject = pName;
                         await context.workspaceState.update('silis.activeProject', activeProject);
-                        safePostMessage(panel, { type: 'created', name: pName, top_module: topMod });
+                        safePostMessage(panel, { type: 'created', name: pName, top_module: res.top_module || pName });
 
                         vscode.window.showInformationMessage(`Silis Project "${activeProject}" created successfully.`);
 
-                        const rtlUri = vscode.Uri.joinPath(projUri, 'rtl', `${pName}.sv`);
-                        vscode.window.showTextDocument(rtlUri, { preview: false });
+                        if (res.first_rtl) {
+                            const rtlPath = resolveSafeWorkspacePath(projFs, res.first_rtl);
+                            if (rtlPath && fs.existsSync(rtlPath)) {
+                                vscode.window.showTextDocument(vscode.Uri.file(rtlPath), { preview: false });
+                            }
+                        }
 
-                        // Refresh dynamic README, dashboard, and sidebar
                         await refreshReadmeNative(activeProject);
                         const projs = await getProjectsList(activeProject);
                         if (dashboardPanel) {
@@ -1578,12 +1600,13 @@ function activate(context) {
                         if (activeSidebarWebview) {
                             safePostMessage(activeSidebarWebview, { type: 'projectsLoaded', projects: projs, active: activeProject });
                         }
+                        syncStateTracker();
 
-                        // Auto-close wizard dialog
                         setTimeout(() => {
                             try { panel.dispose(); } catch (e) {}
                         }, 600);
                     } catch (e) {
+                        safePostMessage(panel, { type: 'error', message: e.message });
                         vscode.window.showErrorMessage(`Failed to create project: ${e.message}`);
                     }
                     return;
@@ -1854,15 +1877,48 @@ function activate(context) {
                     const action = msg.action;
                     const projDir = getProjectFsPath(pName);
 
-                    if (action === 'saveSession') {
+                    const generateViaBridge = () => {
+                        if (!msg.state) return null;
+                        try {
+                            return runSilisBridge('floorplan-tcl', ['--pdk', 'sky130'], msg.state);
+                        } catch (e) {
+                            console.warn('Silis floorplan-tcl bridge fallback:', e.message);
+                            return null;
+                        }
+                    };
+
+                    if (action === 'generateTcl') {
+                        const out = generateViaBridge();
+                        if (out && out.tcl && activeFloorplanPanel) {
+                            safePostMessage(activeFloorplanPanel, { command: 'updateTcl', tcl: out.tcl });
+                        }
+                    } else if (action === 'saveSession') {
                         const sessionPath = path.join(projDir, '.silis_fp_session.json');
                         atomicWriteFileSync(sessionPath, JSON.stringify(msg.state || {}, null, 2));
+                        syncStateTracker();
                         vscode.window.showInformationMessage(`Floorplan session saved to ${sessionPath}`);
-                    } else if (action === 'exportTcl' || action === 'commitFlow') {
-                        const tclPath = path.join(projDir, 'run_floorplan.tcl');
-                        if (msg.tcl) {
-                            atomicWriteFileSync(tclPath, msg.tcl);
+                    } else if (action === 'savePinOrder') {
+                        const out = generateViaBridge();
+                        const cfgContent = (out && out.pin_order_cfg) || msg.pinOrderCfg;
+                        if (cfgContent) {
+                            const cfgPath = path.join(projDir, 'pin_order.cfg');
+                            atomicWriteFileSync(cfgPath, cfgContent);
+                            vscode.window.showInformationMessage(`Saved I/O pin ordering to ${cfgPath}`);
                         }
+                    } else if (action === 'exportTcl' || action === 'commitFlow') {
+                        const out = generateViaBridge();
+                        const tclText = (out && out.tcl) || msg.tcl;
+                        if (out && out.pin_order_cfg) {
+                            atomicWriteFileSync(path.join(projDir, 'pin_order.cfg'), out.pin_order_cfg);
+                        }
+                        const tclPath = path.join(projDir, 'run_floorplan.tcl');
+                        if (tclText) {
+                            atomicWriteFileSync(tclPath, tclText);
+                            if (activeFloorplanPanel) {
+                                safePostMessage(activeFloorplanPanel, { command: 'updateTcl', tcl: tclText });
+                            }
+                        }
+                        syncStateTracker();
                         if (action === 'commitFlow') {
                             const term = getFlowTerminal();
                             term.show();
@@ -2096,6 +2152,12 @@ function activate(context) {
             }
             if (msg.command === 'confirmSynthesis') {
                 try {
+                    const netlistV = path.join(projDir, 'netlist', `${pName}_netlist.v`);
+                    const areaRpt = path.join(projDir, 'reports', 'area.rpt');
+                    // Clear stale outputs so completion polling reflects the current run
+                    try { if (fs.existsSync(netlistV)) fs.unlinkSync(netlistV); } catch (e) {}
+                    try { if (fs.existsSync(areaRpt)) fs.unlinkSync(areaRpt); } catch (e) {}
+
                     if (msg.script) {
                         atomicWriteFileSync(synthYsPath, msg.script);
                     }
@@ -2108,12 +2170,18 @@ function activate(context) {
                         synthConfirmPanel = null;
                     }
 
+                    const topMod = pName === 'demo_soc' ? 'chip_top' : pName;
                     const term = getFlowTerminal();
                     term.show();
                     term.sendText(`cd "${projDir}" && echo "=== [Silis Synthesis & Scan Flow: ${pName}] ===" && yosys -s synth.ys`);
 
                     if (msg.dft && msg.dft.enabled) {
-                        term.sendText(`cd "${projDir}" && python3 -c "import os, sys; sys.path.insert(0, '.'); sys.path.insert(0, '${rootPath}'); sys.path.insert(0, '${rootPath}/silis'); sys.path.insert(0, '${rootPath}/silis/core'); from dft.dft_engine import DFTEngine; e = DFTEngine('netlist/${pName}_netlist.v', '${pName === 'demo_soc' ? 'chip_top' : pName}', 'sky130', '${msg.dft.scan_in}', '${msg.dft.scan_out}', '${msg.dft.scan_en}', '${msg.dft.scan_clk}', ${msg.dft.clamp ? 'True' : 'False'}); e.stitch_scan_chain('netlist/${pName}_scan.v', 'results/design.scandef')" 2>/dev/null || true`);
+                        const pythonBin = resolvePythonBin();
+                        const dftCmd = [
+                            `cd "${projDir}"`,
+                            `&& "${pythonBin}" -c "import json, sys; sys.path[:0]=['.', '${rootPath}', '${rootPath}/silis', '${rootPath}/silis/core']; from dft.dft_engine import DFTEngine; c=json.load(open('dft_config.json')); e=DFTEngine('netlist/${pName}_netlist.v', '${topMod}', 'sky130', c.get('scan_in','scan_in'), c.get('scan_out','scan_out'), c.get('scan_en','scan_en'), c.get('scan_clk','clk'), bool(c.get('clamp',True))); e.stitch_scan_chain('netlist/${pName}_scan.v', 'results/design.scandef')" || true`
+                        ].join(' ');
+                        term.sendText(dftCmd);
                     }
 
                     _isSynthRunning = true;
@@ -2124,9 +2192,8 @@ function activate(context) {
                     const synthStart = Date.now();
                     const synthPoll = setInterval(() => {
                         const elapsed = Date.now() - synthStart;
-                        const netlistV = path.join(projDir, 'netlist', `${pName}_netlist.v`);
-                        const areaRpt = path.join(projDir, 'reports', 'area.rpt');
-                        const isDone = (fs.existsSync(netlistV) && fs.statSync(netlistV).size > 0) || (fs.existsSync(areaRpt) && fs.statSync(areaRpt).size > 0);
+                        const isDone = (fs.existsSync(netlistV) && fs.statSync(netlistV).size > 0 && fs.statSync(netlistV).mtimeMs >= synthStart) ||
+                                       (fs.existsSync(areaRpt) && fs.statSync(areaRpt).size > 0 && fs.statSync(areaRpt).mtimeMs >= synthStart);
                         if (isDone || elapsed > 30000) {
                             clearInterval(synthPoll);
                             _isSynthRunning = false;
@@ -2240,7 +2307,7 @@ function getDashboardHtml(currentActive) {
         <div class="card-title">Active Silicon Design</div>
         <div class="active-row">
             <div>
-                <span class="active-info" id="active-name">${currentActive || 'demo_soc'}</span>
+                <span class="active-info" id="active-name">${escapeHtml(currentActive || 'demo_soc')}</span>
                 <span class="active-pdk" id="active-pdk">PDK: sky130</span>
             </div>
             <div class="btn-group">
@@ -2280,6 +2347,10 @@ function getDashboardHtml(currentActive) {
     <script>
         const vscode = acquireVsCodeApi();
 
+        function esc(s) {
+            return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        }
+
         function msg(cmd, data) {
             vscode.postMessage({ command: cmd, ...data });
         }
@@ -2293,17 +2364,18 @@ function getDashboardHtml(currentActive) {
             tbody.innerHTML = projs.map(p => {
                 const isAct = p.is_active;
                 const defTag = p.has_def ? '<span class="tag ready">Available</span>' : '<span class="tag none">Pending PnR</span>';
+                const pName = esc(p.name);
                 return '<tr>' +
-                    '<td><strong>' + p.name + '</strong> ' + (isAct ? '<span class="tag ready" style="margin-left:4px;">ACTIVE</span>' : '') + '</td>' +
-                    '<td><code>' + p.pdk + '</code></td>' +
-                    '<td><code>' + p.top_module + '</code></td>' +
+                    '<td><strong>' + pName + '</strong> ' + (isAct ? '<span class="tag ready" style="margin-left:4px;">ACTIVE</span>' : '') + '</td>' +
+                    '<td><code>' + esc(p.pdk) + '</code></td>' +
+                    '<td><code>' + esc(p.top_module) + '</code></td>' +
                     '<td>' + defTag + '</td>' +
                     '<td>' +
-                        '<button onclick="msg(\\'openProject\\', {project:\\'' + p.name + '\\'})">Select</button> ' +
-                        '<button onclick="msg(\\'openSchematic\\', {project:\\'' + p.name + '\\'})">Schem</button> ' +
-                        '<button onclick="msg(\\'openWaveforms\\', {project:\\'' + p.name + '\\'})">Waves</button> ' +
-                        '<button onclick="msg(\\'openFloorplanner\\', {project:\\'' + p.name + '\\'})">FPS</button> ' +
-                        '<button onclick="msg(\\'openLayout\\', {project:\\'' + p.name + '\\'})">Layout</button>' +
+                        '<button data-cmd="openProject" data-proj="' + pName + '">Select</button> ' +
+                        '<button data-cmd="openSchematic" data-proj="' + pName + '">Schem</button> ' +
+                        '<button data-cmd="openWaveforms" data-proj="' + pName + '">Waves</button> ' +
+                        '<button data-cmd="openFloorplanner" data-proj="' + pName + '">FPS</button> ' +
+                        '<button data-cmd="openLayout" data-proj="' + pName + '">Layout</button>' +
                     '</td>' +
                 '</tr>';
             }).join('');
@@ -2314,6 +2386,13 @@ function getDashboardHtml(currentActive) {
                 document.getElementById('active-pdk').textContent = 'PDK: ' + act.pdk;
             }
         }
+
+        document.getElementById('proj-tbody').addEventListener('click', (e) => {
+            const btn = e.target.closest('button[data-cmd]');
+            if (btn) {
+                msg(btn.getAttribute('data-cmd'), { project: btn.getAttribute('data-proj') });
+            }
+        });
 
         function refresh() {
             msg('getProjects');
@@ -2594,6 +2673,10 @@ function getProjectWizardHtml(workspaceFiles) {
             renderMacroListView();
         }
 
+        function escHtml(s) {
+            return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        }
+
         function renderMacroListView() {
             const container = document.getElementById('macro-list-view');
             if (filteredMacros.length === 0) {
@@ -2602,12 +2685,16 @@ function getProjectWizardHtml(workspaceFiles) {
             }
             container.innerHTML = filteredMacros.map((m, idx) => {
                 const isSel = selectedMacro && selectedMacro.name === m.name;
-                return '<div class="catalog-item' + (isSel ? ' selected' : '') + '" onclick="selectMacroByIndex(' + idx + ')">' +
-                    '<div class="item-name">' + m.name + '</div>' +
-                    '<div class="item-meta">' + (m.category || 'Macro') + ' | ' + m.width + 'x' + m.height + 'µm</div>' +
+                return '<div class="catalog-item' + (isSel ? ' selected' : '') + '" data-idx="' + idx + '">' +
+                    '<div class="item-name">' + escHtml(m.name) + '</div>' +
+                    '<div class="item-meta">' + escHtml(m.category || 'Macro') + ' | ' + escHtml(m.width) + 'x' + escHtml(m.height) + 'µm</div>' +
                 '</div>';
             }).join('');
         }
+        document.getElementById('macro-list-view').addEventListener('click', (e) => {
+            const item = e.target.closest('.catalog-item[data-idx]');
+            if (item) selectMacroByIndex(parseInt(item.getAttribute('data-idx'), 10));
+        });
 
         function selectMacroByIndex(idx) {
             selectedMacro = filteredMacros[idx];
@@ -2625,7 +2712,6 @@ function getProjectWizardHtml(workspaceFiles) {
             const pins = m.pins || {};
             const inCount = (pins.input || []).length;
             const outCount = (pins.output || []).length;
-            const pwrCount = (pins.power || []).length + (pins.ground || []).length;
 
             const inPinsStr = (pins.input || []).slice(0, 8).join(', ') + (inCount > 8 ? ' ... (+' + (inCount - 8) + ' more)' : '');
             const outPinsStr = (pins.output || []).slice(0, 8).join(', ') + (outCount > 8 ? ' ... (+' + (outCount - 8) + ' more)' : '');
@@ -2633,24 +2719,34 @@ function getProjectWizardHtml(workspaceFiles) {
             const inCart = cartMacros.some(c => c.name === m.name);
 
             pv.innerHTML =
-                '<div class="preview-header">' + m.name + ' (' + (m.category || 'Macro') + ')</div>' +
-                '<div class="preview-dims">Physical Footprint: ' + m.width + 'µm × ' + m.height + 'µm</div>' +
+                '<div class="preview-header">' + escHtml(m.name) + ' (' + escHtml(m.category || 'Macro') + ')</div>' +
+                '<div class="preview-dims">Physical Footprint: ' + escHtml(m.width) + 'µm × ' + escHtml(m.height) + 'µm</div>' +
                 '<div class="preview-pins">' +
-                    '<div><strong>Inputs (' + inCount + '):</strong> ' + (inPinsStr || 'None') + '</div>' +
-                    '<div><strong>Outputs (' + outCount + '):</strong> ' + (outPinsStr || 'None') + '</div>' +
-                    '<div><strong>Power/Ground:</strong> ' + ((pins.power || []).concat(pins.ground || [])).join(', ') + '</div>' +
+                    '<div><strong>Inputs (' + inCount + '):</strong> ' + escHtml(inPinsStr || 'None') + '</div>' +
+                    '<div><strong>Outputs (' + outCount + '):</strong> ' + escHtml(outPinsStr || 'None') + '</div>' +
+                    '<div><strong>Power/Ground:</strong> ' + escHtml(((pins.power || []).concat(pins.ground || [])).join(', ')) + '</div>' +
                 '</div>' +
                 '<label style="font-size:10px; margin-bottom:4px;">Verilog Black-Box Stub Preview:</label>' +
-                '<div class="stub-box">' + (m.stub || '// No stub available') + '</div>' +
+                '<div class="stub-box">' + escHtml(m.stub || '// No stub available') + '</div>' +
                 '<div style="display:flex; justify-content:space-between; align-items:center; margin-top:8px;">' +
                     '<label style="margin:0; font-size:11px; display:inline-flex; align-items:center; gap:6px; cursor:pointer;">' +
                         '<input type="checkbox" id="cb-auto-stub" checked style="width:auto; margin:0;">' +
                         '<span>Auto-Generate Verilog Stub on Checkout</span>' +
                     '</label>' +
                     (inCart
-                        ? '<button onclick="removeFromCartByName(\\'' + m.name + '\\')">Remove from Cart</button>'
-                        : '<button class="primary" onclick="addSelectedToCart()">+ Add to Shopping Cart</button>') +
+                        ? '<button id="btn-cart-toggle" data-action="remove" data-name="' + escHtml(m.name) + '">Remove from Cart</button>'
+                        : '<button class="primary" id="btn-cart-toggle" data-action="add">+ Add to Shopping Cart</button>') +
                 '</div>';
+            const toggleBtn = document.getElementById('btn-cart-toggle');
+            if (toggleBtn) {
+                toggleBtn.addEventListener('click', () => {
+                    if (toggleBtn.getAttribute('data-action') === 'remove') {
+                        removeFromCartByName(toggleBtn.getAttribute('data-name'));
+                    } else {
+                        addSelectedToCart();
+                    }
+                });
+            }
         }
 
         function addSelectedToCart() {
@@ -2695,10 +2791,13 @@ function getProjectWizardHtml(workspaceFiles) {
             }
             container.innerHTML = cartMacros.map((m, i) =>
                 '<div class="cart-pill">' +
-                    '<span>' + m.name + ' (' + m.width + 'x' + m.height + 'µm)</span>' +
-                    '<span class="cart-del" onclick="removeCartItem(' + i + ')">&times;</span>' +
+                    '<span>' + escHtml(m.name) + ' (' + escHtml(m.width) + 'x' + escHtml(m.height) + 'µm)</span>' +
+                    '<span class="cart-del" data-cart-idx="' + i + '">&times;</span>' +
                 '</div>'
             ).join('');
+            container.querySelectorAll('.cart-del[data-cart-idx]').forEach(el => {
+                el.addEventListener('click', () => removeCartItem(parseInt(el.getAttribute('data-cart-idx'), 10)));
+            });
         }
 
         function browseFiles(target, isFolder) {
@@ -2752,10 +2851,13 @@ function getProjectWizardHtml(workspaceFiles) {
             }
             container.innerHTML = list.map((f, i) =>
                 '<div class="file-entry">' +
-                    '<span>' + f + '</span>' +
-                    '<span class="del-btn" onclick="removeFile(\\'' + target + '\\', ' + i + ')">&times;</span>' +
+                    '<span>' + escHtml(f) + '</span>' +
+                    '<span class="del-btn" data-target="' + escHtml(target) + '" data-file-idx="' + i + '">&times;</span>' +
                 '</div>'
             ).join('');
+            container.querySelectorAll('.del-btn[data-file-idx]').forEach(el => {
+                el.addEventListener('click', () => removeFile(el.getAttribute('data-target'), parseInt(el.getAttribute('data-file-idx'), 10)));
+            });
         }
 
         function showStep(s) {
@@ -2824,9 +2926,11 @@ function getProjectWizardHtml(workspaceFiles) {
                 const sel = document.getElementById('p-pdk');
                 const curVal = sel.value;
                 sel.innerHTML = msg.pdks.map(p => {
-                    const isSel = (p.id === curVal) || (curVal === 'sky130_fd_sc_hd' && p.id === 'sky130A');
+                    const pid = typeof p === 'string' ? p : p.id;
+                    const pname = typeof p === 'string' ? p : (p.display_name || p.name || p.id);
+                    const isSel = (pid === curVal) || (curVal === 'sky130_fd_sc_hd' && pid === 'sky130A');
                     const badge = (p.installed === false) ? ' (Available)' : '';
-                    return '<option value="' + p.id + '"' + (isSel ? ' selected' : '') + '>' + (p.display_name || p.name || p.id) + badge + '</option>';
+                    return '<option value="' + escHtml(pid) + '"' + (isSel ? ' selected' : '') + '>' + escHtml(pname + badge) + '</option>';
                 }).join('');
             } else if (msg.type === 'macrosLoaded') {
                 allMacros = msg.macros || [];
@@ -2849,7 +2953,7 @@ function getProjectWizardHtml(workspaceFiles) {
                 const el = document.getElementById('status-msg');
                 el.className = 'success';
                 el.style.display = 'block';
-                el.innerHTML = '<strong>Project Created Successfully</strong><br>Project <code>' + msg.name + '</code> is now active. RTL source opened in editor.';
+                el.innerHTML = '<strong>Project Created Successfully</strong><br>Project <code>' + escHtml(msg.name) + '</code> is now active. RTL source opened in editor.';
             } else if (msg.type === 'error') {
                 const el = document.getElementById('status-msg');
                 el.className = 'error';
@@ -2888,7 +2992,7 @@ function getSidebarHtml(currentActive) {
 <body>
     <div class="card">
         <strong>Silis CS Edition</strong>
-        <div class="meta">Active: <span id="active-label">${currentActive || 'loading...'}</span></div>
+        <div class="meta">Active: <span id="active-label">${escapeHtml(currentActive || 'loading...')}</span></div>
     </div>
 
     <button class="primary" onclick="vscode.postMessage({command:'openDashboard'})">ASIC Studio Dashboard</button>
@@ -2910,6 +3014,10 @@ function getSidebarHtml(currentActive) {
     <script>
         const vscode = acquireVsCodeApi();
 
+        function esc(s) {
+            return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        }
+
         function renderSidebarProjects(projects) {
             const container = document.getElementById('project-list');
             if (!container) return;
@@ -2919,9 +3027,10 @@ function getSidebarHtml(currentActive) {
             }
             container.innerHTML = projects.map(p => {
                 const isActive = p.is_active ? 'active' : '';
-                return '<div class="project-item ' + isActive + '" onclick="selectProject(\\'' + p.name + '\\')">' +
-                    '<div class="project-name">' + p.name + '</div>' +
-                    '<div class="project-meta">' + p.pdk + ' &middot; ' + p.top_module + '</div>' +
+                const pName = esc(p.name);
+                return '<div class="project-item ' + isActive + '" data-proj="' + pName + '">' +
+                    '<div class="project-name">' + pName + '</div>' +
+                    '<div class="project-meta">' + esc(p.pdk) + ' &middot; ' + esc(p.top_module) + '</div>' +
                 '</div>';
             }).join('');
 
@@ -2930,6 +3039,11 @@ function getSidebarHtml(currentActive) {
                 document.getElementById('active-label').textContent = activeObj.name;
             }
         }
+
+        document.getElementById('project-list').addEventListener('click', (e) => {
+            const item = e.target.closest('.project-item[data-proj]');
+            if (item) selectProject(item.getAttribute('data-proj'));
+        });
 
         window.addEventListener('message', event => {
             const msg = event.data;

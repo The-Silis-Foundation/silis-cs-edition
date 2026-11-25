@@ -18,7 +18,6 @@ const state = {
   showHud: true,
   selectedMacro: null,
   activeEdge: 'bottom',
-  selectedMacro: null,
   selectedPad: null,
   isDragging: false,
   isDraggingPad: false,
@@ -705,6 +704,15 @@ function setActiveEdge(edge) {
 // Desktop Silis FPA Engineering Engine (InteractiveFloorplannerWidget Parity)
 // -----------------------------------------------------------------------------
 
+function escapeHtml(str) {
+  return String(str || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 // 1. Core Utilization Calculator & Density Sizer (Desktop Parity: update_utilization)
 function updateUtil() {
   const cw = Math.max(1.0, state.die.w - state.core.border * 2);
@@ -949,7 +957,7 @@ function detectCollisions() {
   const statusEl = document.getElementById('status-selection');
   if (statusEl && state.collisions.length > 0) {
     const coll = state.collisions[0];
-    statusEl.innerHTML = `<span style="color:var(--danger); font-weight:bold;">DRC ALERT: Collision between ${coll.a} and ${coll.b} keepouts!</span>`;
+    statusEl.innerHTML = `<span style="color:var(--danger); font-weight:bold;">DRC ALERT: Collision between ${escapeHtml(coll.a)} and ${escapeHtml(coll.b)} keepouts!</span>`;
   }
 }
 
@@ -1107,9 +1115,9 @@ function refreshPadsTable() {
     const isSel = (state.selectedPad === p);
     const rowClass = isSel ? 'class="pad-row-selected"' : '';
     html += `<tr ${rowClass} data-idx="${idx}" style="cursor:pointer;">
-      <td>${p.name}</td>
-      <td>${p.dir || 'input'}</td>
-      <td>${p.edge}</td>
+      <td>${escapeHtml(p.name)}</td>
+      <td>${escapeHtml(p.dir || 'input')}</td>
+      <td>${escapeHtml(p.edge)}</td>
       <td>${Number(p.pos).toFixed(3)}</td>
     </tr>`;
   }
@@ -1770,238 +1778,22 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
-// Live TCL Generator (Strict OpenROAD & Desktop Parity)
-function regenerateTcl() {
-  let tcl = `# Silis Floorplan & Power Studio (FPS) - Generated Flow Script\n`;
-  tcl += `set SCRIPT_DIR [file normalize [file dirname [info script]]]\n`;
-  tcl += `set REPO_ROOT [file normalize "$SCRIPT_DIR/../.."]\n`;
-  tcl += `set SILIS_FP "$REPO_ROOT/silis/core/backendflow/floorplanner/silis_fp.tcl"\n`;
-  tcl += `if {[info procs create_fence] eq "" && [file exists $SILIS_FP]} { catch { source $SILIS_FP } }\n\n`;
+function buildFullState() {
+  const numVal = (id, fb) => {
+    const el = document.getElementById(id);
+    const v = el ? parseFloat(el.value) : NaN;
+    return isNaN(v) ? fb : v;
+  };
+  const strVal = (id, fb) => {
+    const el = document.getElementById(id);
+    return (el && el.value) ? el.value : fb;
+  };
+  const boolVal = (id, fb) => {
+    const el = document.getElementById(id);
+    return el ? !!el.checked : fb;
+  };
 
-  tcl += `# --- Design Loading / Linking (if standalone OpenROAD execution) ---\n`;
-  tcl += `if {[catch {::ord::get_db_block}] || [::ord::get_db_block] eq "NULL" || [::ord::get_db_block] eq ""} {\n`;
-  tcl += `  set pdk_nom "$REPO_ROOT/assets/pdk/sky130/sky130_fd_sc_hd__nom.tlef"\n`;
-  tcl += `  set pdk_sc "$REPO_ROOT/assets/pdk/sky130/sky130_fd_sc_hd.lef"\n`;
-  tcl += `  if {![file exists $pdk_nom]} {\n`;
-  tcl += `    set pdk_nom "$REPO_ROOT/silis/third-party/OpenROAD/test/sky130hd/sky130_fd_sc_hd__nom.tlef"\n`;
-  tcl += `    set pdk_sc "$REPO_ROOT/silis/third-party/OpenROAD/test/sky130hd/sky130_fd_sc_hd.lef"\n`;
-  tcl += `  }\n`;
-  tcl += `  if {[file exists $pdk_nom]} { catch { read_lef $pdk_nom } }\n`;
-  tcl += `  if {[file exists $pdk_sc]} { catch { read_lef $pdk_sc } }\n`;
-  tcl += `  if {[file exists "$SCRIPT_DIR/source/simple_alu.lef"]} { catch { read_lef "$SCRIPT_DIR/source/simple_alu.lef" } }\n`;
-  tcl += `  if {[file exists "$SCRIPT_DIR/results/temp.def"]} {\n`;
-  tcl += `    catch { read_def "$SCRIPT_DIR/results/temp.def" }\n`;
-  tcl += `  } elseif {[file exists "$SCRIPT_DIR/results/chip_top_filled.def"]} {\n`;
-  tcl += `    catch { read_def "$SCRIPT_DIR/results/chip_top_filled.def" }\n`;
-  tcl += `  }\n`;
-  tcl += `}\n\n`;
-
-  tcl += `# Power Domains (IEEE 1801 UPF - Area must precede initialize_floorplan)\n`;
-  const topVoltage = 1.80;
-  for (const dom of state.domains) {
-    if (dom.name !== 'PD_TOP') {
-      tcl += `catch { set_domain_area ${dom.name} -area { ${dom.box.map(v => v.toFixed(3)).join(' ')} } }\n`;
-    }
-  }
-  tcl += `\n# === INITIALIZATION ===\n`;
-  if (state.die && Array.isArray(state.die.polygon) && state.die.polygon.length >= 6) {
-    const polyStr = state.die.polygon.map(v => Number(v).toFixed(3)).join(' ');
-    tcl += `initialize_floorplan -die_area { ${polyStr} } \\\n`;
-  } else {
-    tcl += `initialize_floorplan -die_area { 0.000 0.000 ${state.die.w.toFixed(3)} ${state.die.h.toFixed(3)} } \\\n`;
-  }
-  tcl += `                     -core_area { ${state.core.border.toFixed(3)} ${state.core.border.toFixed(3)} ${(state.die.w - state.core.border).toFixed(3)} ${(state.die.h - state.core.border).toFixed(3)} } \\\n`;
-  tcl += `                     -site unithd\n\n`;
-
-  tcl += `# Deduplicate overlapping rows created by multi-domain row slicing\n`;
-  tcl += `set _blk [ord::get_db_block]\n`;
-  tcl += `if {$_blk ne "NULL" && $_blk ne ""} {\n`;
-  tcl += `  set _seen_rows [dict create]\n`;
-  tcl += `  set _dup_rows [list]\n`;
-  tcl += `  foreach _r [$_blk getRows] {\n`;
-  tcl += `    set _orig [$_r getOrigin]\n`;
-  tcl += `    set _cnt [$_r getSiteCount]\n`;
-  tcl += `    set _site [[$_r getSite] getName]\n`;
-  tcl += `    set _key "\${_site},[lindex \$_orig 0],[lindex \$_orig 1],\${_cnt}"\n`;
-  tcl += `    if {[dict exists \$_seen_rows \$_key]} {\n`;
-  tcl += `      lappend _dup_rows \$_r\n`;
-  tcl += `    } else {\n`;
-  tcl += `      dict set _seen_rows \$_key 1\n`;
-  tcl += `    }\n`;
-  tcl += `  }\n`;
-  tcl += `  foreach _dr \$_dup_rows { odb::dbRow_destroy \$_dr }\n`;
-  tcl += `}\n\n`;
-
-  tcl += `# Power Domain Isolation & Level Shifters\n`;
-  for (const dom of state.domains) {
-    if (dom.name !== 'PD_TOP') {
-      const isoEn = dom.iso_en || `${dom.name.toLowerCase()}_iso_en`;
-      tcl += `catch { set_isolation iso_${dom.name} -domain ${dom.name} -clamp_value 0 -applies_to outputs }\n`;
-      tcl += `catch { set_isolation_control iso_${dom.name} -domain ${dom.name} -isolation_signal ${isoEn} -isolation_sense high }\n`;
-      const domVoltage = Number(dom.voltage) || 1.80;
-      if (Math.abs(domVoltage - topVoltage) > 0.05) {
-        tcl += `catch { set_level_shifter ls_${dom.name}_to_top -domain ${dom.name} -direction both }\n`;
-      }
-    }
-  }
-
-  // Iteration 35: Standard Cell Row Tapcell Invariant (Max 14.0 um)
-  tcl += `\n# Standard Cell Row Tapcells\n`;
-  tcl += `catch { tapcell -endcap_cpp 1 -distance 14.0 -tapcell_master sky130_fd_sc_hd__tapvpwrvgnd_1 }\n`;
-
-  tcl += `\n# Macro Placements and Keepout Halos\n`;
-  for (const m of state.macros) {
-    const halo = Array.isArray(m.halo) && m.halo.length >= 4 ? m.halo : [10, 10, 10, 10];
-    tcl += `if {[info procs place_macro] ne ""} {\n`;
-    tcl += `  place_macro -inst "${m.inst}" -origin { ${m.x.toFixed(3)} ${m.y.toFixed(3)} } -orient ${m.orient || 'R0'} -halo { ${halo[0].toFixed(3)} ${halo[2].toFixed(3)} ${halo[1].toFixed(3)} ${halo[3].toFixed(3)} }\n`;
-    tcl += `} elseif {\$_blk ne "NULL" && \$_blk ne ""} {\n`;
-    tcl += `  set _mi [\$_blk findInst "${m.inst}"]\n`;
-    tcl += `  if {\$_mi ne "NULL" && \$_mi ne ""} {\n`;
-    tcl += `    \$_mi setPlacementStatus NONE\n`;
-    tcl += `    \$_mi setLocation ${Math.round(m.x * 1000)} ${Math.round(m.y * 1000)}\n`;
-    tcl += `    \$_mi setPlacementStatus FIRM\n`;
-    tcl += `  }\n`;
-    tcl += `}\n`;
-  }
-
-  // Hierarchical Regions & Fences (OpenROAD Compliant)
-  if (state.regions && state.regions.length > 0) {
-    tcl += `\n# Hierarchical Regions & Voltage Fences\n`;
-    for (const r of state.regions) {
-      const x1 = r.x.toFixed(3);
-      const y1 = r.y.toFixed(3);
-      const x2 = (r.x + r.w).toFixed(3);
-      const y2 = (r.y + r.h).toFixed(3);
-      const mod = r.module_name || 'u_region';
-      if (r.is_fence) {
-        tcl += `catch { create_fence -module ${mod} -box { ${x1} ${y1} ${x2} ${y2} } }\n`;
-      } else {
-        tcl += `catch { create_region -module ${mod} -box { ${x1} ${y1} ${x2} ${y2} } -type inclusive }\n`;
-      }
-    }
-  }
-
-  // Placement Blockages (OpenROAD Compliant)
-  if (state.blockages && state.blockages.length > 0) {
-    tcl += `\n# Placement Blockages\n`;
-    for (const b of state.blockages) {
-      const x1 = b.x.toFixed(3);
-      const y1 = b.y.toFixed(3);
-      const x2 = (b.x + b.w).toFixed(3);
-      const y2 = (b.y + b.h).toFixed(3);
-      const bt = (b.btype || 'Hard').toLowerCase();
-      if (bt === 'hard') {
-        tcl += `catch { create_placement_blockage -area { ${x1} ${y1} ${x2} ${y2} } -type hard }\n`;
-      } else if (bt === 'soft') {
-        tcl += `catch { create_placement_blockage -area { ${x1} ${y1} ${x2} ${y2} } -type soft }\n`;
-      } else if (bt === 'partial') {
-        const pct = b.pct !== undefined ? b.pct : 50;
-        tcl += `catch { create_placement_blockage -area { ${x1} ${y1} ${x2} ${y2} } -type partial -density ${pct} }\n`;
-      } else {
-        tcl += `catch { create_placement_blockage -area { ${x1} ${y1} ${x2} ${y2} } -type hard }\n`;
-      }
-    }
-  }
-
-  // I/O Pins & Pads
-  tcl += `\n# I/O Pins & Pads Placement\n`;
-  tcl += `catch { make_tracks }\n`;
-  tcl += `catch { place_pins -hor_layers met3 -ver_layers met4 -corner_avoidance 5.0 -min_distance 1.0 }\n`;
-
-  tcl += `\n# PDN Ring & Straps\n`;
-  tcl += `catch { add_pdn_ring -grid grid_top -layers { met5 met4 } -widths { 5.0 5.0 } -spacings { 2.0 2.0 } -core_offsets { 5.0 5.0 } }\n`;
-  tcl += `catch { add_pdn_stripe -grid grid_top -layer met4 -width 3.2 -pitch 40.0 }\n`;
-  tcl += `catch { add_pdn_stripe -grid grid_top -layer met5 -width 3.2 -pitch 40.0 }\n`;
-
-  tcl += `\n# Results Output\n`;
-  tcl += `file mkdir "$SCRIPT_DIR/results"\n`;
-  tcl += `catch { write_def "$SCRIPT_DIR/results/temp.def" }\n`;
-  tcl += `puts "SILIS_FLOORPLAN_DONE"\n`;
-  tcl += `exit 0\n`;
-
-  const ed = document.getElementById('live-tcl-editor');
-  if (ed) ed.value = tcl;
-}
-
-// IPC Action Dispatcher (Dual-Schema Desktop 2.0-FPS Parity: floorplanner.py:1969-2038)
-function action(name, data = {}) {
-  // Local immediate UI action execution (Zero-Latency EDA Parity)
-  if (name === 'undo') { undo(); return; }
-  if (name === 'redo') { redo(); return; }
-  if (name === 'selectAll') { selectAllMacros(); return; }
-  if (name === 'deleteSelected') { deleteSelected(); return; }
-  if (name === 'clearSelection') { deselectAll(); return; }
-  if (name === 'openDieDialog' || name === 'optimizeDie') { onFitDensityClicked(); return; }
-  if (name === 'autoPlaceMacros') { applyAutoplaceMethod(data.method || 'peripheral'); return; }
-  if (name === 'rerollSeed') { rerollAutoplaceSeed(); return; }
-  if (name === 'acceptPreview') { acceptAutoplacePreview(); return; }
-  if (name === 'cancelPreview') { cancelAutoplacePreview(); return; }
-  if (name === 'toggleRegionLock') { toggleRegionLock(data.index || 0); return; }
-  if (name === 'convertRegionType') { toggleRegionType(); return; }
-  if (name === 'optimizeDieConstraints') {
-    const res = computeMinimumDieForPads(state.pads.length, state.die.w - state.core.border * 2, state.die.h - state.core.border * 2);
-    expandDieForPadRing(res.dieW, res.dieH);
-    return;
-  }
-  if (name === 'syncUpfPads') { syncUpfPowerPads(); return; }
-  if (name === 'routePadTrunkBridges') { routePadTrunkBridges(); return; }
-  if (name === 'configureDualFollowpins') { configureDualFollowpins(); return; }
-  if (name === 'detectOverlaps' || name === 'scanCorridors') { detectOverlapsAndCorridors(); return; }
-  if (name === 'checkConnectivityMatrix') { checkConnectivityMatrix(); return; }
-  if (name === 'verifyNetlistIntegrity') { verifyNetlistIntegrity(); return; }
-  if (name === 'autoThrowMacros') { autoThrowMacrosToCanvas(); return; }
-  if (name === 'autoExpandCore') { autoExpandCore(data.density || 0.55); return; }
-  if (name === 'toggleHalos') { toggleHalosVisibility(); return; }
-  if (name === 'toggleHud') { toggleHud(); return; }
-  if (name === 'autoSpaceEdge') { autoSpaceActiveEdge(); return; }
-  if (name === 'autoDistributePads') { autoDistributeAllPads(); return; }
-  if (name === 'autoAlignPadsToRegions') { autoAlignPadsToRegions(); return; }
-  if (name === 'snapMacroPorts' || name === 'snapBoundaryPorts') { snapMacroBoundaryPorts(); return; }
-  if (name === 'staggerPads') { autoSpaceActiveEdge(true); return; }
-  if (name === 'exportPinOrder') {
-    const cfg = exportPinOrderCfg();
-    const ed = document.getElementById('live-tcl-editor');
-    if (ed) ed.value = cfg;
-    return;
-  }
-  if (name === 'exportSvg') {
-    const svgCode = exportSvg();
-    const ed = document.getElementById('live-tcl-editor');
-    if (ed) ed.value = svgCode;
-    return;
-  }
-  if (name === 'revertSession' || name === 'revertToSaved') {
-    revertToSavedSession();
-    return;
-  }
-  if (name === 'insertSupplyPads') {
-    state.pads.push({ name: `vdd_${state.pads.length}`, edge: state.activeEdge || 'bottom', pos: 200.0, dir: 'power' });
-    state.pads.push({ name: `vss_${state.pads.length}`, edge: state.activeEdge || 'bottom', pos: 240.0, dir: 'ground' });
-    autoSpaceActiveEdge();
-    return;
-  }
-  if (name === 'calculatePowerSwitchMatrix') {
-    const selStatus = document.getElementById('status-selection');
-    if (selStatus) selStatus.innerText = 'Power Switch Matrix: Array 4 cols, pitch 40 µm, Ron 0.12 Ω, Target IR < 2%';
-    return;
-  }
-  if (name === 'checkPsm') {
-    const selStatus = document.getElementById('status-selection');
-    // Iteration 37: Static IR drop limit check (< 5% nominal)
-    const nominalV = 1.8;
-    const maxDropAllowed = nominalV * 0.05 * 1000.0; // 90 mV
-    const simDropMv = 34.2;
-    const pass = simDropMv <= maxDropAllowed;
-    if (selStatus) {
-      selStatus.innerText = `PSM Analysis: Core max static IR drop is ${simDropMv} mV (${((simDropMv / (nominalV * 1000)) * 100).toFixed(1)}% of ${nominalV}V, Limit ${maxDropAllowed.toFixed(1)} mV, ${pass ? 'PASS' : 'FAIL'})`;
-    }
-    return;
-  }
-
-  const ed = document.getElementById('live-tcl-editor');
-  const tcl = (ed && ed.value) ? ed.value : '';
-
-  const fullState = {
+  return {
     version: '2.0-FPS',
     netlist_checksum: state.netlist_checksum || '',
     is_pad_mode: state.pads && state.pads.length > 0,
@@ -2048,28 +1840,172 @@ function action(name, data = {}) {
       dir: p.dir || 'input'
     })),
     pads: state.pads,
-    tap_distance: 14.0,
+    tap_distance: numVal('sp-tap-dist', 14.0),
+    default_tapcell: strVal('cmb-default-tap', 'sky130_fd_sc_hd__tapvpwrvgnd_1'),
     pdn_config: {
-      enable_ring: true,
-      ring_width: 5.0,
-      ring_spacing: 2.0,
+      enable_ring: boolVal('chk-enable-ring', true),
+      ring_width: numVal('sp-ring-w', 5.0),
+      ring_spacing: numVal('sp-ring-s', 2.0),
       ring_offset: 5.0,
-      ring_h_layer: 'met5',
-      ring_v_layer: 'met4',
-      enable_trunks: true,
-      trunk_layer: 'met4',
-      trunk_width: 3.2,
-      targeted_bridges: true
+      ring_h_layer: strVal('cmb-ring-h', 'met5'),
+      ring_v_layer: strVal('cmb-ring-v', 'met4'),
+      enable_trunks: boolVal('chk-enable-trunks', true),
+      trunk_layer: strVal('cmb-trunk-layer', 'met4'),
+      trunk_width: numVal('sp-trunk-w', 3.2),
+      targeted_bridges: boolVal('chk-targeted-bridges', true),
+      dual_followpins: boolVal('chk-dual-followpins', true)
     },
     blockages: state.blockages || [],
     regions: state.regions || [],
     weights: state.weights
   };
+}
+
+let _tclSyncTimer = null;
+function requestBackendTcl() {
+  if (_tclSyncTimer) clearTimeout(_tclSyncTimer);
+  _tclSyncTimer = setTimeout(() => {
+    _tclSyncTimer = null;
+    const payload = { command: 'fpsAction', action: 'generateTcl', state: buildFullState() };
+    if (window.vscode) {
+      window.vscode.postMessage(payload);
+    } else if (window.parent && window.parent !== window) {
+      window.parent.postMessage({ fromSilisFPS: true, data: payload }, '*');
+    }
+  }, 180);
+}
+
+// Live TCL Generator (Requests authoritative TCL from silis backend, with instant local fallback)
+function regenerateTcl() {
+  const s = buildFullState();
+  const pdn = s.pdn_config;
+  let tcl = `# Silis Floorplan & Power Studio (FPS) - Generating via Silis SDK...\n`;
+  tcl += `initialize_floorplan -die_area { 0.000 0.000 ${state.die.w.toFixed(3)} ${state.die.h.toFixed(3)} } -core_area { ${state.core.border.toFixed(3)} ${state.core.border.toFixed(3)} ${(state.die.w - state.core.border).toFixed(3)} ${(state.die.h - state.core.border).toFixed(3)} } -site unithd\n`;
+  tcl += `catch { tapcell -endcap_cpp 1 -distance ${s.tap_distance.toFixed(1)} -tapcell_master ${s.default_tapcell} }\n`;
+  tcl += `catch { make_tracks }\n`;
+  if (state.pads && state.pads.length > 0) {
+    for (const p of state.pads) {
+      let px = p.pos, py = 0, layer = 'met2';
+      if (p.edge === 'top') { px = p.pos; py = state.die.h; layer = 'met2'; }
+      else if (p.edge === 'bottom') { px = p.pos; py = 0; layer = 'met2'; }
+      else if (p.edge === 'left') { px = 0; py = p.pos; layer = 'met3'; }
+      else { px = state.die.w; py = p.pos; layer = 'met3'; }
+      tcl += `catch { place_pin -pin_name "${p.name}" -layer ${layer} -location { ${Number(px).toFixed(3)} ${Number(py).toFixed(3)} } -force_to_die_boundary -placed_status }\n`;
+    }
+  } else {
+    tcl += `catch { place_pins -hor_layers met3 -ver_layers met4 -corner_avoidance 5.0 -min_distance 1.0 }\n`;
+  }
+  if (pdn.enable_ring) {
+    tcl += `catch { add_pdn_ring -grid grid_top -layers { ${pdn.ring_h_layer} ${pdn.ring_v_layer} } -widths { ${pdn.ring_width.toFixed(1)} ${pdn.ring_width.toFixed(1)} } -spacings { ${pdn.ring_spacing.toFixed(1)} ${pdn.ring_spacing.toFixed(1)} } -core_offsets { 5.0 5.0 } }\n`;
+  }
+  if (pdn.enable_trunks) {
+    tcl += `catch { add_pdn_stripe -grid grid_top -layer ${pdn.trunk_layer} -width ${pdn.trunk_width.toFixed(1)} -pitch 40.0 }\n`;
+  }
+
+  const ed = document.getElementById('live-tcl-editor');
+  if (ed) ed.value = tcl;
+  requestBackendTcl();
+}
+
+// IPC Action Dispatcher (Dual-Schema Desktop 2.0-FPS Parity: floorplanner.py:1969-2038)
+function action(name, data = {}) {
+  // Local immediate UI action execution (Zero-Latency EDA Parity)
+  if (name === 'undo') { undo(); return; }
+  if (name === 'redo') { redo(); return; }
+  if (name === 'selectAll') { selectAllMacros(); return; }
+  if (name === 'deleteSelected') { deleteSelected(); return; }
+  if (name === 'clearSelection') { deselectAll(); return; }
+  if (name === 'openDieDialog' || name === 'optimizeDie') { onFitDensityClicked(); return; }
+  if (name === 'autoPlaceMacros') { applyAutoplaceMethod(data.method || 'peripheral'); return; }
+  if (name === 'snapToSites' || name === 'legalizeDrc') {
+    state.macros.forEach(m => {
+      m.x = snapCoordinate(m.x, state.gridSnap);
+      m.y = snapCoordinate(m.y, state.siteHeight);
+    });
+    pushHistory();
+    regenerateTcl();
+    requestAnimationFrame(render);
+    return;
+  }
+  if (name === 'rerollSeed') { rerollAutoplaceSeed(); return; }
+  if (name === 'acceptPreview') { acceptAutoplacePreview(); return; }
+  if (name === 'cancelPreview') { cancelAutoplacePreview(); return; }
+  if (name === 'toggleRegionLock') { toggleRegionLock(data.index || 0); return; }
+  if (name === 'convertRegionType') { toggleRegionType(); return; }
+  if (name === 'optimizeDieConstraints') {
+    const res = computeMinimumDieForPads(state.pads.length, state.die.w - state.core.border * 2, state.die.h - state.core.border * 2);
+    expandDieForPadRing(res.dieW, res.dieH);
+    return;
+  }
+  if (name === 'syncUpfPads') { syncUpfPowerPads(); return; }
+  if (name === 'routePadTrunkBridges') { routePadTrunkBridges(); return; }
+  if (name === 'configureDualFollowpins') { configureDualFollowpins(); return; }
+  if (name === 'detectOverlaps' || name === 'scanCorridors') { detectOverlapsAndCorridors(); return; }
+  if (name === 'checkConnectivityMatrix') { checkConnectivityMatrix(); return; }
+  if (name === 'verifyNetlistIntegrity') { verifyNetlistIntegrity(); return; }
+  if (name === 'autoThrowMacros') { autoThrowMacrosToCanvas(); return; }
+  if (name === 'autoExpandCore') { autoExpandCore(data.density || 0.55); return; }
+  if (name === 'toggleHalos') { toggleHalosVisibility(); return; }
+  if (name === 'toggleHud') { toggleHud(); return; }
+  if (name === 'autoSpaceEdge') { autoSpaceActiveEdge(); return; }
+  if (name === 'autoDistributePads') { autoDistributeAllPads(); return; }
+  if (name === 'autoAlignPads' || name === 'autoAlignPadsToRegions') { autoAlignPadsToRegions(); return; }
+  if (name === 'generateCoreRing' || name === 'synthPdnGrid') {
+    regenerateTcl();
+    switchTab('tcl');
+    return;
+  }
+  if (name === 'snapMacroPorts' || name === 'snapBoundaryPorts') { snapMacroBoundaryPorts(); return; }
+  if (name === 'staggerPads') { autoSpaceActiveEdge(true); return; }
+  if (name === 'exportPinOrder') {
+    const cfg = exportPinOrderCfg();
+    const ed = document.getElementById('live-tcl-editor');
+    if (ed) ed.value = cfg;
+    return;
+  }
+  if (name === 'exportSvg') {
+    const svgCode = exportSvg();
+    const ed = document.getElementById('live-tcl-editor');
+    if (ed) ed.value = svgCode;
+    return;
+  }
+  if (name === 'revertSession' || name === 'revertToSaved') {
+    revertToSavedSession();
+    return;
+  }
+  if (name === 'insertSupplyPads') {
+    state.pads.push({ name: `vdd_${state.pads.length}`, edge: state.activeEdge || 'bottom', pos: 200.0, dir: 'power' });
+    state.pads.push({ name: `vss_${state.pads.length}`, edge: state.activeEdge || 'bottom', pos: 240.0, dir: 'ground' });
+    autoSpaceActiveEdge();
+    return;
+  }
+  if (name === 'calculatePowerSwitchMatrix') {
+    const selStatus = document.getElementById('status-selection');
+    if (selStatus) selStatus.innerText = 'Power Switch Matrix: Array 4 cols, pitch 40 µm, Ron 0.12 Ω, Target IR < 2%';
+    return;
+  }
+  if (name === 'checkPsm') {
+    const selStatus = document.getElementById('status-selection');
+    // Iteration 37: Static IR drop limit check (< 5% nominal)
+    const nominalV = 1.8;
+    const maxDropAllowed = nominalV * 0.05 * 1000.0; // 90 mV
+    const simDropMv = 34.2;
+    const pass = simDropMv <= maxDropAllowed;
+    if (selStatus) {
+      selStatus.innerText = `PSM Analysis: Core max static IR drop is ${simDropMv} mV (${((simDropMv / (nominalV * 1000)) * 100).toFixed(1)}% of ${nominalV}V, Limit ${maxDropAllowed.toFixed(1)} mV, ${pass ? 'PASS' : 'FAIL'})`;
+    }
+    return;
+  }
+
+  const ed = document.getElementById('live-tcl-editor');
+  const tcl = (ed && ed.value) ? ed.value : '';
+  const fullState = buildFullState();
 
   const payload = {
     command: 'fpsAction',
     action: name,
     tcl,
+    pinOrderCfg: name === 'savePinOrder' ? exportPinOrderCfg() : undefined,
     ...data,
     state: fullState
   };
@@ -2151,6 +2087,9 @@ window.addEventListener('message', (event) => {
   if (!msg) return;
   if (msg.command === 'loadSession' && msg.session) {
     loadSessionData(msg.session);
+  } else if (msg.command === 'updateTcl' && typeof msg.tcl === 'string') {
+    const ed = document.getElementById('live-tcl-editor');
+    if (ed) ed.value = msg.tcl;
   }
 });
 
@@ -2162,7 +2101,7 @@ try {
 } catch (e) {}
 
 // Synchronous live TCL regeneration binding for all property inputs (Iteration 97)
-['sp-ring-w', 'sp-ring-s', 'sp-trunk-w', 'sp-tap-dist', 'chk-enable-ring', 'chk-enable-trunks', 'chk-targeted-bridges', 'chk-dual-followpins'].forEach(id => {
+['sp-ring-w', 'sp-ring-s', 'sp-trunk-w', 'sp-tap-dist', 'cmb-default-tap', 'cmb-ring-h', 'cmb-ring-v', 'cmb-trunk-layer', 'chk-enable-ring', 'chk-enable-trunks', 'chk-targeted-bridges', 'chk-dual-followpins'].forEach(id => {
   const el = document.getElementById(id);
   if (el) {
     el.addEventListener('change', () => {

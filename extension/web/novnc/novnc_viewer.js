@@ -12,7 +12,11 @@ const vscode = acquireVsCodeApi();
 let rfb = null;
 let virtualSocket = null;
 let scaleViewport = true;
+let activeMode = 'fast_peeker';
+let awaitingViewerReady = false;
+let fallbackHideTimer = null;
 
+const screenWrapper = document.getElementById('screen-wrapper');
 const screenEl = document.getElementById('screen');
 const statusPill = document.getElementById('status-pill');
 const statusText = document.getElementById('status-text');
@@ -22,6 +26,27 @@ const overlayDesc = document.getElementById('overlay-desc');
 const btnFit = document.getElementById('btn-fit');
 const btnFullscreen = document.getElementById('btn-fullscreen');
 const btnReconnect = document.getElementById('btn-reconnect');
+
+function showOverlay(title, desc) {
+    if (title) overlayTitle.textContent = title;
+    if (desc) overlayDesc.textContent = desc;
+    overlayPanel.classList.remove('hidden');
+}
+
+function hideOverlay() {
+    if (fallbackHideTimer) {
+        clearTimeout(fallbackHideTimer);
+        fallbackHideTimer = null;
+    }
+    awaitingViewerReady = false;
+    overlayPanel.classList.add('hidden');
+}
+
+function applyViewportScale() {
+    if (rfb) {
+        rfb.scaleViewport = scaleViewport;
+    }
+}
 
 function setStatus(state, message) {
     statusPill.className = `status-pill status-${state}`;
@@ -44,9 +69,10 @@ function initVnc() {
 
     screenEl.innerHTML = '';
     setStatus('connecting', 'Connecting...');
-    overlayPanel.classList.remove('hidden');
-    overlayTitle.textContent = 'Connecting to Native CAD Display';
-    overlayDesc.textContent = 'Establishing portless IPC tunnel to local X11 headless bridge (127.0.0.1:5901)...';
+    showOverlay(
+        'Connecting to Native CAD Display',
+        'Establishing portless IPC tunnel to local X11 headless bridge (127.0.0.1:5901)...'
+    );
 
     try {
         virtualSocket = new VirtualVncSocket(vscode);
@@ -62,23 +88,28 @@ function initVnc() {
 
         rfb.addEventListener('connect', () => {
             setStatus('connected', 'Connected (Native RFB)');
-            console.log('RFB connected to local X11 desktop bridge');
-            // Notify extension that RFB handshaking is complete
-            vscode.postMessage({ type: 'rfb_connected' });
+            awaitingViewerReady = true;
+            // Preserve the currently selected mode on reconnects
+            vscode.postMessage({ type: 'rfb_connected', mode: activeMode });
         });
 
         rfb.addEventListener('firstframe', () => {
-            overlayPanel.classList.add('hidden');
+            applyViewportScale();
             setStatus('connected', 'Connected (Native 60 FPS)');
+            if (!awaitingViewerReady) {
+                hideOverlay();
+            }
         });
 
         rfb.addEventListener('disconnect', (e) => {
+            awaitingViewerReady = false;
             setStatus('disconnected', 'Disconnected');
-            overlayPanel.classList.remove('hidden');
-            overlayTitle.textContent = 'CAD Display Session Idle';
-            overlayDesc.textContent = (e && e.detail && e.detail.clean)
-                ? 'Desktop session closed cleanly. Click Reconnect or choose a layout viewer below.'
-                : 'Connection dropped. Ensure Xvfb and x11vnc are running, then click Reconnect.';
+            showOverlay(
+                'CAD Display Session Idle',
+                (e && e.detail && e.detail.clean)
+                    ? 'Desktop session closed cleanly. Click Reconnect or choose a layout viewer below.'
+                    : 'Connection dropped. Ensure Xvfb and x11vnc are running, then click Reconnect.'
+            );
         });
 
         rfb.addEventListener('credentialsrequired', () => {
@@ -86,17 +117,18 @@ function initVnc() {
         });
 
         rfb.addEventListener('securityfailure', (e) => {
+            awaitingViewerReady = false;
             setStatus('disconnected', 'Auth Failed');
-            overlayPanel.classList.remove('hidden');
-            overlayTitle.textContent = 'Security Handshake Failed';
-            overlayDesc.textContent = e && e.detail && e.detail.reason ? e.detail.reason : 'Authentication failed';
+            showOverlay(
+                'Security Handshake Failed',
+                e && e.detail && e.detail.reason ? e.detail.reason : 'Authentication failed'
+            );
         });
 
     } catch (err) {
         console.error('Failed to initialize RFB client:', err);
         setStatus('disconnected', 'Init Error');
-        overlayTitle.textContent = 'Initialization Error';
-        overlayDesc.textContent = err.message || String(err);
+        showOverlay('Initialization Error', err.message || String(err));
     }
 }
 
@@ -104,18 +136,15 @@ function initVnc() {
 if (btnFit) {
     btnFit.addEventListener('click', () => {
         scaleViewport = !scaleViewport;
-        if (rfb) {
-            rfb.scaleViewport = scaleViewport;
-        }
+        applyViewportScale();
         btnFit.classList.toggle('btn-primary', scaleViewport);
     });
 }
 
 if (btnFullscreen) {
     btnFullscreen.addEventListener('click', () => {
-        const wrapper = document.getElementById('screen-wrapper');
         if (!document.fullscreenElement) {
-            wrapper.requestFullscreen().catch(() => {});
+            screenWrapper.requestFullscreen().catch(() => {});
         } else {
             document.exitFullscreen().catch(() => {});
         }
@@ -131,7 +160,7 @@ if (btnReconnect) {
 // Dismiss overlay if clicked directly by user
 if (overlayPanel) {
     overlayPanel.addEventListener('click', () => {
-        overlayPanel.classList.add('hidden');
+        hideOverlay();
     });
 }
 
@@ -141,37 +170,44 @@ document.querySelectorAll('.launcher-btn').forEach(btn => {
         e.stopPropagation();
         const mode = btn.getAttribute('data-mode');
         if (mode) {
-            vscode.postMessage({ type: 'launch_viewer', mode: mode });
-            overlayTitle.textContent = 'Launching CAD Engine...';
+            activeMode = mode;
+            awaitingViewerReady = true;
             const titleEl = btn.querySelector('.launcher-btn-title') || btn.querySelector('span');
             const title = titleEl ? titleEl.textContent.trim() : mode;
-            overlayDesc.textContent = `Starting ${title} on DISPLAY=:1...`;
-            // Auto-hide overlay after brief launch window so it never hangs
-            setTimeout(() => {
-                overlayPanel.classList.add('hidden');
-            }, 1200);
+            showOverlay('Launching CAD Engine...', `Starting ${title} on DISPLAY=:1...`);
+            if (fallbackHideTimer) clearTimeout(fallbackHideTimer);
+            fallbackHideTimer = setTimeout(() => {
+                if (awaitingViewerReady) hideOverlay();
+            }, 12000);
+            vscode.postMessage({ type: 'launch_viewer', mode: mode });
         }
     });
 });
 
-// Auto-scale on window / tab resize
-window.addEventListener('resize', () => {
-    if (rfb) {
-        rfb.scaleViewport = scaleViewport;
-    }
-});
+// Auto-scale whenever the VS Code editor tab or flex wrapper resizes
+if (typeof ResizeObserver === 'function' && screenWrapper) {
+    const ro = new ResizeObserver(() => {
+        requestAnimationFrame(applyViewportScale);
+    });
+    ro.observe(screenWrapper);
+}
+window.addEventListener('resize', applyViewportScale);
 
 // Listen for incoming commands from extension host
 window.addEventListener('message', (event) => {
     const msg = event.data;
     if (!msg || typeof msg !== 'object') return;
 
-    if (msg.type === 'viewer_launched') {
+    if (msg.type === 'viewer_ready') {
+        hideOverlay();
+        setTimeout(applyViewportScale, 50);
+    } else if (msg.type === 'viewer_error') {
+        awaitingViewerReady = false;
+        showOverlay('CAD Engine Launch Failed', msg.error || 'Viewer process exited unexpectedly.');
+    } else if (msg.type === 'viewer_launched') {
+        if (msg.mode) activeMode = msg.mode;
         overlayTitle.textContent = 'Rendering Layout...';
-        overlayDesc.textContent = `Streaming ${msg.mode || 'CAD engine'} frame...`;
-        setTimeout(() => {
-            overlayPanel.classList.add('hidden');
-        }, 600);
+        overlayDesc.textContent = `Waiting for ${msg.mode || 'CAD engine'} window on DISPLAY=:1...`;
     } else if (msg.type === 'project_info') {
         const tag = document.getElementById('project-tag');
         if (tag && msg.projectName) {
