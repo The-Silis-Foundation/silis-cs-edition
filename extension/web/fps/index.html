@@ -328,15 +328,18 @@
             <div class="card">
               <div class="card-title">Voltage Islands & Domains</div>
               <table class="eda-table" id="table-domain-supplies">
-                <thead><tr><th>Power Domain</th><th>Voltage</th><th>Type</th><th>Supply Net</th></tr></thead>
-                <tbody>
-                  <tr><td>PD_TOP</td><td>1.800 V</td><td>Always-On</td><td>VDD</td></tr>
-                  <tr><td>PD_COMPUTE</td><td>0.950 V</td><td>Power-Gated</td><td>VDD_COMP</td></tr>
+                <thead><tr><th>Power Domain</th><th>Voltage</th><th>Type</th><th>Box (µm)</th></tr></thead>
+                <tbody id="domains-table-body">
+                  <tr><td>PD_TOP</td><td>1.800 V</td><td>Always-On</td><td>Full Core</td></tr>
                 </tbody>
               </table>
               <div class="form-row" style="margin-top:6px;">
-                <button class="btn-secondary" style="flex:1;" onclick="action('placePowerDomain')">Place Island on Canvas</button>
-                <button class="btn-secondary" style="flex:1;" onclick="action('configurePmu')">Configure PMU Hookup...</button>
+                <button class="btn-secondary" style="flex:1;" onclick="action('addPowerDomain')">+ Add Sub-Domain</button>
+                <button class="btn-primary" style="flex:1;" onclick="action('placePowerDomain')">Place Island on Canvas</button>
+              </div>
+              <div class="form-row" style="margin-top:4px;">
+                <button class="btn-secondary" style="flex:1;" onclick="action('autoPlacePowerDomain')">Auto-Place Islands</button>
+                <button class="btn-secondary" style="flex:1;" onclick="action('configurePmu')">Sync UPF & PMU</button>
               </div>
             </div>
 
@@ -426,6 +429,9 @@
                 <button class="btn-primary" style="flex:1;" onclick="action('autoSpaceEdge')">Auto-Space Edge (A)</button>
                 <button class="btn-secondary" style="flex:1;" onclick="action('autoDistributePads')">Auto-Distribute All</button>
                 <button class="btn-secondary" style="flex:1;" onclick="action('autoAlignPads')">Auto-Align to Regions</button>
+              </div>
+              <div class="form-row" style="margin-top:4px;">
+                <button class="btn-secondary" style="flex:1;" onclick="action('movePadToEdge')">Move Selected Pad to Active Edge</button>
               </div>
             </div>
 

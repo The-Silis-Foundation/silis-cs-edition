@@ -55,9 +55,14 @@
           <span>Waveform:</span>
           <span class="artifact-link" onclick="openFile('waveform.vcd')">waveform.vcd</span>
         </div>
+        <div class="stage-artifact">
+          <span>Report:</span>
+          <span class="artifact-link" id="link-stage-2-report" onclick="action('openVerifReport')">chip_top_report.md</span>
+        </div>
         <div class="stage-actions">
           <button class="btn-primary" onclick="action('runSimulation')">▶ Play</button>
           <button class="btn-secondary" onclick="action('openWaveforms')">ROHD Wave</button>
+          <button class="btn-secondary" onclick="action('openVerifReport')">Report</button>
         </div>
       </div>
 
@@ -74,9 +79,14 @@
           <span>Netlist:</span>
           <span class="artifact-link" id="link-stage-3" onclick="openFile('netlist/chip_top_netlist.v')">chip_top_netlist.v</span>
         </div>
+        <div class="stage-artifact">
+          <span>Report:</span>
+          <span class="artifact-link" id="link-stage-3-report" onclick="action('openSynthReport')">synthesis_report.md</span>
+        </div>
         <div class="stage-actions">
           <button class="btn-primary" onclick="action('openSynthConfirm')">Configure & Synth...</button>
           <button class="btn-secondary" onclick="action('openSchematic')">Schematic</button>
+          <button class="btn-secondary" onclick="action('openSynthReport')">Report</button>
         </div>
       </div>
 
@@ -163,23 +173,31 @@
         if (s.topModule) document.getElementById('badge-top').textContent = 'Top: ' + s.topModule;
         if (s.pdk) document.getElementById('badge-pdk').textContent = 'PDK: ' + s.pdk;
 
-        // Stage 2: VCD / Simulation
+        // Stage 2: VCD / Simulation & Verification Report
         const pill2 = document.getElementById('pill-stage-2');
+        const link2Rep = document.getElementById('link-stage-2-report');
+        const topMod = s.topModule || (s.projectName === 'demo_soc' ? 'chip_top' : s.projectName) || 'chip_top';
         if (s.isSimRunning) {
           pill2.textContent = 'SIMULATING...';
           pill2.className = 'status-pill status-running';
-        } else if (s.hasVcd) {
-          pill2.textContent = 'VCD DUMPED';
+        } else if (s.hasVcd || s.hasVerifReport) {
+          pill2.textContent = s.hasVerifReport ? 'VERIFIED' : 'VCD DUMPED';
           pill2.className = 'status-pill status-passed';
         } else {
           pill2.textContent = 'NEEDS RUN';
           pill2.className = 'status-pill status-pending';
         }
+        if (link2Rep) {
+          link2Rep.textContent = s.verifReportPath ? s.verifReportPath.replace(/^reports\//, '') : `${topMod}_report.md (generate)`;
+        }
 
-        // Stage 3: Netlist / Synthesis
+        // Stage 3: Netlist / Synthesis & Synthesis Report
         const pill3 = document.getElementById('pill-stage-3');
         const link3 = document.getElementById('link-stage-3');
-        const topMod = s.topModule || (s.projectName === 'demo_soc' ? 'chip_top' : s.projectName) || 'chip_top';
+        const link3Rep = document.getElementById('link-stage-3-report');
+        if (link3Rep) {
+          link3Rep.textContent = s.synthReportPath ? s.synthReportPath.replace(/^reports\//, '') : 'synthesis_report.md (pending)';
+        }
 
         if (s.isSynthRunning) {
           pill3.textContent = 'SYNTHESIZING...';

@@ -16,7 +16,9 @@ const state = {
   showGrid: true,
   showFlightlines: true,
   showHud: true,
+  isMacroMode: true,
   selectedMacro: null,
+  selectedDomainName: null,
   activeEdge: 'bottom',
   selectedPad: null,
   isDragging: false,
@@ -165,14 +167,15 @@ function render() {
     const dw = (x2 - x1) * state.zoom;
     const dh = (y2 - y1) * state.zoom;
     const vColors = getVoltageColors(dom.voltage);
+    const isSelDom = (state.selectedDomainName === dom.name);
     ctx.fillStyle = vColors.fill;
     ctx.fillRect(dp.x, dp.y - dh, dw, dh);
-    ctx.strokeStyle = vColors.stroke;
-    ctx.lineWidth = 1.8;
+    ctx.strokeStyle = isSelDom ? '#00FFFF' : vColors.stroke;
+    ctx.lineWidth = isSelDom ? 2.4 : 1.8;
     ctx.setLineDash([8, 3, 2, 3]); // DashDotLine
     ctx.strokeRect(dp.x, dp.y - dh, dw, dh);
     ctx.setLineDash([]);
-    ctx.fillStyle = vColors.stroke;
+    ctx.fillStyle = isSelDom ? '#00FFFF' : vColors.stroke;
     const voltStr = (dom.voltage != null && !isNaN(Number(dom.voltage))) ? Number(dom.voltage).toFixed(2) : '1.80';
     ctx.font = '10px ui-monospace, monospace';
     ctx.fillText(`ISLAND: ${dom.name} (${voltStr}V)`, dp.x + 6, dp.y - dh + 14);
@@ -326,8 +329,8 @@ function render() {
     const w = Math.abs(state.drawCurrent.x - state.drawStart.x);
     const h = Math.abs(state.drawCurrent.y - state.drawStart.y);
     const sp = worldToScreen(x1, y1);
-    ctx.strokeStyle = state.drawingMode === 'blockage' ? '#f38ba8' : '#89b4fa';
-    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = state.drawingMode === 'blockage' ? '#f38ba8' : (state.drawingMode === 'power_domain' ? '#6c71c4' : '#89b4fa');
+    ctx.lineWidth = 1.8;
     ctx.setLineDash([4, 4]);
     ctx.strokeRect(sp.x, sp.y - h * state.zoom, w * state.zoom, h * state.zoom);
     ctx.setLineDash([]);
@@ -619,7 +622,8 @@ window.addEventListener('mouseup', () => {
     const y1 = Math.min(state.drawStart.y, state.drawCurrent.y);
     const w = Math.abs(state.drawCurrent.x - state.drawStart.x);
     const h = Math.abs(state.drawCurrent.y - state.drawStart.y);
-    if (w > 20 && h > 20) {
+    const minDim = state.drawingMode === 'power_domain' ? 10 : 20;
+    if (w > minDim && h > minDim) {
       if (state.drawingMode === 'blockage') {
         const cmbType = document.getElementById('cmb-block-type');
         const spPct = document.getElementById('sp-block-pct');
@@ -643,6 +647,27 @@ window.addEventListener('mouseup', () => {
           is_fence: (state.drawingMode === 'fence'),
           density: 0.60
         });
+      } else if (state.drawingMode === 'power_domain') {
+        const coreX1 = state.core.border;
+        const coreY1 = state.core.border;
+        const coreX2 = state.die.w - state.core.border;
+        const coreY2 = state.die.h - state.core.border;
+        const cx1 = Math.max(coreX1, snapCoordinate(x1, state.gridSnap));
+        const cy1 = Math.max(coreY1, snapCoordinate(y1, state.siteHeight));
+        const cx2 = Math.min(coreX2, snapCoordinate(x1 + w, state.gridSnap));
+        const cy2 = Math.min(coreY2, snapCoordinate(y1 + h, state.siteHeight));
+        const targetName = state.activePowerDomainName || 'PD_COMPUTE';
+        let dom = state.domains.find(d => d.name === targetName);
+        if (!dom) {
+          dom = { name: targetName, voltage: 0.95, domain_type: 'Internally Gated', elements: [], box: [cx1, cy1, cx2, cy2] };
+          state.domains.push(dom);
+        } else {
+          dom.box = [cx1, cy1, Math.max(cx1 + 20, cx2), Math.max(cy1 + 20, cy2)];
+        }
+        state.selectedDomainName = dom.name;
+        const selStatus = document.getElementById('status-selection');
+        if (selStatus) selStatus.innerText = `Placed Voltage Island ${dom.name} (${dom.box.map(v => v.toFixed(2)).join(', ')})`;
+        refreshDomainsTable();
       }
       pushHistory();
       regenerateTcl();
@@ -968,13 +993,13 @@ function autoSpaceActiveEdge(staggered = false) {
   if (edgePads.length === 0) return;
 
   const length = (edge === 'bottom' || edge === 'top') ? state.die.w : state.die.h;
-  const cornerClearance = state.isMacroMode ? 20.0 : 80.0;
-  const usableLength = length - cornerClearance * 2;
+  const baseClearance = (state.isMacroMode !== false) ? 20.0 : 80.0;
+  const cornerClearance = Math.min(baseClearance, length * 0.12);
+  const usableLength = Math.max(10.0, length - cornerClearance * 2);
   const step = edgePads.length > 1 ? usableLength / (edgePads.length - 1) : usableLength / 2;
 
   edgePads.forEach((p, idx) => {
     p.pos = snapCoordinate(cornerClearance + idx * step, state.gridSnap);
-    // Iteration 33: Staggered Dual-Row Offset (120 um inner ring offset)
     if (staggered) {
       p.depth_offset = (idx % 2 === 1) ? 120.0 : 0.0;
     } else {
@@ -984,6 +1009,7 @@ function autoSpaceActiveEdge(staggered = false) {
 
   refreshPadsTable();
   pushHistory();
+  regenerateTcl();
   requestAnimationFrame(render);
 }
 
@@ -1066,13 +1092,15 @@ function autoAlignPadsToRegions() {
     else pad.edge = 'right';
   });
 
+  const prevEdge = state.activeEdge;
   ['bottom', 'right', 'top', 'left'].forEach(e => {
     state.activeEdge = e;
     autoSpaceActiveEdge();
   });
-  state.activeEdge = 'bottom';
+  state.activeEdge = prevEdge || 'bottom';
   refreshPadsTable();
   pushHistory();
+  regenerateTcl();
   requestAnimationFrame(render);
 }
 
@@ -1081,14 +1109,139 @@ function autoDistributeAllPads() {
   state.pads.forEach((p, idx) => {
     p.edge = edges[idx % 4];
   });
+  const prevEdge = state.activeEdge;
   edges.forEach(e => {
     state.activeEdge = e;
     autoSpaceActiveEdge();
   });
-  state.activeEdge = 'bottom';
+  state.activeEdge = prevEdge || 'bottom';
   refreshPadsTable();
   pushHistory();
+  regenerateTcl();
   requestAnimationFrame(render);
+}
+
+function moveSelectedPadToEdge() {
+  if (!state.selectedPad) {
+    const selStatus = document.getElementById('status-selection');
+    if (selStatus) selStatus.innerText = 'Select a pin/pad row first, then click N/S/W/E and Move.';
+    return;
+  }
+  const targetEdge = state.activeEdge || 'bottom';
+  const span = (targetEdge === 'bottom' || targetEdge === 'top') ? state.die.w : state.die.h;
+  state.selectedPad.edge = targetEdge;
+  state.selectedPad.pos = snapCoordinate(Math.max(10, Math.min(span - 10, state.selectedPad.pos || span / 2)), state.gridSnap);
+  selectPadInGui(state.selectedPad);
+  pushHistory();
+  regenerateTcl();
+  requestAnimationFrame(render);
+}
+
+// Power Domain Placer (Desktop Parity: floorplanner.py:4680-4773)
+function refreshDomainsTable() {
+  const tbody = document.getElementById('domains-table-body');
+  if (!tbody) return;
+  let html = '';
+  for (const d of (state.domains || [])) {
+    const isSel = (state.selectedDomainName === d.name);
+    const boxTxt = Array.isArray(d.box) && d.box.length === 4
+      ? d.box.map(v => Number(v).toFixed(1)).join(', ')
+      : 'Core';
+    const vStr = (d.voltage != null && !isNaN(Number(d.voltage))) ? Number(d.voltage).toFixed(3) + ' V' : '1.800 V';
+    html += `<tr ${isSel ? 'class="pad-row-selected"' : ''} data-domain="${escapeHtml(d.name)}" style="cursor:pointer;">
+      <td>${escapeHtml(d.name)}</td>
+      <td>${vStr}</td>
+      <td>${escapeHtml(d.domain_type || (d.name === 'PD_TOP' ? 'Always-On' : 'Internally Gated'))}</td>
+      <td>${escapeHtml(boxTxt)}</td>
+    </tr>`;
+  }
+  tbody.innerHTML = html;
+}
+
+function _ensureGatedDomainTarget() {
+  let target = (state.domains || []).find(d => d.name === state.selectedDomainName && d.name !== 'PD_TOP');
+  if (!target) target = (state.domains || []).find(d => d.name !== 'PD_TOP');
+  if (!target) {
+    target = addPowerDomain(true);
+  }
+  state.selectedDomainName = target.name;
+  return target;
+}
+
+function addPowerDomain(silent = false) {
+  if (!Array.isArray(state.domains)) state.domains = [];
+  let idx = 1;
+  let candidate = 'PD_COMPUTE';
+  while (state.domains.some(d => d.name === candidate)) {
+    idx += 1;
+    candidate = `PD_SUB_${idx}`;
+  }
+  const coreX1 = state.core.border;
+  const coreY1 = state.core.border;
+  const coreW = Math.max(40, state.die.w - coreX1 * 2);
+  const coreH = Math.max(40, state.die.h - coreY1 * 2);
+  const iw = snapCoordinate(Math.min(coreW * 0.45, Math.max(40, coreW * 0.40)), state.gridSnap);
+  const ih = snapCoordinate(Math.min(coreH * 0.45, Math.max(40, coreH * 0.40)), state.siteHeight);
+  const dom = {
+    name: candidate,
+    voltage: 0.95,
+    domain_type: 'Internally Gated',
+    elements: [],
+    box: [snapCoordinate(coreX1 + 10, state.gridSnap), snapCoordinate(coreY1 + 10, state.siteHeight),
+          snapCoordinate(coreX1 + 10 + iw, state.gridSnap), snapCoordinate(coreY1 + 10 + ih, state.siteHeight)]
+  };
+  state.domains.push(dom);
+  state.selectedDomainName = dom.name;
+  refreshDomainsTable();
+  if (!silent) {
+    pushHistory();
+    regenerateTcl();
+    requestAnimationFrame(render);
+  }
+  return dom;
+}
+
+function startPlacePowerDomain() {
+  const target = _ensureGatedDomainTarget();
+  state.drawingMode = 'power_domain';
+  state.activePowerDomainName = target.name;
+  refreshDomainsTable();
+  const selStatus = document.getElementById('status-selection');
+  if (selStatus) selStatus.innerText = `Drag on canvas inside core to place Voltage Island: ${target.name}`;
+}
+
+function autoPlacePowerDomain() {
+  const gated = (state.domains || []).filter(d => d.name !== 'PD_TOP');
+  if (gated.length === 0) {
+    _ensureGatedDomainTarget();
+  }
+  const domainsToPlace = state.domains.filter(d => d.name !== 'PD_TOP');
+  const coreX = state.core.border;
+  const coreY = state.core.border;
+  const coreW = Math.max(40, state.die.w - coreX * 2);
+  const coreH = Math.max(40, state.die.h - coreY * 2);
+  const n = domainsToPlace.length;
+  const iw = Math.min(coreW * 0.42, Math.max(40.0, coreW / (n + 1)));
+  const ih = Math.min(coreH * 0.42, Math.max(40.0, coreH * 0.35));
+  const stepX = (coreW - iw) / Math.max(1, n);
+  domainsToPlace.forEach((pd, i) => {
+    const ix = snapCoordinate(Math.min(coreX + coreW - iw, coreX + 10.0 + i * stepX), state.gridSnap);
+    const iy = snapCoordinate(Math.min(coreY + coreH - ih, coreY + 10.0), state.siteHeight);
+    pd.box = [ix, iy, snapCoordinate(ix + iw, state.gridSnap), snapCoordinate(iy + ih, state.siteHeight)];
+  });
+  state.selectedDomainName = domainsToPlace[0].name;
+  refreshDomainsTable();
+  pushHistory();
+  regenerateTcl();
+  requestAnimationFrame(render);
+}
+
+function configurePmuHookup() {
+  syncUpfPowerPads();
+  refreshDomainsTable();
+  regenerateTcl();
+  const selStatus = document.getElementById('status-selection');
+  if (selStatus) selStatus.innerText = 'Synchronized UPF power domains, isolation control & supply pads.';
 }
 
 function selectPadInGui(pad) {
@@ -1950,6 +2103,11 @@ function action(name, data = {}) {
   if (name === 'autoSpaceEdge') { autoSpaceActiveEdge(); return; }
   if (name === 'autoDistributePads') { autoDistributeAllPads(); return; }
   if (name === 'autoAlignPads' || name === 'autoAlignPadsToRegions') { autoAlignPadsToRegions(); return; }
+  if (name === 'movePadToEdge') { moveSelectedPadToEdge(); return; }
+  if (name === 'addPowerDomain') { addPowerDomain(false); return; }
+  if (name === 'placePowerDomain') { startPlacePowerDomain(); return; }
+  if (name === 'autoPlacePowerDomain') { autoPlacePowerDomain(); return; }
+  if (name === 'configurePmu') { configurePmuHookup(); return; }
   if (name === 'generateCoreRing' || name === 'synthPdnGrid') {
     regenerateTcl();
     switchTab('tcl');
@@ -2078,6 +2236,7 @@ function loadSessionData(s) {
 
   canvasZoomFit();
   refreshPadsTable();
+  refreshDomainsTable();
   regenerateTcl();
   requestAnimationFrame(render);
 }
@@ -2126,9 +2285,24 @@ if (padsTbody) {
   });
 }
 
+const domainsTbody = document.getElementById('domains-table-body');
+if (domainsTbody) {
+  domainsTbody.addEventListener('click', (e) => {
+    const tr = e.target.closest('tr');
+    if (!tr) return;
+    const dname = tr.getAttribute('data-domain');
+    if (dname) {
+      state.selectedDomainName = dname;
+      refreshDomainsTable();
+      requestAnimationFrame(render);
+    }
+  });
+}
+
 resizeCanvas();
 canvasZoomFit();
 updateUtil();
 refreshPadsTable();
+refreshDomainsTable();
 pushHistory();
 regenerateTcl();

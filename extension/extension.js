@@ -1211,9 +1211,47 @@ function activate(context) {
             hasSchematic: false,
             hasFloorplan: false,
             hasDef: false,
+            hasSynthReport: false,
+            synthReportPath: '',
+            hasVerifReport: false,
+            verifReportPath: '',
             isSimRunning: _isSimRunning,
             isSynthRunning: _isSynthRunning
         };
+    }
+
+    async function openProjectReport(kind) {
+        const cleanName = (activeProject || 'demo_soc').replace(/^projects\//, '');
+        if (!isValidIdent(cleanName)) return;
+        const projDir = getProjectFsPath(cleanName);
+        let relPath = '';
+        try {
+            const state = runSilisBridge('project-state', ['--project', cleanName]);
+            relPath = kind === 'synth' ? state.synthReportPath : state.verifReportPath;
+            if (!relPath || !fs.existsSync(path.join(projDir, relPath)) || !relPath.endsWith('.md')) {
+                const gen = runSilisBridge('gen-reports', ['--project', cleanName, '--kind', kind]);
+                relPath = (kind === 'synth' ? gen.synthReportPath : gen.verifReportPath) || relPath;
+            }
+            syncStateTracker();
+        } catch (e) {
+            vscode.window.showErrorMessage(`Failed to generate ${kind} report: ${e.message}`);
+            return;
+        }
+        if (!relPath) {
+            vscode.window.showWarningMessage(`No ${kind} report found for ${cleanName}.`);
+            return;
+        }
+        const absPath = resolveSafeWorkspacePath(getWorkspaceRoot(), path.join('projects', cleanName, relPath));
+        if (!absPath || !fs.existsSync(absPath)) return;
+        const uri = vscode.Uri.file(absPath);
+        if (absPath.endsWith('.md')) {
+            try {
+                await vscode.commands.executeCommand('markdown.showPreview', uri);
+                return;
+            } catch (e) {}
+        }
+        const doc = await vscode.workspace.openTextDocument(uri);
+        await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.One, preview: false });
     }
 
     async function syncStateTracker() {
@@ -1256,8 +1294,12 @@ function activate(context) {
                         vscode.commands.executeCommand('silis.runSimulation');
                     } else if (action === 'openWaveforms') {
                         vscode.commands.executeCommand('silis.openWaveformInBottomDock');
+                    } else if (action === 'openVerifReport') {
+                        await openProjectReport('verif');
                     } else if (action === 'openSynthConfirm') {
                         vscode.commands.executeCommand('silis.openSynthConfirm');
+                    } else if (action === 'openSynthReport') {
+                        await openProjectReport('synth');
                     } else if (action === 'openSchematic') {
                         await openSchematicPanel(activeProject, vscode.ViewColumn.Beside);
                     } else if (action === 'openFloorplanner') {
@@ -1827,46 +1869,47 @@ function activate(context) {
 
             activeFloorplanPanel.webview.html = getFpsWebviewHtml(activeFloorplanPanel.webview, context.extensionUri, pName);
 
-            // Hydrate existing floorplan session state from .silis_fp_session.json or netlist defaults
+            // Hydrate existing floorplan session state from .silis_fp_session.json or silis fps-init bridge
             const wsFolders = vscode.workspace.workspaceFolders;
             const rootPath = wsFolders ? wsFolders[0].uri.fsPath : '';
             const sessionPath = path.join(rootPath, 'projects', pName, '.silis_fp_session.json');
+            let loadedSession = null;
             if (fs.existsSync(sessionPath)) {
                 try {
-                    const sessionData = JSON.parse(fs.readFileSync(sessionPath, 'utf8'));
-                    setTimeout(() => {
-                        safePostMessage(activeFloorplanPanel, { command: 'loadSession', session: sessionData });
-                    }, 400);
+                    const parsed = JSON.parse(fs.readFileSync(sessionPath, 'utf8'));
+                    const macros = Array.isArray(parsed.macros) ? parsed.macros : [];
+                    const hasBogus = macros.some(m => !m.inst || m.inst === 'u_macro' || String(m.master || m.name || '').startsWith('$'));
+                    if (!hasBogus) {
+                        loadedSession = parsed;
+                    }
                 } catch (e) {
                     console.error('Failed to parse existing .silis_fp_session.json', e);
                 }
+            }
+            if (loadedSession) {
+                setTimeout(() => {
+                    safePostMessage(activeFloorplanPanel, { command: 'loadSession', session: loadedSession });
+                }, 400);
             } else {
-                // Initialize default demo session with macros if structural netlist is available
                 setTimeout(async () => {
                     try {
-                        const netlist = await loadNativeProjectNetlist(pName);
-                        const pins = [];
-                        const macros = [];
-                        if (netlist && netlist.modules) {
-                            for (const [mname, mdata] of Object.entries(netlist.modules)) {
-                                if (mdata.ports) {
-                                    for (const [pname, pdata] of Object.entries(mdata.ports)) {
-                                        pins.push({ name: pname, dir: pdata.direction || 'input', edge: 'bottom', pos: pins.length * 20 + 20 });
-                                    }
-                                }
-                                if (mdata.cells) {
-                                    for (const [cname, cdata] of Object.entries(mdata.cells)) {
-                                        macros.push({ inst: cname, master: cdata.type, x: 80 + macros.length * 120, y: 80, w: 100, h: 80, orient: 'R0' });
-                                    }
-                                }
+                        let initSession = null;
+                        if (isValidIdent(pName)) {
+                            try {
+                                initSession = runSilisBridge('fps-init', ['--project', pName]);
+                            } catch (bridgeErr) {
+                                console.warn('fps-init bridge fallback:', bridgeErr.message);
                             }
                         }
-                        const initSession = {
-                            die: { w: 180, h: 180, ml: 15, mr: 15, mt: 15, mb: 15 },
-                            core: { border: 15, w: 150, h: 150 },
-                            macros: macros.length > 0 ? macros : [{ inst: 'u_alu_core', master: 'simple_alu', x: 40, y: 40.8, w: 80, h: 60, orient: 'R0' }],
-                            pins: pins.length > 0 ? pins.slice(0, 16) : [{ name: 'clk', edge: 'bottom', pos: 30, dir: 'input' }, { name: 'rst_n', edge: 'bottom', pos: 60, dir: 'input' }]
-                        };
+                        if (!initSession) {
+                            initSession = {
+                                die: { w: 180, h: 180, ml: 15, mr: 15, mt: 15, mb: 15 },
+                                core: { border: 15, w: 150, h: 150 },
+                                macros: [{ inst: 'u_alu_core', master: 'simple_alu', x: 40, y: 40.8, w: 100, h: 100, orient: 'R0', halo: [10, 10, 10, 10] }],
+                                pins: [{ name: 'clk_pad', edge: 'bottom', pos: 30, dir: 'input' }, { name: 'rst_n_pad', edge: 'bottom', pos: 60, dir: 'input' }],
+                                domains: [{ name: 'PD_TOP', voltage: 1.8, domain_type: 'Always-On', box: [15, 15, 165, 165] }]
+                            };
+                        }
                         safePostMessage(activeFloorplanPanel, { command: 'loadSession', session: initSession });
                     } catch (e) {}
                 }, 400);
@@ -1880,7 +1923,11 @@ function activate(context) {
                     const generateViaBridge = () => {
                         if (!msg.state) return null;
                         try {
-                            return runSilisBridge('floorplan-tcl', ['--pdk', 'sky130'], msg.state);
+                            const fpArgs = ['--pdk', 'sky130'];
+                            if (isValidIdent(pName)) {
+                                fpArgs.push('--project', pName);
+                            }
+                            return runSilisBridge('floorplan-tcl', fpArgs, msg.state);
                         } catch (e) {
                             console.warn('Silis floorplan-tcl bridge fallback:', e.message);
                             return null;
@@ -1981,7 +2028,10 @@ function activate(context) {
             // 1. Show terminal and execute simulation cleanly inside projDir
             const term = getFlowTerminal();
             term.show();
-            term.sendText(`cd "${projDir}" && rm -f sim.vvp waveform.vcd && echo "=== [Silis Simulation: ${pName}] ===" && if [ -f tb/tb_${pName}.v ]; then iverilog -g2012 -o sim.vvp rtl/*.sv tb/*.v && vvp sim.vvp; elif [ -f source/tb_chip_top.v ]; then iverilog -g2012 -o sim.vvp source/*.sv source/*.v && vvp sim.vvp; elif [ -f source/tb_${pName}.v ]; then iverilog -g2012 -o sim.vvp source/*.sv source/*.v && vvp sim.vvp; else TB=\$(find . -maxdepth 2 -name "tb_*.v" -o -name "*_tb.v" 2>/dev/null | head -n 1); if [ -n "\$TB" ]; then iverilog -g2012 -o sim.vvp source/*.sv source/*.v rtl/*.sv rtl/*.v "\$TB" && vvp sim.vvp; else echo "[Silis Error] No testbench found in ${projDir}"; fi; fi`);
+            const simReportCmd = isValidIdent(pName)
+                ? ` && "${resolvePythonBin()}" "${path.join(getWorkspaceRoot(), 'tools', 'silis_web_bridge.py')}" gen-reports --project "${pName}" --kind verif --log-file reports/sim.log`
+                : '';
+            term.sendText(`cd "${projDir}" && mkdir -p reports && rm -f sim.vvp waveform.vcd reports/sim.log && echo "=== [Silis Simulation: ${pName}] ===" && (if [ -f tb/tb_${pName}.v ]; then iverilog -g2012 -o sim.vvp rtl/*.sv tb/*.v && vvp sim.vvp; elif [ -f source/tb_chip_top.v ]; then iverilog -g2012 -o sim.vvp source/*.sv source/*.v && vvp sim.vvp; elif [ -f source/tb_${pName}.v ]; then iverilog -g2012 -o sim.vvp source/*.sv source/*.v && vvp sim.vvp; else TB=\$(find . -maxdepth 2 -name "tb_*.v" -o -name "*_tb.v" 2>/dev/null | head -n 1); if [ -n "\$TB" ]; then iverilog -g2012 -o sim.vvp source/*.sv source/*.v rtl/*.sv rtl/*.v "\$TB" && vvp sim.vvp; else echo "[Silis Error] No testbench found in ${projDir}"; fi; fi) 2>&1 | tee reports/sim.log${simReportCmd}`);
 
             // 2. Open schematic beside RTL (Native web render)
             await openSchematicPanel(pName, vscode.ViewColumn.Beside);
@@ -2008,6 +2058,9 @@ function activate(context) {
                                 clearInterval(pollTimer);
                                 pollTimer = null;
                                 _isSimRunning = false;
+                                if (isValidIdent(pName)) {
+                                    try { runSilisBridge('gen-reports', ['--project', pName, '--kind', 'verif']); } catch (e) {}
+                                }
                                 syncStateTracker();
                                 await vscode.commands.executeCommand('silis-bottom-dock.focus');
                                 await loadWaveformInBottomDock(vcdPath);
@@ -2039,7 +2092,7 @@ function activate(context) {
         vcdWatcher.onDidCreate(handleVcdUpdate);
         context.subscriptions.push(vcdWatcher);
 
-        const netlistWatcher = vscode.workspace.createFileSystemWatcher('**/{netlist/*_netlist.v,reports/area.rpt}');
+        const netlistWatcher = vscode.workspace.createFileSystemWatcher('**/{netlist/*_netlist.v,reports/*.rpt,reports/*.md}');
         netlistWatcher.onDidChange(() => syncStateTracker());
         netlistWatcher.onDidCreate(() => syncStateTracker());
         context.subscriptions.push(netlistWatcher);
@@ -2186,12 +2239,15 @@ function activate(context) {
 
                     const term = getFlowTerminal();
                     term.show();
+                    const pythonBin = resolvePythonBin();
+                    const bridgeScript = path.join(rootPath, 'tools', 'silis_web_bridge.py');
                     let fullCmd = `cd "${projDir}" && mkdir -p reports netlist results && echo "=== [Silis Synthesis & Scan Flow: ${pName}] ===" && yosys -s synth.ys`;
 
                     if (msg.dft && msg.dft.enabled && isValidIdent(pName)) {
-                        const pythonBin = resolvePythonBin();
-                        const bridgeScript = path.join(rootPath, 'tools', 'silis_web_bridge.py');
                         fullCmd += ` && "${pythonBin}" "${bridgeScript}" synth-dft --project "${pName}"`;
+                    }
+                    if (isValidIdent(pName)) {
+                        fullCmd += ` && "${pythonBin}" "${bridgeScript}" gen-reports --project "${pName}" --kind synth`;
                     }
                     term.sendText(fullCmd);
 
@@ -2209,6 +2265,9 @@ function activate(context) {
                         if (isDone || elapsed > 30000) {
                             clearInterval(synthPoll);
                             _isSynthRunning = false;
+                            if (isDone && isValidIdent(pName)) {
+                                try { runSilisBridge('gen-reports', ['--project', pName, '--kind', 'synth']); } catch (e) {}
+                            }
                             syncStateTracker();
                         }
                     }, 500);
